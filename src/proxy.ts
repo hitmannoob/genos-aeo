@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   // Get the pathname of the request (e.g. /, /dashboard, /api/protected)
   const { pathname } = request.nextUrl;
 

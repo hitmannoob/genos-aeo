@@ -4,10 +4,14 @@ import { useAuthContext } from '@/context/AuthContext';
 import { useBrandContext } from '@/context/BrandContext';
 import { useToast } from '@/context/ToastContext';
 import { RefreshCw, Zap, AlertCircle, CheckCircle, RotateCcw, StopCircle, CreditCard, Play } from 'lucide-react';
-import { updateBrandWithQueryResults } from '@/firebase/firestore/getUserBrands';
-import { saveDetailedQueryResults } from '@/firebase/firestore/detailedQueryResults';
-import { calculateCumulativeAnalytics, saveBrandAnalytics, calculateLifetimeBrandAnalytics, saveLifetimeAnalytics } from '@/firebase/firestore/brandAnalytics';
 import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
+// Shared persistence helpers — same pipeline used by /api/cron/process-scheduled.
+// If a bug shows up in per-query or lifetime saves, fix it in the helper and
+// both manual and scheduled paths pick it up.
+import {
+  persistOneQueryResult,
+  refreshLifetimeSnapshot,
+} from '@/firebase/firestore/persistQueryResult';
 
 interface ProcessQueriesButtonProps {
   brandId?: string;
@@ -131,8 +135,10 @@ export default function ProcessQueriesButton({
       const processingSessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       const processingSessionTimestamp = new Date().toISOString();
       
-      // Process queries one by one and save incrementally
-      const allResults: any[] = [];
+      // Process queries one by one and save incrementally. `allResults`
+      // is reassigned to the updated accumulator returned by the shared
+      // persistence helper, so `let`.
+      let allResults: any[] = [];
       let processedCount = 0;
 
       for (const query of queries) {
@@ -207,152 +213,44 @@ export default function ProcessQueriesButton({
           }
 
           const queryData = await response.json();
-          
+
           // Refresh user profile to update credits in sidebar
           if (queryData.userCredits) {
             await refreshUserProfile();
           }
-          
-          // Format the result with processing session information
-          const queryResult: any = {
-            date: new Date().toISOString(),
+
+          // Single persistence call: builds the QueryProcessingResult, writes
+          // to v8detailed_query_results, updates the brand doc's array, and
+          // saves per-session analytics. Returns the updated accumulator.
+          setMessage(`Saving result ${processedCount + 1} of ${queries.length} for ${brandName}...`);
+          const { updatedAllResults } = await persistOneQueryResult({
+            brandId: targetBrandId!,
+            userId: targetBrand.userId,
+            companyName: targetBrand.companyName,
+            brandDomain: targetBrand.domain,
+            query: {
+              query: query.query,
+              keyword: query.keyword,
+              category: query.category,
+            },
             processingSessionId,
             processingSessionTimestamp,
-            query: query.query,
-            keyword: query.keyword,
-            category: query.category,
-            results: {}
-          };
+            userQueryResponse: queryData,
+            allPriorResults: allResults,
+          });
 
-          // Process the enhanced results from the new API
-          if (queryData.success && queryData.results && Array.isArray(queryData.results)) {
-            queryData.results.forEach((result: any) => {
-              if (result.providerId === 'chatgptsearch') {
-                queryResult.results.chatgpt = {
-                  response: result.data?.content || '',
-                  ...(result.error && { error: result.error }),
-                  timestamp: result.timestamp || new Date().toISOString(),
-                  responseTime: result.responseTime,
-                  webSearchUsed: result.data?.webSearchUsed || false,
-                  citations: result.data?.annotations?.length || 0
-                };
-              } else if (result.providerId === 'google-ai-overview') {
-                queryResult.results.googleAI = {
-                  response: `Found ${result.data?.totalItems || 0} search results`,
-                  ...(result.error && { error: result.error }),
-                  timestamp: result.timestamp || new Date().toISOString(),
-                  responseTime: result.responseTime,
-                  totalItems: result.data?.totalItems || 0,
-                  organicResults: result.data?.organicResultsCount || 0,
-                  peopleAlsoAsk: result.data?.peopleAlsoAskCount || 0,
-                  location: result.data?.location || 'Unknown',
-                  // Include AI Overview content if available
-                  aiOverview: result.data?.aiOverview || null,
-                  aiOverviewReferencesCount: result.data?.aiOverviewReferences?.length || 0,
-                  hasAIOverview: result.data?.hasAIOverview || false,
-                  serpFeaturesCount: result.data?.serpFeatures?.length || 0,
-                  // Include other SERP data counts instead of arrays
-                  relatedSearchesCount: result.data?.relatedSearches?.length || 0,
-                  videoResultsCount: result.data?.videoResults?.length || 0,
-                  // Remove rawDataForSEOResponse to reduce document size
-                  hasRawData: !!(result.data?.rawDataForSEOResponse)
-                };
-              } else if (result.providerId === 'perplexity') {
-                queryResult.results.perplexity = {
-                  response: result.data?.content || '',
-                  ...(result.error && { error: result.error }),
-                  timestamp: result.timestamp || new Date().toISOString(),
-                  responseTime: result.responseTime,
-                  citations: result.data?.citations?.length || 0,
-                  realTimeData: result.data?.realTimeData || false,
-                  // Store flattened citation data to avoid nested arrays but preserve citation info
-                  citationsData: result.data?.citations ? result.data.citations.join('|||') : '',
-                  searchResultsData: result.data?.searchResults ? 
-                    result.data.searchResults.map((r: any) => `${r.title || ''}|||${r.url || ''}`).join('###') : '',
-                  structuredCitationsData: result.data?.structuredCitations ? 
-                    result.data.structuredCitations.join('|||') : '',
-                  // Store counts for display
-                  citationsCount: result.data?.citations?.length || 0,
-                  searchResultsCount: result.data?.searchResults?.length || 0,
-                  structuredCitationsCount: result.data?.structuredCitations?.length || 0,
-                  // Store metadata as simple key-value pairs (avoid nested objects/arrays)
-                  hasMetadata: !!(result.data?.metadata),
-                  hasUsageStats: !!(result.data?.usage)
-                };
-              }
-            });
-          }
-
-          // Add credit information to the result
-          if (queryData.userCredits) {
-            queryResult.creditInfo = {
-              creditsDeducted: queryData.userCredits.deducted || 10,
-              creditsAfter: queryData.userCredits.after,
-              totalCost: queryData.totalCost
-            };
-          }
-
-          allResults.push(queryResult);
+          allResults = updatedAllResults;
           processedCount++;
 
           // Update local state immediately to show progress
           setProcessedResults([...allResults]);
-          
+
           // Notify parent component about progress
           if (onProgress) {
             onProgress([...allResults]);
           }
 
-          // Save individual result immediately
-          setMessage(`Saving result ${processedCount} of ${queries.length} for ${brandName}...`);
-          
-          // Save detailed results to separate collection first
-          const { success: detailedSaveSuccess, error: detailedSaveError } = await saveDetailedQueryResults(
-            targetBrandId!,
-            targetBrand.userId,
-            targetBrand.companyName,
-            [queryResult] // Save just the current result to detailed collection
-          );
-          
-          if (!detailedSaveSuccess) {
-            console.error('❌ Error saving detailed result:', detailedSaveError);
-            // Continue anyway, as the main brand document save is more important
-          }
-          
-          const { error: updateError } = await updateBrandWithQueryResults(
-            targetBrandId!,
-            allResults // Save all results so far
-          );
-
-          if (updateError) {
-            console.error('Error saving individual result:', updateError);
-          }
-
-          // Calculate and save incremental analytics after each query
-          try {
-            setMessage(`Updating analytics for ${brandName}...`);
-            
-            const analyticsData = calculateCumulativeAnalytics(
-              targetBrand.userId,
-              targetBrandId!,
-              targetBrand.companyName,
-              targetBrand.domain,
-              processingSessionId,
-              processingSessionTimestamp,
-              allResults // Use all results processed so far
-            );
-            
-            const { success: analyticsSaveSuccess, error: analyticsSaveError } = await saveBrandAnalytics(analyticsData);
-            
-            if (!analyticsSaveSuccess) {
-              console.error('❌ Error saving incremental analytics:', analyticsSaveError);
-            }
-          } catch (analyticsError) {
-            console.error('❌ Error calculating/saving incremental analytics:', analyticsError);
-            // Don't fail the entire process for analytics errors
-          }
-
-          // Competitor analytics are now live-computed at view time from
+          // Competitor analytics are live-computed at view time from
           // brand.queryProcessingResults (see calculateLiveCompetitorAnalytics),
           // so no separate snapshot write is needed here.
 
@@ -413,26 +311,16 @@ export default function ProcessQueriesButton({
       // Analytics are now calculated and saved incrementally after each query
       // No need for final analytics calculation since it's done per query
 
-      // Calculate and save lifetime analytics after completing all queries to ensure citations table gets updated
-      // Run this even if cancelled, as long as some queries were processed
+      // Refresh lifetime snapshot after completing all queries so the
+      // Overview page's Lifetime tab reflects reality. Runs even when the
+      // user cancelled mid-batch, as long as at least one query persisted.
       if (processedCount > 0) {
-        try {
-          setMessage(`Updating lifetime analytics for ${brandName}...`);
-          
-          const { result: lifetimeAnalytics, error: lifetimeError } = await calculateLifetimeBrandAnalytics(targetBrandId!, user!.uid);
-          
-          if (lifetimeError) {
-            console.error('❌ Error calculating lifetime analytics:', lifetimeError);
-          } else if (lifetimeAnalytics) {
-            const { success: lifetimeSaveSuccess, error: lifetimeSaveError } = await saveLifetimeAnalytics(lifetimeAnalytics);
-            
-            if (!lifetimeSaveSuccess) {
-              console.error('❌ Error saving lifetime analytics:', lifetimeSaveError);
-            }
-          }
-        } catch (lifetimeError) {
-          console.error('❌ Error in lifetime analytics processing:', lifetimeError);
-          // Don't fail the entire process for lifetime analytics errors
+        setMessage(`Updating lifetime analytics for ${brandName}...`);
+        const { success: lifetimeOk, error: lifetimeError } =
+          await refreshLifetimeSnapshot(targetBrandId!, user!.uid);
+        if (!lifetimeOk) {
+          console.error('❌ Error refreshing lifetime snapshot:', lifetimeError);
+          // Don't fail the whole process for a snapshot miss.
         }
       }
 

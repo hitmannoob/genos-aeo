@@ -19,16 +19,17 @@ export default function DashboardLayout({ children }: DashboardLayoutProps): Rea
     }
   }, [user, loading, router]);
 
-  // Credit-based redirect for users with 500 credits (new users)
+  // Credit-based redirect for users with default credits (new users).
+  // Heuristic: if credits equals the onboarding grant exactly, treat as a
+  // brand-new account that hasn't spent anything yet. Keep this in sync
+  // with the default in userProfile.ts / userProfileServer.ts.
   useEffect(() => {
     // Only check credits if user is authenticated and user profile is loaded
     if (user && userProfile && !loading) {
-      // Check if user has exactly 500 credits (indicating a new user)
-      const hasDefaultCredits = userProfile.credits === 500;
-      
-      // Only redirect if they have 500 credits AND they're not already on the add-brand flow
+      const hasDefaultCredits = userProfile.credits === 1000;
+
       if (hasDefaultCredits && !pathname.startsWith('/dashboard/add-brand')) {
-        console.log('🎯 Redirecting new user with 500 credits to add-brand flow');
+        console.log('🎯 Redirecting new user with 1000 credits to add-brand flow');
         router.push('/dashboard/add-brand/step-1');
         return;
       }

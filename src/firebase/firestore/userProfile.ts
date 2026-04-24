@@ -29,12 +29,12 @@ export async function createUserProfile(user: User, isNewUser: boolean = false):
     const userDoc = await getDoc(userRef);
 
     if (!userDoc.exists() || isNewUser) {
-      // Create new user profile with 500 credits
+      // Create new user profile with 1000 credits
       const userProfile: Partial<UserProfile> = {
         uid: user.uid,
         email: user.email || '',
         displayName: user.displayName || user.email?.split('@')[0] || 'User',
-        credits: 500, // Give 500 credits to new users
+        credits: 1000, // Give 1000 credits to new users
         createdAt: serverTimestamp(),
         lastLoginAt: serverTimestamp(),
         isNewUser: true
@@ -47,7 +47,7 @@ export async function createUserProfile(user: User, isNewUser: boolean = false):
 
       await setDoc(userRef, userProfile);
       result = userProfile as UserProfile;
-      console.log('🎉 New user created with 500 credits:', user.email);
+      console.log('🎉 New user created with 1000 credits:', user.email);
     } else {
       // Update existing user's last login
       const existingData = userDoc.data() as UserProfile;

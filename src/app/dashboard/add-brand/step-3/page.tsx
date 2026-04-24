@@ -39,6 +39,11 @@ export default function AddBrandStep3(): React.ReactElement {
   const [showAddQueryModal, setShowAddQueryModal] = useState(false);
   const [newQuery, setNewQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<'Awareness' | 'Interest' | 'Consideration' | 'Purchase'>('Awareness');
+  // Query-modal topic picker state. Separate from the sidebar's selectedTopic
+  // (which is a filter, not an "I'm attaching to this topic" signal).
+  const [newQueryTopic, setNewQueryTopic] = useState<string>('');
+  const [isCreatingNewQueryTopic, setIsCreatingNewQueryTopic] = useState<boolean>(false);
+  const [newQueryTopicDraft, setNewQueryTopicDraft] = useState<string>('');
   const [isCompleting, setIsCompleting] = useState(false);
   const [selectedQueries, setSelectedQueries] = useState<Set<number>>(new Set());
   
@@ -317,7 +322,10 @@ Output format (return ONLY valid JSON array):
         companyName: companyData.companyName,
         shortDescription: companyData.shortDescription,
         productsAndServices: companyData.productsAndServices || [],
-        keywords: companyData.keywords || [],
+        // Persist every topic that's actually in use — declared topics plus
+        // any query-derived ones — so the brand's keyword list matches what
+        // its queries reference. Dedupe case-insensitively.
+        keywords: allTopics,
         competitors: companyData.competitors || [],
         
         // Step 3 - Generated Queries (only selected ones)
@@ -487,9 +495,37 @@ Output format (return ONLY valid JSON array):
     ? queriesByKeyword 
     : { [selectedTopic]: queriesByKeyword[selectedTopic] || [] };
 
-  // Get all topics (original keywords + additional topics)
-  const allTopics = [...(companyData?.keywords || []), ...additionalTopics];
-  const totalTopics = allTopics.length;
+  // Declared topics are what the user/onboarding explicitly registered —
+  // they're what count against the 10-topic cap.
+  const declaredTopics = [...(companyData?.keywords || []), ...additionalTopics];
+
+  // Query-derived topics: keywords that appear on generatedQueries but were
+  // never added to brand.keywords (e.g. AI-generated queries with their own
+  // categories). We surface these in the sidebar/picker so the user can
+  // actually see every topic in use — otherwise a query's topic would
+  // invisibly exist only on the row.
+  const allTopics = (() => {
+    const seen = new Set<string>();
+    const merged: string[] = [];
+    for (const raw of declaredTopics) {
+      const t = typeof raw === 'string' ? raw.trim() : '';
+      if (!t) continue;
+      const key = t.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(t);
+    }
+    for (const q of generatedQueries) {
+      const t = typeof q?.keyword === 'string' ? q.keyword.trim() : '';
+      if (!t) continue;
+      const key = t.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(t);
+    }
+    return merged;
+  })();
+  const totalTopics = declaredTopics.length;
   const canAddMoreTopics = totalTopics < 10;
 
   const handleAddTopic = () => {
@@ -536,39 +572,124 @@ Output format (return ONLY valid JSON array):
 
   // Query modal handlers
   const handleAddQuery = () => {
+    // Seed the modal's topic picker:
+    //   - If the sidebar is filtered to a specific topic, pre-select it
+    //   - Else if there's at least one topic, default to the first
+    //   - Else open directly in "create new topic" mode
+    const sidebarTopic = selectedTopic !== 'all' ? selectedTopic : '';
+    const firstTopic = allTopics[0] ?? '';
+    const initial = sidebarTopic || firstTopic;
+    setNewQueryTopic(initial);
+    setNewQueryTopicDraft('');
+    setIsCreatingNewQueryTopic(!initial);
     setShowAddQueryModal(true);
   };
 
-  const handleSaveQuery = () => {
-    if (newQuery.trim()) {
-      const newQueryObject: GeneratedQuery = {
-        keyword: selectedTopic === 'all' ? allTopics[0] || 'general' : selectedTopic,
-        query: newQuery.trim(),
-        category: selectedCategory,
-        containsBrand: newQuery.toLowerCase().includes(companyData?.companyName?.toLowerCase() || '') ? 1 : 0
-      };
-      
-      const newIndex = generatedQueries.length;
-      setGeneratedQueries(prev => [...prev, newQueryObject]);
-      
-      // Auto-select the newly added query
-      setSelectedQueries(prev => new Set([...prev, newIndex]));
-      
-      // Show success notification
-      showSuccess(
-        'Query Added Successfully!',
-        `Added "${newQuery.trim()}" to your ${selectedCategory.toLowerCase()} queries.`
-      );
-      
-      setNewQuery('');
-      setSelectedCategory('Awareness');
-      setShowAddQueryModal(false);
+  const resolveQueryTopic = (): string => {
+    if (isCreatingNewQueryTopic) return newQueryTopicDraft.trim().toLowerCase();
+    return newQueryTopic.trim();
+  };
+
+  // Confirm the typed new-topic draft: register it on the brand's topic list
+  // (respecting the 10-topic cap and dedupe), select it, and collapse the
+  // input back into the chip view. Also triggered by Enter in the input.
+  const handleConfirmNewTopic = () => {
+    const draft = newQueryTopicDraft.trim().toLowerCase();
+    if (!draft) return;
+
+    const existsAlready = allTopics.some(t => t.toLowerCase() === draft);
+    if (existsAlready) {
+      // Just select the existing match instead of duplicating.
+      setNewQueryTopic(allTopics.find(t => t.toLowerCase() === draft) ?? draft);
+      setIsCreatingNewQueryTopic(false);
+      setNewQueryTopicDraft('');
+      return;
     }
+
+    if (!canAddMoreTopics) {
+      showError(
+        'Topic limit reached',
+        'You already have 10 topics. Remove one before adding a new one.'
+      );
+      return;
+    }
+
+    setAdditionalTopics(prev => [...prev, draft]);
+    if (companyData) {
+      const updatedCompanyData = {
+        ...companyData,
+        keywords: [...(companyData.keywords || []), draft],
+      };
+      sessionStorage.setItem('companyInfo', JSON.stringify(updatedCompanyData));
+    }
+    setNewQueryTopic(draft);
+    setIsCreatingNewQueryTopic(false);
+    setNewQueryTopicDraft('');
+  };
+
+  const handleSaveQuery = () => {
+    const topic = resolveQueryTopic();
+    if (!newQuery.trim()) return;
+    if (!topic) {
+      showError('Topic required', 'Pick an existing topic or create a new one.');
+      return;
+    }
+
+    // If user created a new topic, register it on the brand's topic list.
+    // Respects the 10-topic cap; silently no-ops on duplicates.
+    const isNewTopic =
+      isCreatingNewQueryTopic &&
+      !allTopics.some(t => t.toLowerCase() === topic.toLowerCase());
+    if (isNewTopic) {
+      if (!canAddMoreTopics) {
+        showError(
+          'Topic limit reached',
+          'You already have 10 topics. Remove one before adding a new one.'
+        );
+        return;
+      }
+      setAdditionalTopics(prev => [...prev, topic]);
+      if (companyData) {
+        const updatedCompanyData = {
+          ...companyData,
+          keywords: [...(companyData.keywords || []), topic],
+        };
+        sessionStorage.setItem('companyInfo', JSON.stringify(updatedCompanyData));
+      }
+    }
+
+    const newQueryObject: GeneratedQuery = {
+      keyword: topic,
+      query: newQuery.trim(),
+      category: selectedCategory,
+      containsBrand: newQuery.toLowerCase().includes(companyData?.companyName?.toLowerCase() || '') ? 1 : 0
+    };
+
+    const newIndex = generatedQueries.length;
+    setGeneratedQueries(prev => [...prev, newQueryObject]);
+    setSelectedQueries(prev => new Set([...prev, newIndex]));
+
+    showSuccess(
+      'Query Added Successfully!',
+      isNewTopic
+        ? `New topic "${topic}" created and query attached.`
+        : `Added "${newQuery.trim()}" to "${topic}" under ${selectedCategory.toLowerCase()}.`
+    );
+
+    setNewQuery('');
+    setSelectedCategory('Awareness');
+    setNewQueryTopic('');
+    setNewQueryTopicDraft('');
+    setIsCreatingNewQueryTopic(false);
+    setShowAddQueryModal(false);
   };
 
   const handleCancelQuery = () => {
     setNewQuery('');
     setSelectedCategory('Awareness');
+    setNewQueryTopic('');
+    setNewQueryTopicDraft('');
+    setIsCreatingNewQueryTopic(false);
     setShowAddQueryModal(false);
   };
 
@@ -731,7 +852,10 @@ Output format (return ONLY valid JSON array):
 
               {/* Individual Topics/Keywords */}
               {allTopics.map((topic, index) => {
-                const topicQueries = generatedQueries.filter(q => q.keyword === topic);
+                const topicQueries = generatedQueries.filter(
+                  q => typeof q?.keyword === 'string' &&
+                    q.keyword.trim().toLowerCase() === topic.toLowerCase()
+                );
                 return (
                   <div 
                     key={index} 
@@ -1090,10 +1214,10 @@ Output format (return ONLY valid JSON array):
 
       {/* Add Query Modal */}
       {showAddQueryModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-card border border-border rounded-2xl p-6 w-full max-w-lg mx-4 shadow-xl">
-            {/* Modal Header */}
-            <div className="flex items-center justify-between mb-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-card border border-border rounded-2xl w-full max-w-lg shadow-xl flex flex-col max-h-[90vh]">
+            {/* Modal Header — fixed */}
+            <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-border/50 flex-shrink-0">
               <h3 className="text-lg font-semibold text-foreground">Add New Query</h3>
               <button
                 onClick={handleCancelQuery}
@@ -1103,8 +1227,8 @@ Output format (return ONLY valid JSON array):
               </button>
             </div>
 
-            {/* Modal Content */}
-            <div className="space-y-6">
+            {/* Modal Content — scrollable */}
+            <div className="space-y-6 overflow-y-auto px-6 py-5 flex-1 min-h-0">
               <p className="text-muted-foreground text-sm">
                 Add a new query to your list for tracking and analysis.
               </p>
@@ -1123,6 +1247,100 @@ Output format (return ONLY valid JSON array):
                   className="w-full px-4 py-3 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent bg-background text-foreground"
                   autoFocus
                 />
+              </div>
+
+              {/* Topic Selection */}
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">
+                  Topic
+                </label>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Pick an existing topic or create a new one. Topics group
+                  queries for analytics. {totalTopics}/10 topics used.
+                </p>
+
+                {!isCreatingNewQueryTopic && (
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {allTopics.map(topic => {
+                      const selected = newQueryTopic === topic;
+                      return (
+                        <button
+                          key={topic}
+                          type="button"
+                          onClick={() => setNewQueryTopic(topic)}
+                          className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
+                            selected
+                              ? 'border-blue-300 bg-blue-50 text-blue-700'
+                              : 'border-border hover:bg-muted/30'
+                          }`}
+                        >
+                          {topic}
+                        </button>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      disabled={!canAddMoreTopics}
+                      onClick={() => {
+                        if (!canAddMoreTopics) return;
+                        setIsCreatingNewQueryTopic(true);
+                        setNewQueryTopic('');
+                      }}
+                      className={`px-3 py-1.5 rounded-full text-sm border border-dashed transition-colors ${
+                        canAddMoreTopics
+                          ? 'border-border text-muted-foreground hover:bg-muted/30'
+                          : 'border-border/50 text-muted-foreground/50 cursor-not-allowed'
+                      }`}
+                    >
+                      {canAddMoreTopics ? '+ Create new topic' : '+ Topic limit reached'}
+                    </button>
+                  </div>
+                )}
+
+                {isCreatingNewQueryTopic && (
+                  <div className="space-y-2">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={newQueryTopicDraft}
+                        onChange={(e) => setNewQueryTopicDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && newQueryTopicDraft.trim()) {
+                            e.preventDefault();
+                            handleConfirmNewTopic();
+                          }
+                        }}
+                        placeholder="e.g. LLM Observability"
+                        className="flex-1 px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent bg-background text-foreground"
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        onClick={handleConfirmNewTopic}
+                        disabled={!newQueryTopicDraft.trim() || !canAddMoreTopics}
+                        className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        Add
+                      </button>
+                      {allTopics.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsCreatingNewQueryTopic(false);
+                            setNewQueryTopicDraft('');
+                            setNewQueryTopic(allTopics[0] ?? '');
+                          }}
+                          className="px-3 py-2 text-sm text-muted-foreground hover:text-foreground"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Press Enter or click Add to register this topic.
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Category Selection */}
@@ -1227,8 +1445,8 @@ Output format (return ONLY valid JSON array):
               </div>
             </div>
 
-            {/* Modal Footer */}
-            <div className="flex items-center justify-end space-x-3 mt-6">
+            {/* Modal Footer — fixed */}
+            <div className="flex items-center justify-end space-x-3 px-6 py-4 border-t border-border/50 flex-shrink-0">
               <button
                 onClick={handleCancelQuery}
                 className="px-4 py-2 text-muted-foreground hover:text-foreground transition-colors"
@@ -1237,7 +1455,7 @@ Output format (return ONLY valid JSON array):
               </button>
               <button
                 onClick={handleSaveQuery}
-                disabled={!newQuery.trim()}
+                disabled={!newQuery.trim() || !resolveQueryTopic()}
                 className="px-6 py-2 bg-blue-600 text-foreground rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 Add Query

@@ -58,12 +58,19 @@ interface ModalQueryResult {
   };
 }
 
-// Helper function to authenticate user and get profile
-async function authenticateUser(request: NextRequest): Promise<{ uid: string; profile: any } | null> {
+// Helper function to authenticate user and get profile.
+// Supports two modes:
+//   1. User mode: Authorization: Bearer <firebase-id-token> — verified via Admin SDK
+//   2. Cron/service mode: Authorization: Bearer <CRON_SECRET> + X-Cron-User-Id: <uid>
+//      — used by /api/cron/process-scheduled to run on behalf of a brand's owner.
+//      Returns isCron=true so callers can adjust behaviour (e.g. credits).
+async function authenticateUser(
+  request: NextRequest
+): Promise<{ uid: string; profile: any; isCron?: boolean } | null> {
   try {
     // Check for Authorization header
     const authorization = request.headers.get('authorization');
-    
+
     if (!authorization) {
       console.log('❌ No authorization header found');
       return null;
@@ -71,14 +78,31 @@ async function authenticateUser(request: NextRequest): Promise<{ uid: string; pr
 
     // Extract token from "Bearer <token>" format
     const token = authorization.split(' ')[1];
-    
+
     if (!token) {
       console.log('❌ No token found in authorization header');
       return null;
     }
 
+    // Cron/service mode
+    const cronSecret = process.env.CRON_SECRET;
+    if (cronSecret && token === cronSecret) {
+      const cronUserId = request.headers.get('x-cron-user-id');
+      if (!cronUserId) {
+        console.log('❌ Cron request missing X-Cron-User-Id header');
+        return null;
+      }
+      console.log('🔑 Cron-authenticated request for user:', cronUserId);
+      const { result: userProfile, error } = await getUserProfileServer(cronUserId);
+      if (error || !userProfile) {
+        console.log('❌ Cron request: user profile not found for', cronUserId);
+        return null;
+      }
+      return { uid: cronUserId, profile: userProfile, isCron: true };
+    }
+
     console.log('🔑 Verifying Firebase ID token...');
-    
+
     // Verify the Firebase ID token
     const decodedToken = await auth.verifyIdToken(token);
     
@@ -170,7 +194,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { uid, profile } = authResult;
+    const { uid, profile, isCron } = authResult;
     const requiredCredits = 10; // Cost for processing a query
 
     console.log('📝 Processing user query with authentication:', {
@@ -179,6 +203,7 @@ export async function POST(request: NextRequest) {
       userCredits: profile.credits,
       requiredCredits,
       isAutoStart,
+      isCron: !!isCron,
       timestamp: new Date().toISOString()
     });
 
@@ -208,10 +233,29 @@ export async function POST(request: NextRequest) {
     // Initialize provider manager
     const providerManager = new ProviderManager();
 
-    // Use only the 3 selected providers
-    const selectedProviders = ['chatgptsearch', 'google-ai-overview', 'perplexity'];
+    // Preferred providers for user queries. Filter to those actually
+    // configured so unconfigured providers don't register as failures
+    // (and don't trip ALL_PROVIDERS_FAILED when only one real failure occurs).
+    const preferredProviders = ['chatgptsearch', 'google-ai-overview', 'perplexity'];
+    const availableProviders = new Set(providerManager.getAvailableProviders());
+    const selectedProviders = preferredProviders.filter(p => availableProviders.has(p));
+    const skippedProviders = preferredProviders.filter(p => !availableProviders.has(p));
 
-    // Create API request for the 3 providers
+    if (selectedProviders.length === 0) {
+      console.error('❌ No user-query providers configured. Preferred:', preferredProviders, 'Available:', Array.from(availableProviders));
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'No AI providers are configured. Set at least one of OPENAI_API_KEY, PERPLEXITY_API_KEY, or DATAFORSEO_USERNAME+DATAFORSEO_PASSWORD.',
+          code: 'NO_PROVIDERS_CONFIGURED',
+          preferredProviders,
+          availableProviders: Array.from(availableProviders)
+        },
+        { status: 503 }
+      );
+    }
+
+    // Create API request for the available providers
     const apiRequest = {
       id: `user-query-${Date.now()}`,
       prompt: query,
@@ -226,7 +270,7 @@ export async function POST(request: NextRequest) {
       }
     };
 
-    console.log('🚀 Executing query with 3 providers:', selectedProviders);
+    console.log(`🚀 Executing query with ${selectedProviders.length} provider(s):`, selectedProviders, skippedProviders.length ? `(skipped unconfigured: ${skippedProviders.join(', ')})` : '');
 
     // Execute the request BEFORE charging credits. This way the user isn't
     // billed if every provider fails.

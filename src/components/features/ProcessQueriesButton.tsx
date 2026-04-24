@@ -13,7 +13,7 @@ interface ProcessQueriesButtonProps {
   brandId?: string;
   onComplete?: (result: any) => void;
   onProgress?: (results: any[]) => void; // New callback for real-time updates
-  onStart?: () => void; // New callback for when processing starts
+  onStart?: (batchQueries: string[]) => void; // Fires at batch start with the list of queries that are about to be processed
   onQueryStart?: (query: string) => void; // New callback for when individual query processing starts
   className?: string;
   variant?: 'primary' | 'secondary' | 'ghost';
@@ -113,9 +113,10 @@ export default function ProcessQueriesButton({
     setProcessedResults([]); // Reset processed results
     cancelledRef.current = false;
 
-    // Notify parent that processing has started
+    // Notify parent that processing has started — pass the batch so the UI
+    // can scope its "Processing" state to queries actually in this run.
     if (onStart) {
-      onStart();
+      onStart(queries.map(q => q.query));
     }
 
     try {

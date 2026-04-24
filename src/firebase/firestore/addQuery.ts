@@ -19,16 +19,25 @@ export interface NewBrandQuery {
  *
  * containsBrand flag uses matchCompetitorsInText — same matcher the rest of
  * the analytics pipeline uses for brand detection — instead of a raw substring.
+ *
+ * `keyword` is the topic the query is filed under (e.g. "LLM Observability").
+ * Pass an existing brand.keywords value, or use addKeywordToBrand() first
+ * to register a new topic.
  */
 export async function addQueryToBrand(
   brandId: string,
   rawQuery: string,
   category: NewBrandQuery['category'],
-  brand: { companyName?: string; domain?: string }
+  brand: { companyName?: string; domain?: string },
+  keyword: string
 ): Promise<void> {
   const query = rawQuery.trim();
   if (!query) {
     throw new Error('Query is empty');
+  }
+  const topic = keyword.trim();
+  if (!topic) {
+    throw new Error('Topic is required');
   }
 
   const entity = brand.companyName
@@ -38,7 +47,7 @@ export async function addQueryToBrand(
     entity.length > 0 && matchCompetitorsInText(query, entity).length > 0 ? 1 : 0;
 
   const newQueryObject: NewBrandQuery = {
-    keyword: 'custom',
+    keyword: topic,
     query,
     category,
     containsBrand,
@@ -53,5 +62,25 @@ export async function addQueryToBrand(
     queries: arrayUnion(newQueryObject),
     updatedAt: serverTimestamp(),
     totalQueries: increment(1),
+  });
+}
+
+/**
+ * Register a new topic on a brand. arrayUnion silently no-ops if the keyword
+ * already exists. Call this before addQueryToBrand when the user creates a
+ * topic that isn't already on brand.keywords.
+ */
+export async function addKeywordToBrand(
+  brandId: string,
+  keyword: string
+): Promise<void> {
+  const topic = keyword.trim();
+  if (!topic) {
+    throw new Error('Topic is empty');
+  }
+  const brandRef = doc(db, 'v8userbrands', brandId);
+  await updateDoc(brandRef, {
+    keywords: arrayUnion(topic),
+    updatedAt: serverTimestamp(),
   });
 }

@@ -188,6 +188,15 @@ FIREBASE_PRIVATE_KEY=
 SENTRY_DSN=
 NEXT_PUBLIC_SENTRY_DSN=
 
+# Scheduled Query Processing (required only if using the cron endpoint)
+# Shared secret for /api/cron/process-scheduled. Generate with:
+#   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+CRON_SECRET=
+
+# Base URL used for internal /api/user-query calls from the cron endpoint.
+# Set in production; localhost is used as a fallback in dev.
+NEXT_PUBLIC_APP_URL=https://your-deployed-app.example.com
+
 - Duplicate the `env.example` file and paste these variables with your own information.
 - Click on `Continue on console` button
 - On your project homepage, choose a product to add to your app. First, click on `Authentication`.
@@ -335,6 +344,61 @@ The folder structure of this project is organized as follows:
 - `firebase`: Houses the Firebase configuration and Firebase-related functions.
 
 Feel free to modify and expand the folder structure according to your project requirements.
+
+## Scheduled Query Reprocessing
+
+Brand query batches are re-run on a schedule (default: every 7 days per brand).
+Triggering is done by hitting a protected endpoint externally — the app does not
+self-schedule.
+
+**Endpoint:** `POST /api/cron/process-scheduled`
+
+**Auth:** `Authorization: Bearer $CRON_SECRET`
+
+**Optional query params:**
+| Param | Default | Meaning |
+| --- | --- | --- |
+| `intervalDays` | `7` | A brand is "due" when its most recent result is older than this many days (or never processed). |
+| `maxBrands` | `50` | Safety cap on brands processed per invocation. Un-processed brands are picked up on the next run. |
+| `brandId` | — | Process a single brand (useful for manual replays). |
+
+**Preview:** `GET /api/cron/process-scheduled` returns the list of brands that
+*would* be processed now, without running anything. Same auth.
+
+**How it works:**
+- Finds brands whose latest `queryProcessingResults[].date` is older than `intervalDays`.
+- For each due brand, calls `/api/user-query` once per query with cron-mode auth
+  (`Authorization: Bearer $CRON_SECRET` + `X-Cron-User-Id: <brand.userId>`).
+- Credits are deducted from the brand owner just like a normal query. Owners
+  out of credits will see per-query failures in the response summary.
+- Execution is serial to stay within serverless timeouts.
+
+### Hooking up a scheduler
+
+Pick one:
+
+**Firebase Cloud Scheduler → Cloud Function → HTTP call.** Create a tiny
+scheduled Cloud Function that does:
+```js
+await fetch(`${APP_URL}/api/cron/process-scheduled`, {
+  method: 'POST',
+  headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` },
+});
+```
+Schedule it at e.g. `every 24 hours`. Store `CRON_SECRET` and `APP_URL` as
+function env vars.
+
+**Vercel (if you switch host):** add to `vercel.json`:
+```json
+{ "crons": [{ "path": "/api/cron/process-scheduled", "schedule": "0 3 * * *" }] }
+```
+Vercel auto-adds the `Authorization` header with `CRON_SECRET`.
+
+**GitHub Actions:** one workflow file with `on: schedule` and a `curl` step
+pointing at the endpoint with the secret.
+
+**External cron (EasyCron, cron-job.org, etc.):** configure a POST with the
+`Authorization` header.
 
 ## Deployment
 

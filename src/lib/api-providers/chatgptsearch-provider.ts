@@ -28,7 +28,7 @@ export class ChatGPTSearchProvider extends BaseAPIProvider {
 
       const response = await this.retryRequest(async () => {
         return await this.client.responses.create({
-          model: request.model || "gpt-4.1",
+          model: request.model || "gpt-5.4-mini",
           tools: [{ type: "web_search_preview" }],
           input: request.input,
           temperature: request.temperature,
@@ -42,7 +42,7 @@ export class ChatGPTSearchProvider extends BaseAPIProvider {
       
       // Log specific parts for easier debugging
       console.log('🌐 ChatGPT Search Response Summary:', {
-        model: response.model || 'gpt-4.1',
+        model: response.model || 'gpt-5.4-mini',
         hasOutput: !!response.output_text,
         outputLength: response.output_text?.length || 0,
         preview: response.output_text?.substring(0, 200) + '...',
@@ -107,7 +107,7 @@ export class ChatGPTSearchProvider extends BaseAPIProvider {
 
     return {
       content: rawResponse.output_text || '',
-      model: rawResponse.model || 'gpt-4.1',
+      model: rawResponse.model || 'gpt-5.4-mini',
       usage: rawResponse.usage,
       searchEnabled: true,
       webSearchUsed: true,
@@ -203,7 +203,7 @@ export class ChatGPTSearchProvider extends BaseAPIProvider {
     try {
       const testRequest: ChatGPTSearchRequest = {
         input: 'What is the current weather?',
-        model: 'gpt-4.1',
+        model: 'gpt-5.4-mini',
         max_tokens: 50,
       };
       

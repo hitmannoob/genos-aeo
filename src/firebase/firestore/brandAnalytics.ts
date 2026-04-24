@@ -949,14 +949,23 @@ export async function calculateLifetimeBrandAnalytics(
     });
     
     console.log(`✅ Extracted ${allCitations.length} individual citations from ${allQueryResults.length} historical queries`);
-    
+
+    // Lifetime `totalQueriesProcessed` counts UNIQUE query texts (normalized:
+    // trimmed, lowercased), not rows. A question re-run across 5 sessions
+    // counts as 1 here. Use `totalProcessingSessions` for run frequency.
+    const uniqueQueryCount = new Set(
+      allQueryResults
+        .map(r => (typeof r?.query === 'string' ? r.query.trim().toLowerCase() : ''))
+        .filter(t => t.length > 0)
+    ).size;
+
     // Convert to lifetime analytics format
     const lifetimeAnalytics: LifetimeBrandAnalytics = {
       userId,
       brandId,
       brandName,
       brandDomain,
-      totalQueriesProcessed: allQueryResults.length,
+      totalQueriesProcessed: uniqueQueryCount,
       totalProcessingSessions,
       totalBrandMentions: sessionAnalytics.totalBrandMentions,
       brandVisibilityScore: sessionAnalytics.brandVisibilityScore,

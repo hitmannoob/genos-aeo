@@ -309,7 +309,7 @@ export class ProviderManager {
       case 'chatgptsearch':
         return {
           input: request.prompt,
-          model: 'gpt-4.1',
+          model: 'gpt-5.4-mini',
           temperature: 0.7,
           _userId: userId,
         };

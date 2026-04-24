@@ -6,7 +6,7 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import QueriesOverview from '@/components/features/QueriesOverview';
 import { useAuthContext } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
-import { addQueryToBrand } from '@/firebase/firestore/addQuery';
+import { addQueryToBrand, addKeywordToBrand } from '@/firebase/firestore/addQuery';
 import AIResponseModal from './AIResponseModal';
 import WebLogo from '@/components/shared/WebLogo';
 import {
@@ -29,35 +29,131 @@ export default function QueriesContent(): React.ReactElement {
   const [showAddQueryModal, setShowAddQueryModal] = useState(false);
   const [newQuery, setNewQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<'Awareness' | 'Interest' | 'Consideration' | 'Purchase'>('Awareness');
+  const [selectedTopic, setSelectedTopic] = useState<string>('');
+  const [newTopicDraft, setNewTopicDraft] = useState<string>('');
+  const [isCreatingNewTopic, setIsCreatingNewTopic] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Existing topics = union of brand.keywords (from onboarding step-2) and
+  // any keywords already in use on brand.queries — so custom topics added
+  // later show up for re-use.
+  const existingTopics: string[] = React.useMemo(() => {
+    if (!selectedBrand) return [];
+    const fromKeywords: string[] = Array.isArray((selectedBrand as any).keywords)
+      ? (selectedBrand as any).keywords
+      : [];
+    const fromQueries: string[] = Array.isArray((selectedBrand as any).queries)
+      ? (selectedBrand as any).queries
+          .map((q: any) => (typeof q?.keyword === 'string' ? q.keyword : ''))
+          .filter((k: string) => k.length > 0 && k !== 'custom')
+      : [];
+    const seen = new Set<string>();
+    const merged: string[] = [];
+    for (const k of [...fromKeywords, ...fromQueries]) {
+      const t = k.trim();
+      if (!t) continue;
+      const key = t.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(t);
+    }
+    return merged;
+  }, [selectedBrand]);
+
+  const resetModal = () => {
+    setNewQuery('');
+    setSelectedCategory('Awareness');
+    setSelectedTopic('');
+    setNewTopicDraft('');
+    setIsCreatingNewTopic(false);
+  };
 
   // Add Query Modal Handlers
   const handleAddQuery = () => {
+    // Pre-select the first existing topic if there is one; otherwise open the
+    // "create new topic" path so the user isn't stuck.
+    setSelectedTopic(existingTopics[0] ?? '');
+    setIsCreatingNewTopic(existingTopics.length === 0);
     setShowAddQueryModal(true);
   };
 
+  const resolveTopic = (): string => {
+    if (isCreatingNewTopic) return newTopicDraft.trim();
+    return selectedTopic.trim();
+  };
+
+  // Confirm the typed new-topic draft: register it on the brand now (so the
+  // user sees it committed) and collapse the input back to the chip view.
+  const handleConfirmNewTopic = async () => {
+    const draft = newTopicDraft.trim();
+    if (!draft || !selectedBrand) return;
+
+    const existing = existingTopics.find(t => t.toLowerCase() === draft.toLowerCase());
+    if (existing) {
+      setSelectedTopic(existing);
+      setIsCreatingNewTopic(false);
+      setNewTopicDraft('');
+      return;
+    }
+
+    try {
+      await addKeywordToBrand(selectedBrand.id, draft);
+      await refetchBrands();
+      setSelectedTopic(draft);
+      setIsCreatingNewTopic(false);
+      setNewTopicDraft('');
+    } catch (e) {
+      console.error('❌ Error adding topic:', e);
+      showError('Failed to add topic', 'Please try again.');
+    }
+  };
+
   const handleSaveQuery = async () => {
+    const topic = resolveTopic();
     if (!newQuery.trim() || !selectedBrand || !user) {
       console.error('Missing required data for saving query');
+      return;
+    }
+    if (!topic) {
+      showError('Topic required', 'Pick an existing topic or create a new one.');
       return;
     }
 
     setIsSaving(true);
 
     try {
-      await addQueryToBrand(selectedBrand.id, newQuery, selectedCategory, {
-        companyName: selectedBrand.companyName,
-        domain: selectedBrand.domain,
-      });
+      // Register the topic on the brand first if it's new. arrayUnion silently
+      // no-ops if it already exists, so it's safe to call even when the user
+      // picked an existing topic.
+      const isNewTopic =
+        isCreatingNewTopic &&
+        !existingTopics.some(t => t.toLowerCase() === topic.toLowerCase());
+      if (isNewTopic) {
+        await addKeywordToBrand(selectedBrand.id, topic);
+      }
 
-      // Reset form and close modal
-      setNewQuery('');
-      setSelectedCategory('Awareness');
+      await addQueryToBrand(
+        selectedBrand.id,
+        newQuery,
+        selectedCategory,
+        {
+          companyName: selectedBrand.companyName,
+          domain: selectedBrand.domain,
+        },
+        topic
+      );
+
+      resetModal();
       setShowAddQueryModal(false);
 
       await refetchBrands();
 
-      showSuccess('Query added', 'Your new query is ready to process.');
+      showSuccess(
+        'Query added',
+        isNewTopic
+          ? `New topic "${topic}" created and query attached.`
+          : 'Your new query is ready to process.'
+      );
     } catch (error) {
       console.error('❌ Error saving query:', error);
       showError('Failed to add query', 'Please try again in a moment.');
@@ -67,8 +163,7 @@ export default function QueriesContent(): React.ReactElement {
   };
 
   const handleCancelQuery = () => {
-    setNewQuery('');
-    setSelectedCategory('Awareness');
+    resetModal();
     setShowAddQueryModal(false);
   };
 
@@ -191,10 +286,10 @@ export default function QueriesContent(): React.ReactElement {
 
         {/* Add Query Modal */}
         {showAddQueryModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-card border border-border rounded-2xl p-6 w-full max-w-lg mx-4 shadow-xl">
-              {/* Modal Header */}
-              <div className="flex items-center justify-between mb-4">
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-card border border-border rounded-2xl w-full max-w-lg shadow-xl flex flex-col max-h-[90vh]">
+              {/* Modal Header — fixed */}
+              <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-border/50 flex-shrink-0">
                 <h3 className="text-lg font-semibold text-foreground">Add New Query</h3>
                 <button
                   onClick={handleCancelQuery}
@@ -204,8 +299,8 @@ export default function QueriesContent(): React.ReactElement {
                 </button>
               </div>
 
-              {/* Modal Content */}
-              <div className="space-y-6">
+              {/* Modal Content — scrollable */}
+              <div className="space-y-6 overflow-y-auto px-6 py-5 flex-1 min-h-0">
                 <p className="text-muted-foreground text-sm">
                   Add a new query to your list for tracking and analysis.
                 </p>
@@ -224,6 +319,94 @@ export default function QueriesContent(): React.ReactElement {
                     className="w-full px-4 py-3 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#000C60] focus:border-transparent bg-background text-foreground"
                     autoFocus
                   />
+                </div>
+
+                {/* Topic Selection */}
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-2">
+                    Topic
+                  </label>
+                  <p className="text-xs text-muted-foreground mb-3">
+                    Pick an existing topic or create a new one. Topics group
+                    queries together for analytics.
+                  </p>
+
+                  {!isCreatingNewTopic && (
+                    <div className="flex flex-wrap gap-2 mb-3">
+                      {existingTopics.map(topic => {
+                        const selected = selectedTopic === topic;
+                        return (
+                          <button
+                            key={topic}
+                            type="button"
+                            onClick={() => setSelectedTopic(topic)}
+                            className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
+                              selected
+                                ? 'border-blue-300 bg-blue-50 text-blue-700'
+                                : 'border-border hover:bg-muted/30'
+                            }`}
+                          >
+                            {topic}
+                          </button>
+                        );
+                      })}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsCreatingNewTopic(true);
+                          setSelectedTopic('');
+                        }}
+                        className="px-3 py-1.5 rounded-full text-sm border border-dashed border-border text-muted-foreground hover:bg-muted/30 transition-colors"
+                      >
+                        + Create new topic
+                      </button>
+                    </div>
+                  )}
+
+                  {isCreatingNewTopic && (
+                    <div className="space-y-2">
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={newTopicDraft}
+                          onChange={(e) => setNewTopicDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && newTopicDraft.trim()) {
+                              e.preventDefault();
+                              void handleConfirmNewTopic();
+                            }
+                          }}
+                          placeholder="e.g. LLM Observability"
+                          className="flex-1 px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#000C60] focus:border-transparent bg-background text-foreground"
+                          autoFocus
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void handleConfirmNewTopic()}
+                          disabled={!newTopicDraft.trim()}
+                          className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                          Add
+                        </button>
+                        {existingTopics.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsCreatingNewTopic(false);
+                              setNewTopicDraft('');
+                              setSelectedTopic(existingTopics[0] ?? '');
+                            }}
+                            className="px-3 py-2 text-sm text-muted-foreground hover:text-foreground"
+                          >
+                            Cancel
+                          </button>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Press Enter or click Add to register this topic.
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Category Selection */}
@@ -323,8 +506,8 @@ export default function QueriesContent(): React.ReactElement {
                 </div>
               </div>
 
-              {/* Modal Footer */}
-              <div className="flex items-center justify-end space-x-3 mt-6">
+              {/* Modal Footer — fixed */}
+              <div className="flex items-center justify-end space-x-3 px-6 py-4 border-t border-border/50 flex-shrink-0">
                 <button
                   onClick={handleCancelQuery}
                   className="px-4 py-2 text-muted-foreground hover:text-foreground transition-colors"
@@ -333,7 +516,7 @@ export default function QueriesContent(): React.ReactElement {
                 </button>
                 <button
                   onClick={handleSaveQuery}
-                  disabled={!newQuery.trim() || isSaving}
+                  disabled={!newQuery.trim() || !resolveTopic() || isSaving}
                   className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {isSaving ? 'Adding...' : 'Add Query'}

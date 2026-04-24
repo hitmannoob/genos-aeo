@@ -1,5 +1,5 @@
 'use client'
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useBrandContext } from '@/context/BrandContext';
 import Card from '@/components/shared/Card';
 import { 
@@ -64,6 +64,10 @@ export default function QueriesOverview({
   const [countdown, setCountdown] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
   const [processingQueries, setProcessingQueries] = useState<Set<string>>(new Set()); // Track which queries are being processed
   const [isProcessingActive, setIsProcessingActive] = useState(false); // Track if any processing is happening
+  // Queries in the current batch — populated by ProcessQueriesButton's onStart.
+  // Held in a ref so the onProgress closure always sees the latest batch
+  // scope without stale-state bugs.
+  const batchQueriesRef = useRef<Set<string>>(new Set());
   // const processButtonRef = React.useRef<any>(null); // Removed as per edit hint
 
   // Use brand override if provided, otherwise use selected brand
@@ -209,27 +213,29 @@ export default function QueriesOverview({
     }
   };
 
-  // Helper function to get query status
+  // Helper function to get query status.
+  // `processingQueries` is now scoped to the active batch only (set by
+  // ProcessQueriesButton via onStart/onProgress), so membership accurately
+  // means "being processed right now." We check it first to preserve the
+  // spinner on in-flight queries — including re-runs of queries that already
+  // have prior data. Non-batch queries fall through to their real status.
   const getQueryStatus = (query: any) => {
     const queryResult = findQueryResult(query.query);
-    
-    // Check if this query is currently being processed
+
     if (processingQueries.has(query.query)) {
       return {
         status: 'Processing',
         color: 'bg-blue-500 text-white',
-        description: 'Query is being processed...',
-        showLoader: true // Add this flag
+        description: queryResult ? 'Re-processing query...' : 'Query is being processed...',
+        showLoader: true
       };
     }
-    
-    // Check if query has been processed
+
     if (queryResult) {
-      // Calculate if it was processed within the last 7 days
       const processedDate = new Date(queryResult.date);
       const now = new Date();
       const daysSinceProcessed = Math.floor((now.getTime() - processedDate.getTime()) / (1000 * 60 * 60 * 24));
-      
+
       if (daysSinceProcessed <= 7) {
         return {
           status: 'Processed',
@@ -237,17 +243,15 @@ export default function QueriesOverview({
           description: `Processed ${daysSinceProcessed} day${daysSinceProcessed !== 1 ? 's' : ''} ago`,
           showLoader: false
         };
-      } else {
-        return {
-          status: 'Due for Processing',
-          color: 'bg-amber-500 text-white',
-          description: `Processed ${daysSinceProcessed} days ago (due for reprocessing)`,
-          showLoader: false
-        };
       }
+      return {
+        status: 'Due for Processing',
+        color: 'bg-amber-500 text-white',
+        description: `Processed ${daysSinceProcessed} days ago (due for reprocessing)`,
+        showLoader: false
+      };
     }
-    
-    // Query has not been processed
+
     return {
       status: 'Unprocessed',
       color: 'bg-gray-500 text-white',
@@ -361,30 +365,39 @@ export default function QueriesOverview({
                 variant="ghost"
                 size="sm"
                 autoStart={shouldAutoStart}
-                onStart={() => {
-                  // Set all queries as potentially processing when processing starts
+                onStart={(batchQueries) => {
+                  // Scope the processing set to the current batch only. Queries
+                  // not in this batch keep their existing status (Processed,
+                  // Due, Unprocessed) and don't get the "Processing" badge.
                   setIsProcessingActive(true);
-                  const allQueryNames = new Set(queries.map(q => q.query));
-                  setProcessingQueries(allQueryNames);
+                  batchQueriesRef.current = new Set(batchQueries);
+                  setProcessingQueries(new Set(batchQueries));
                 }}
                 onQueryStart={(queryName) => {
-                  // Mark this specific query as processing
+                  // Defensive: ensure the active query is in the set even if
+                  // onStart hasn't fired yet (or if this query was added to
+                  // the batch after start — currently doesn't happen but
+                  // cheap to be safe).
+                  batchQueriesRef.current.add(queryName);
                   setProcessingQueries(prev => new Set([...prev, queryName]));
                 }}
                 onProgress={(results) => {
                   setLiveResults(results);
-                  // Remove completed queries from processing set
+                  // Remove queries that have completed in this batch.
+                  // Scope is the batch, not the full query list.
                   const completedQueries = new Set(results.map(r => r.query));
-                  const allQueryNames = new Set(queries.map(q => q.query));
-                  const stillProcessing = new Set([...allQueryNames].filter(q => !completedQueries.has(q)));
+                  const stillProcessing = new Set(
+                    [...batchQueriesRef.current].filter(q => !completedQueries.has(q))
+                  );
                   setProcessingQueries(stillProcessing);
                 }}
                 onComplete={async (result) => {
                   // Clear processing states immediately
                   setIsProcessingActive(false);
+                  batchQueriesRef.current = new Set();
                   setProcessingQueries(new Set());
                   setLiveResults([]);
-                  
+
                   // Refresh brands to get updated data
                   await refetchBrands();
                 }}

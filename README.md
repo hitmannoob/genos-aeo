@@ -1,4 +1,4 @@
-# 🤖 GetCito - World's First Open Source AI Optimization (AIO) / Generative Engine Optimization (GEO) Tool
+# 🤖 Genos - World's First Open Source AI Optimization (AIO) / Generative Engine Optimization (GEO) Tool
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org/)
@@ -7,7 +7,7 @@
 
 A comprehensive AI-powered monitoring and optimization tool for **AI Optimization (AIO)**, **Answer Engine Optimization (AEO)**, and **Generative Engine Optimization (GEO)**. Monitor your digital presence across AI-powered search engines and optimize your content for maximum visibility.
 
-![GetCito Preview](https://getcito.com/assets/images/template/ai-visibility-tracking.webp)
+![Genos Preview](https://getcito.com/assets/images/template/ai-visibility-tracking.webp)
 
 ## 📚 Table of Contents
 
@@ -35,7 +35,7 @@ A comprehensive AI-powered monitoring and optimization tool for **AI Optimizatio
 
 ### 🛠️ Technical Features
 - **Next.js 13+**: Server-side rendering with App Router and React Server Components
-- **Multi-Provider AI**: Azure OpenAI (primary) with Google Gemini fallback system
+- **Multi-Provider AI**: Parallel fan-out across ChatGPT Search, Google AI Overview (via DataForSEO), and Perplexity. Google Gemini is also wired in and used for company-info extraction and brand onboarding flows.
 - **Firebase Integration**: Authentication, Firestore database, and cloud functions
 - **Responsive Design**: Mobile-first UI built with Tailwind CSS
 - **Real-time Updates**: Live data synchronization and notifications
@@ -107,17 +107,25 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/deploym
 
 Example...
 
-# Azure OpenAI Configuration (Required)
-AZURE_OPENAI_API_KEY=your_azure_openai_api_key_here
-AZURE_OPENAI_ENDPOINT=https://your-resource-name.openai.azure.com
-AZURE_OPENAI_DEPLOYMENT=gpt-4
-AZURE_OPENAI_API_VERSION=2024-02-01
+# ChatGPT Search Configuration (OpenAI — used for ChatGPT Search provider)
+# Either OPENAI_API_KEY or CHATGPT_SEARCH_API_KEY is accepted.
+OPENAI_API_KEY=your_openai_api_key_here
+# CHATGPT_SEARCH_API_KEY=your_openai_api_key_here
 
-# Google Gemini Configuration (Optional)
+# Perplexity Configuration
+PERPLEXITY_API_KEY=your_perplexity_api_key_here
+
+# Google AI Overview via DataForSEO (both required to enable this provider)
+DATAFORSEO_USERNAME=your_dataforseo_username
+DATAFORSEO_PASSWORD=your_dataforseo_password
+
+# Google Gemini Configuration (optional — used for company info + brand onboarding)
 # Get your API key from: https://ai.google.dev/
 GOOGLE_AI_API_KEY=your_google_ai_api_key_here
 # Alternative name for Gemini API key
 # GEMINI_API_KEY=your_google_ai_api_key_here
+# Optional: override the Gemini model (defaults to gemini-3.1-flash-lite-preview)
+# GEMINI_MODEL=gemini-3.1-flash-lite-preview
 
 # Firebase Configuration (Required for authentication and data storage)
 NEXT_PUBLIC_FIREBASE_API_KEY=your_firebase_api_key
@@ -145,7 +153,7 @@ NEXTAUTH_SECRET=
 NODE_ENV=development
 
 # Optional: Custom App Settings
-NEXT_PUBLIC_APP_NAME=GetCito Free & Open Source AIO, AEO or GEO Tool
+NEXT_PUBLIC_APP_NAME=Genos Free & Open Source AIO, AEO or GEO Tool
 NEXT_PUBLIC_APP_VERSION=10.0.0
 
 
@@ -173,6 +181,21 @@ PERPLEXITY_API_KEY=
 
 FIREBASE_CLIENT_EMAIL=
 FIREBASE_PRIVATE_KEY=
+
+# Sentry Error Reporting (Optional)
+# If both are empty, Sentry is disabled and the app works fine without it.
+# Point these at your own Sentry instance (self-hosted or sentry.io).
+SENTRY_DSN=
+NEXT_PUBLIC_SENTRY_DSN=
+
+# Scheduled Query Processing (required only if using the cron endpoint)
+# Shared secret for /api/cron/process-scheduled. Generate with:
+#   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+CRON_SECRET=
+
+# Base URL used for internal /api/user-query calls from the cron endpoint.
+# Set in production; localhost is used as a fallback in dev.
+NEXT_PUBLIC_APP_URL=https://your-deployed-app.example.com
 
 - Duplicate the `env.example` file and paste these variables with your own information.
 - Click on `Continue on console` button
@@ -228,48 +251,86 @@ const { user, loading } = useAuthContext();
 
 ## AI Provider Configuration
 
-This application uses a multi-provider AI system with Azure OpenAI as the primary provider and Google Gemini as fallback. This ensures high availability and cost optimization.
+This application uses a multi-provider AI system that fans queries out in parallel to several third-party providers and aggregates their results. There is no primary/fallback chain — each provider is called concurrently and its result is treated independently. Providers are implemented under `src/lib/api-providers/` and wired together by `src/lib/api-providers/provider-manager.ts`.
 
-### Azure OpenAI Configuration (Primary Provider)
+### Providers
 
-1. Create an Azure OpenAI resource in the Azure portal
-2. Deploy a GPT-4 model in your Azure OpenAI service
-3. Add the following environment variables to your `.env` file:
+#### ChatGPT Search (OpenAI)
+
+Implemented in `src/lib/api-providers/chatgptsearch-provider.ts`. Uses the OpenAI Responses API with the `web_search_preview` tool.
+
+Reads the first non-empty value of:
 
 ```md
-AZURE_OPENAI_API_KEY=your_azure_openai_api_key_here
-AZURE_OPENAI_ENDPOINT=https://your-resource-name.openai.azure.com
-AZURE_OPENAI_DEPLOYMENT=gpt-4
-AZURE_OPENAI_API_VERSION=2024-02-01
+OPENAI_API_KEY=your_openai_api_key_here
+# or
+CHATGPT_SEARCH_API_KEY=your_openai_api_key_here
 ```
 
-### Google Gemini Configuration (Fallback Provider)
+#### Perplexity
 
-1. Get a Google AI API key from the [Google AI Studio](https://aistudio.google.com/app/apikey)
-2. Add the following environment variable to your `.env` file:
+Implemented in `src/lib/api-providers/perplexity-provider.ts`. Calls `https://api.perplexity.ai/chat/completions` with the `sonar` / `sonar-pro` models.
+
+```md
+PERPLEXITY_API_KEY=your_perplexity_api_key_here
+```
+
+#### Google AI Overview (via DataForSEO)
+
+Implemented in `src/lib/api-providers/google-ai-overview-provider.ts`. Hits the DataForSEO SERP API. Requires **both** credentials to be set, otherwise the provider is disabled at startup.
+
+```md
+DATAFORSEO_USERNAME=your_dataforseo_username
+DATAFORSEO_PASSWORD=your_dataforseo_password
+```
+
+> DataForSEO is a paid service. Sign up at <https://dataforseo.com/> for API access.
+
+#### Google Gemini (optional)
+
+Implemented in `src/lib/api-providers/gemini-provider.ts`. Currently invoked from the company-info extraction API (`src/app/api/get-company-info/route.ts`) and the brand onboarding flow, alongside ChatGPT Search.
+
+> TODO: Gemini is **not** invoked from `src/app/api/user-query/route.ts`, which hard-codes `['chatgptsearch', 'google-ai-overview', 'perplexity']`. If you want Gemini to participate in the main user-query fan-out, add it to that list.
+
+Reads the first non-empty value of:
 
 ```md
 GOOGLE_AI_API_KEY=your_google_ai_api_key_here
-# or alternatively
+# or
 GEMINI_API_KEY=your_gemini_api_key_here
+# Optional: override the model (default: gemini-3.1-flash-lite-preview)
+# GEMINI_MODEL=gemini-3.1-flash-lite-preview
 ```
 
-### How the Fallback System Works
+### How the Multi-Provider System Works
 
-- **Primary**: Azure OpenAI is attempted first for all AI requests
-- **Fallback**: If Azure OpenAI fails or is unavailable, the system automatically falls back to Google Gemini
-- **Monitoring**: All provider responses, costs, and response times are logged for monitoring
-- **Cost Tracking**: The system tracks costs across providers to help optimize usage
+- **Parallel fan-out, no fallback**: `ProviderManager.processRequest` maps each requested provider to a promise and awaits them with `Promise.allSettled`. There is no primary/secondary chain; every enabled provider is hit on every request.
+- **Independent per-provider errors**: If a provider rejects or returns a non-success status, its entry is marked `status: 'error'` and excluded from the aggregated successful results — the other providers' responses still flow through.
+- **Provider selection per call-site**: Each API route chooses which providers to invoke. For example, `src/app/api/user-query/route.ts` requests `['chatgptsearch', 'google-ai-overview', 'perplexity']`, while `src/app/api/get-company-info/route.ts` requests `['chatgptsearch', 'google-gemini']`.
+- **Startup gating**: Providers whose env vars are missing at startup are skipped entirely — they never get registered with the `ProviderManager`. Requests for those providers return a `Provider not found` error.
+- **Monitoring**: All provider responses, costs, and response times are logged to the server console.
 
-### Testing the AI Providers
+## Error Reporting (Sentry)
 
-You can test the AI provider configuration by running:
+The app ships with optional [Sentry](https://sentry.io/) integration via the open-source, MIT-licensed [`@sentry/nextjs`](https://github.com/getsentry/sentry-javascript) SDK. You can point it at the hosted service or your own self-hosted Sentry instance.
 
-```bash
-node test-company-info.js
-```
+### Environment Variables
 
-This will test the company information extraction API with sample domains and show which providers are being used.
+| Variable | Scope | Description |
+| --- | --- | --- |
+| `SENTRY_DSN` | Server-side (Node.js & Edge runtimes) | DSN used by `sentry.server.config.ts` and `sentry.edge.config.ts`. |
+| `NEXT_PUBLIC_SENTRY_DSN` | Client-side (browser) | DSN used by `sentry.client.config.ts`. Can be the same DSN as `SENTRY_DSN`. |
+
+**The app works fine without Sentry configured.** When neither variable is set, the SDK is initialized with `enabled: false` and no-ops — no events are sent, no replay/tracing is collected, and nothing is logged.
+
+### What's wired up
+
+- `sentry.client.config.ts`, `sentry.server.config.ts`, `sentry.edge.config.ts` at the project root
+- `src/instrumentation.ts` dispatches to the right config per `NEXT_RUNTIME`
+- `next.config.js` wraps the exported config with `withSentryConfig` (lazy-loaded so the app builds before `npm install`)
+- `src/app/error.tsx` captures uncaught errors from the App Router via `Sentry.captureException`
+
+Source-map uploads are **not** configured — they require `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, and `SENTRY_PROJECT`. See the TODO in `next.config.js` and wire them up when deployment is in place.
 
 ## Folder Structure
 
@@ -283,6 +344,61 @@ The folder structure of this project is organized as follows:
 - `firebase`: Houses the Firebase configuration and Firebase-related functions.
 
 Feel free to modify and expand the folder structure according to your project requirements.
+
+## Scheduled Query Reprocessing
+
+Brand query batches are re-run on a schedule (default: every 7 days per brand).
+Triggering is done by hitting a protected endpoint externally — the app does not
+self-schedule.
+
+**Endpoint:** `POST /api/cron/process-scheduled`
+
+**Auth:** `Authorization: Bearer $CRON_SECRET`
+
+**Optional query params:**
+| Param | Default | Meaning |
+| --- | --- | --- |
+| `intervalDays` | `7` | A brand is "due" when its most recent result is older than this many days (or never processed). |
+| `maxBrands` | `50` | Safety cap on brands processed per invocation. Un-processed brands are picked up on the next run. |
+| `brandId` | — | Process a single brand (useful for manual replays). |
+
+**Preview:** `GET /api/cron/process-scheduled` returns the list of brands that
+*would* be processed now, without running anything. Same auth.
+
+**How it works:**
+- Finds brands whose latest `queryProcessingResults[].date` is older than `intervalDays`.
+- For each due brand, calls `/api/user-query` once per query with cron-mode auth
+  (`Authorization: Bearer $CRON_SECRET` + `X-Cron-User-Id: <brand.userId>`).
+- Credits are deducted from the brand owner just like a normal query. Owners
+  out of credits will see per-query failures in the response summary.
+- Execution is serial to stay within serverless timeouts.
+
+### Hooking up a scheduler
+
+Pick one:
+
+**Firebase Cloud Scheduler → Cloud Function → HTTP call.** Create a tiny
+scheduled Cloud Function that does:
+```js
+await fetch(`${APP_URL}/api/cron/process-scheduled`, {
+  method: 'POST',
+  headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` },
+});
+```
+Schedule it at e.g. `every 24 hours`. Store `CRON_SECRET` and `APP_URL` as
+function env vars.
+
+**Vercel (if you switch host):** add to `vercel.json`:
+```json
+{ "crons": [{ "path": "/api/cron/process-scheduled", "schedule": "0 3 * * *" }] }
+```
+Vercel auto-adds the `Authorization` header with `CRON_SECRET`.
+
+**GitHub Actions:** one workflow file with `on: schedule` and a `curl` step
+pointing at the endpoint with the secret.
+
+**External cron (EasyCron, cron-job.org, etc.):** configure a POST with the
+`Authorization` header.
 
 ## Deployment
 
@@ -306,4 +422,4 @@ Resources
 - [Firebase Documentation](https://firebase.google.com/docs)
 - [Tailwind CSS Documentation](https://tailwindcss.com/docs)
 
-[World's First Open Source Generative Engine Optimization Tool Powered by GetCito](https://getcito.com/)
+[World's First Open Source Generative Engine Optimization Tool Powered by Genos](https://getcito.com/)

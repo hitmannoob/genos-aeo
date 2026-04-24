@@ -1,5 +1,5 @@
 import { BaseAPIProvider } from './base-provider';
-import { APIResponse, ProviderConfig, ChatGPTSearchRequest } from './types';
+import { APIResponse, ProviderConfig, ChatGPTSearchRequest, NormalizedCitation, parseDomain } from './types';
 import OpenAI from 'openai';
 
 export class ChatGPTSearchProvider extends BaseAPIProvider {
@@ -13,7 +13,7 @@ export class ChatGPTSearchProvider extends BaseAPIProvider {
     });
   }
 
-  async execute(request: ChatGPTSearchRequest): Promise<APIResponse> {
+  async execute(request: ChatGPTSearchRequest & { _userId?: string }): Promise<APIResponse> {
     const startTime = Date.now();
     const requestId = `chatgptsearch-${Date.now()}`;
 
@@ -22,11 +22,13 @@ export class ChatGPTSearchProvider extends BaseAPIProvider {
         throw new Error('Invalid request format');
       }
 
-      await this.checkRateLimit();
+      if (!(await this.checkRateLimit(request._userId))) {
+        throw new Error('Rate limit exceeded for chatgptsearch provider');
+      }
 
       const response = await this.retryRequest(async () => {
         return await this.client.responses.create({
-          model: request.model || "gpt-4.1",
+          model: request.model || "gpt-5.4-mini",
           tools: [{ type: "web_search_preview" }],
           input: request.input,
           temperature: request.temperature,
@@ -40,7 +42,7 @@ export class ChatGPTSearchProvider extends BaseAPIProvider {
       
       // Log specific parts for easier debugging
       console.log('🌐 ChatGPT Search Response Summary:', {
-        model: response.model || 'gpt-4.1',
+        model: response.model || 'gpt-5.4-mini',
         hasOutput: !!response.output_text,
         outputLength: response.output_text?.length || 0,
         preview: response.output_text?.substring(0, 200) + '...',
@@ -101,19 +103,23 @@ export class ChatGPTSearchProvider extends BaseAPIProvider {
   }
 
   transformResponse(rawResponse: any): any {
+    const annotations = ChatGPTSearchProvider.collectAnnotations(rawResponse);
+
     return {
       content: rawResponse.output_text || '',
-      model: rawResponse.model || 'gpt-4.1',
+      model: rawResponse.model || 'gpt-5.4-mini',
       usage: rawResponse.usage,
       searchEnabled: true,
       webSearchUsed: true,
       tools: ['web_search_preview'],
       // Include annotations (sources, citations, etc.)
-      annotations: rawResponse.annotations || [],
-      annotationsCount: rawResponse.annotations?.length || 0,
+      annotations,
+      annotationsCount: annotations.length,
+      // Canonical normalized citation list for downstream aggregation
+      normalizedCitations: ChatGPTSearchProvider.extractNormalizedCitations(rawResponse),
       // Include any other metadata
       metadata: {
-        hasAnnotations: !!rawResponse.annotations,
+        hasAnnotations: annotations.length > 0,
         responseId: rawResponse.id,
         created: rawResponse.created,
         object: rawResponse.object,
@@ -121,6 +127,68 @@ export class ChatGPTSearchProvider extends BaseAPIProvider {
       // Raw response for debugging (optional)
       rawResponse: rawResponse
     };
+  }
+
+  // OpenAI's responses API nests annotations under each output item's content
+  // parts. Older/flat-shape responses also put them at `response.annotations`.
+  // Gather both so downstream callers don't need to care where they lived.
+  private static collectAnnotations(rawResponse: any): any[] {
+    const annotations: any[] = [];
+    if (Array.isArray(rawResponse?.annotations)) {
+      annotations.push(...rawResponse.annotations);
+    }
+    const output = rawResponse?.output;
+    if (Array.isArray(output)) {
+      output.forEach((item: any) => {
+        if (Array.isArray(item?.content)) {
+          item.content.forEach((part: any) => {
+            if (Array.isArray(part?.annotations)) {
+              annotations.push(...part.annotations);
+            }
+          });
+        }
+        // Some shapes attach annotations directly on the item
+        if (Array.isArray(item?.annotations)) {
+          annotations.push(...item.annotations);
+        }
+      });
+    }
+    return annotations;
+  }
+
+  // Build the canonical NormalizedCitation list from a raw ChatGPT Search response.
+  // Maps each annotation whose `type` indicates a URL citation
+  // (`url_citation` in OpenAI's responses API) into a NormalizedCitation.
+  static extractNormalizedCitations(rawResponse: any): NormalizedCitation[] {
+    const annotations = ChatGPTSearchProvider.collectAnnotations(rawResponse);
+    const out: NormalizedCitation[] = [];
+    const seen = new Set<string>();
+
+    annotations.forEach((ann: any) => {
+      if (!ann || typeof ann !== 'object') return;
+      // OpenAI responses API uses `url_citation`. Accept any type that carries
+      // an explicit URL so schema drift between model versions doesn't silently
+      // drop citations.
+      const type = typeof ann.type === 'string' ? ann.type : '';
+      const url: string | undefined = ann.url || ann.source?.url;
+      if (!url) return;
+      if (type && type !== 'url_citation' && !type.toLowerCase().includes('citation') && !type.toLowerCase().includes('url')) {
+        return;
+      }
+      const domain = parseDomain(url);
+      if (!domain) return;
+      if (seen.has(url)) return;
+      seen.add(url);
+      out.push({
+        url,
+        domain,
+        title: ann.title || ann.source?.title,
+        sourceProvider: 'chatgpt',
+        rawKind: 'annotation',
+      });
+    });
+
+    return out;
   }
 
   protected calculateCost(tokensUsed: number = 0): number {
@@ -135,7 +203,7 @@ export class ChatGPTSearchProvider extends BaseAPIProvider {
     try {
       const testRequest: ChatGPTSearchRequest = {
         input: 'What is the current weather?',
-        model: 'gpt-4.1',
+        model: 'gpt-5.4-mini',
         max_tokens: 50,
       };
       

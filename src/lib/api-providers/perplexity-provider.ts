@@ -1,5 +1,5 @@
 import { BaseAPIProvider } from './base-provider';
-import { APIResponse, ProviderConfig, PerplexityRequest } from './types';
+import { APIResponse, ProviderConfig, PerplexityRequest, NormalizedCitation, parseDomain } from './types';
 
 export class PerplexityProvider extends BaseAPIProvider {
   private apiKey: string;
@@ -11,7 +11,7 @@ export class PerplexityProvider extends BaseAPIProvider {
     this.apiUrl = 'https://api.perplexity.ai/chat/completions';
   }
 
-  async execute(request: PerplexityRequest): Promise<APIResponse> {
+  async execute(request: PerplexityRequest & { _userId?: string }): Promise<APIResponse> {
     const startTime = Date.now();
     const requestId = `perplexity-${Date.now()}`;
 
@@ -20,7 +20,9 @@ export class PerplexityProvider extends BaseAPIProvider {
         throw new Error('Invalid request format');
       }
 
-      await this.checkRateLimit();
+      if (!(await this.checkRateLimit(request._userId))) {
+        throw new Error('Rate limit exceeded for perplexity provider');
+      }
 
       const payload = {
         model: request.model || 'sonar',
@@ -153,17 +155,19 @@ export class PerplexityProvider extends BaseAPIProvider {
   transformResponse(rawResponse: any): any {
     const choice = rawResponse.choices?.[0];
     const message = choice?.message;
-    
+
     // Extract structured citations from the API response
     const structuredCitations = this.extractStructuredCitations(rawResponse);
-    
-    // Also extract text-based citations as fallback
-    const textCitations = this.extractCitations(message?.content || '');
-    
-    // Combine and deduplicate citations
-    const allCitations = [...structuredCitations, ...textCitations];
-    const uniqueCitations = this.deduplicateCitations(allCitations);
-    
+
+    // Extract URLs that appear in body text. These are intentionally kept
+    // separate from the canonical `citations` list because text-scraped URLs
+    // are lower confidence. (Numeric bracket markers like "[1]" are dropped
+    // here — they produce false positives such as "[1] million dollars".)
+    const textOnlyUrls = this.extractTextUrls(message?.content || '');
+
+    // Canonical normalized citation list for downstream aggregation
+    const normalizedCitations = PerplexityProvider.extractNormalizedCitations(rawResponse);
+
     return {
       content: message?.content || '',
       model: rawResponse.model || 'sonar-pro',
@@ -177,7 +181,9 @@ export class PerplexityProvider extends BaseAPIProvider {
         reasoning_tokens: rawResponse.usage?.reasoning_tokens || 0
       },
       finish_reason: choice?.finish_reason || 'unknown',
-      citations: uniqueCitations,
+      citations: structuredCitations,
+      textOnlyUrls,
+      normalizedCitations,
       searchResults: rawResponse.search_results || [],
       structuredCitations: rawResponse.citations || [],
       webSearchEnabled: true,
@@ -194,6 +200,48 @@ export class PerplexityProvider extends BaseAPIProvider {
       },
       rawResponse: rawResponse
     };
+  }
+
+  // Build the canonical NormalizedCitation list from a raw Perplexity response.
+  // Iterates `response.citations` (structured URLs) and `response.search_results`
+  // only — text-body URLs and `[\d+]` bracket markers are intentionally excluded.
+  static extractNormalizedCitations(rawResponse: any): NormalizedCitation[] {
+    const out: NormalizedCitation[] = [];
+    const seen = new Set<string>();
+
+    const push = (url: string | undefined, rawKind: string, title?: string) => {
+      if (!url || typeof url !== 'string') return;
+      const domain = parseDomain(url);
+      if (!domain) return;
+      if (seen.has(url)) return;
+      seen.add(url);
+      out.push({
+        url,
+        domain,
+        title,
+        sourceProvider: 'perplexity',
+        rawKind,
+      });
+    };
+
+    if (Array.isArray(rawResponse?.citations)) {
+      rawResponse.citations.forEach((c: any) => {
+        // Perplexity ships `citations` as either string URLs or objects.
+        if (typeof c === 'string') {
+          push(c, 'structured');
+        } else if (c && typeof c === 'object') {
+          push(c.url, 'structured', c.title);
+        }
+      });
+    }
+
+    if (Array.isArray(rawResponse?.search_results)) {
+      rawResponse.search_results.forEach((r: any) => {
+        push(r?.url, 'search-result', r?.title);
+      });
+    }
+
+    return out;
   }
 
   private extractStructuredCitations(rawResponse: any): any[] {
@@ -230,56 +278,26 @@ export class PerplexityProvider extends BaseAPIProvider {
     return citations;
   }
 
-  private extractCitations(content: string): any[] {
-    // Perplexity often includes citations in the format [1], [2], etc.
-    // or as URLs. This extracts them for easier access.
-    const citations: any[] = [];
-    
-    // Extract numbered citations like [1], [2], etc.
-    const numberedCitations = content.match(/\[\d+\]/g);
-    if (numberedCitations) {
-      numberedCitations.forEach((citation, index) => {
-        citations.push({
-          url: citation,
-          text: citation,
-          source: 'Perplexity Text Citation',
-          index: index + 1,
-          type: 'text_reference'
-        });
-      });
-    }
-    
-    // Extract URLs
-    const urlRegex = /https?:\/\/[^\s\)]+/g;
-    const urls = content.match(urlRegex);
-    if (urls) {
-      urls.forEach((url, index) => {
-        citations.push({
-          url: url,
-          text: url,
-          source: 'Perplexity Text URL',
-          index: index + 1,
-          type: 'text_url'
-        });
-      });
-    }
-    
-    return citations;
-  }
-
-  private deduplicateCitations(citations: any[]): any[] {
+  // Extract plain URLs that appear in the response body. These are low-confidence
+  // and intentionally not folded into the canonical `citations` list — callers
+  // get them separately via `textOnlyUrls` on the transformed response.
+  //
+  // Note: the previous version also harvested bracketed numeric markers like
+  // `[1]` from body text. That behavior was removed because it produced false
+  // positives on tokens such as "[1] million dollars" — such tokens are NOT
+  // URLs and should not be treated as citations.
+  private extractTextUrls(content: string): Array<{ url: string; text: string }> {
+    if (!content) return [];
+    const urls = content.match(/https?:\/\/[^\s)]+/g);
+    if (!urls) return [];
     const seen = new Set<string>();
-    const deduplicated: any[] = [];
-    
-    citations.forEach(citation => {
-      const key = citation.url || citation.text || '';
-      if (key && !seen.has(key)) {
-        seen.add(key);
-        deduplicated.push(citation);
-      }
+    const out: Array<{ url: string; text: string }> = [];
+    urls.forEach(url => {
+      if (seen.has(url)) return;
+      seen.add(url);
+      out.push({ url, text: url });
     });
-    
-    return deduplicated;
+    return out;
   }
 
   protected calculateCost(response: any): number {

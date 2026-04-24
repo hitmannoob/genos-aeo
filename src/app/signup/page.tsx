@@ -46,7 +46,7 @@ function Page(): React.ReactElement {
     // Sign up successful
     console.log( result );
 
-    // Redirect new users directly to brand setup (they will have 500 credits)
+    // Redirect new users directly to brand setup (they will have 1000 credits)
     router.push( "/dashboard/add-brand/step-1" );
   }
 
@@ -73,7 +73,7 @@ function Page(): React.ReactElement {
     }
 
     console.log( result );
-    // Redirect new users directly to brand setup (they will have 500 credits)
+    // Redirect new users directly to brand setup (they will have 1000 credits)
     router.push( "/dashboard/add-brand/step-1" );
   }
 

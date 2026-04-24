@@ -1,6 +1,4 @@
 import { BaseAPIProvider } from './base-provider';
-import { AzureOpenAIProvider } from './openai-provider';
-import { AzureOpenAISearchProvider } from './azure-openai-search-provider';
 import { GeminiProvider } from './gemini-provider';
 import { ChatGPTSearchProvider } from './chatgptsearch-provider';
 import { GoogleAIOverviewProvider } from './google-ai-overview-provider';
@@ -24,12 +22,6 @@ export class ProviderManager {
       let provider: BaseAPIProvider;
       
       switch (config.type) {
-        case 'azure-openai':
-          provider = new AzureOpenAIProvider(config);
-          break;
-        case 'azure-openai-search':
-          provider = new AzureOpenAISearchProvider(config);
-          break;
         case 'google-gemini':
           provider = new GeminiProvider(config);
           break;
@@ -55,42 +47,6 @@ export class ProviderManager {
     // In production, this would come from environment variables or database
     const configs = [];
     
-    // Azure OpenAI Configuration
-    const azureConfig = {
-      name: 'azure-openai',
-      type: 'azure-openai' as const,
-      apiKey: process.env.AZURE_OPENAI_API_KEY || 'your_azure_openai_api_key_here',
-      azureEndpoint: process.env.AZURE_OPENAI_ENDPOINT || 'https://your-resource-name.openai.azure.com',
-      deploymentName: process.env.AZURE_OPENAI_DEPLOYMENT || 'gpt-4',
-      timeout: 30000,
-      retryAttempts: 3,
-    };
-    configs.push(azureConfig);
-
-    // Azure OpenAI Direct Configuration (Azure Search integration DISABLED)
-    const azureSearchApiKey = process.env.AZURE_OPENAI_SEARCH_API_KEY || process.env.AZURE_OPENAI_API_KEY;
-    if (azureSearchApiKey && azureSearchApiKey.trim() !== '') {
-      const azureOpenAISearchConfig = {
-        name: 'azure-openai-search',
-        type: 'azure-openai-search' as const,
-        apiKey: azureSearchApiKey,
-        azureEndpoint: process.env.AZURE_OPENAI_SEARCH_ENDPOINT || process.env.AZURE_OPENAI_ENDPOINT || 'https://your-resource-name.openai.azure.com',
-        deploymentName: process.env.AZURE_OPENAI_SEARCH_DEPLOYMENT || process.env.AZURE_OPENAI_DEPLOYMENT || 'gpt-4',
-        // Use stable API version for direct calls (Azure Search disabled)
-        apiVersion: process.env.AZURE_OPENAI_API_VERSION || '2024-08-01-preview',
-        // NOTE: Azure Search configuration ignored - integration disabled
-        azureSearchEndpoint: process.env.AZURE_SEARCH_ENDPOINT,
-        azureSearchIndex: process.env.AZURE_SEARCH_INDEX,
-        azureSearchApiKey: process.env.AZURE_SEARCH_API_KEY,
-        timeout: 30000,
-        retryAttempts: 3,
-      };
-      configs.push(azureOpenAISearchConfig);
-      console.log('✅ Azure OpenAI provider configured in DIRECT mode (search integration disabled)');
-    } else {
-      console.warn('⚠️ Azure OpenAI API key not found. Set AZURE_OPENAI_SEARCH_API_KEY or AZURE_OPENAI_API_KEY environment variable to enable Azure OpenAI provider.');
-    }
-
     // ChatGPT Search Configuration
     const chatgptSearchApiKey = process.env.OPENAI_API_KEY || process.env.CHATGPT_SEARCH_API_KEY;
     if (chatgptSearchApiKey && chatgptSearchApiKey.trim() !== '') {
@@ -168,9 +124,6 @@ export class ProviderManager {
     
     console.log('🔧 Provider Manager Initialized:', {
       availableProviders: configs.map(c => c.name),
-      azureConfigured: !!process.env.AZURE_OPENAI_API_KEY,
-      azureDirectMode: !!(azureSearchApiKey && azureSearchApiKey.trim() !== ''),
-      azureSearchIntegration: 'DISABLED',
       chatgptSearchConfigured: !!chatgptSearchApiKey,
       perplexityConfigured: !!perplexityApiKey,
       geminiConfigured: !!geminiApiKey,
@@ -225,14 +178,17 @@ export class ProviderManager {
     console.log('All providers map:', Array.from(this.providers.keys()));
     console.log('🚨🚨🚨 PROVIDER AVAILABILITY CHECK END 🚨🚨🚨');
 
-    // Execute requests in parallel
-    const promises = providerNames.map(async (providerName) => {
+    // Execute requests in parallel. Each mapper catches its own errors and
+    // returns an `APIResponse` with `status: 'error'` — so the outer
+    // `Promise.all` cannot see a rejection, and no provider identity is ever
+    // lost to an `'unknown'` fallback.
+    const promises = providerNames.map(async (providerName): Promise<APIResponse> => {
       const provider = this.providers.get(providerName);
       if (!provider) {
         return {
           providerId: providerName,
           requestId: request.id,
-          status: 'error' as const,
+          status: 'error',
           error: 'Provider not found',
           responseTime: 0,
           cost: 0,
@@ -244,7 +200,7 @@ export class ProviderManager {
         // Transform generic request to provider-specific format
         const providerRequest = this.transformRequestForProvider(request, provider);
         console.log(`🚀 Executing ${providerName} with request:`, JSON.stringify(providerRequest, null, 2));
-        
+
         const result = await provider.execute(providerRequest);
         console.log(`✅ ${providerName} completed:`, {
           status: result.status,
@@ -252,7 +208,7 @@ export class ProviderManager {
           cost: result.cost,
           hasContent: !!result.data?.content
         });
-        
+
         // Enhanced logging for specific providers
         if (providerName === 'google-ai-overview') {
           console.log(`🔍 ${providerName} detailed result:`, {
@@ -264,19 +220,7 @@ export class ProviderManager {
             organicResultsCount: result.data?.organicResultsCount || 0
           });
         }
-        
-        if (providerName === 'azure-openai-search') {
-          console.log(`🔍 ${providerName} detailed result:`, {
-            dataKeys: Object.keys(result.data || {}),
-            content: result.data?.content?.substring(0, 200) + '...',
-            contentLength: result.data?.content?.length || 0,
-            hasAnnotations: !!result.data?.annotations,
-            annotationsCount: result.data?.annotations?.length || 0,
-            webSearchUsed: result.data?.webSearchUsed,
-            model: result.data?.model
-          });
-        }
-        
+
         if (providerName === 'perplexity') {
           console.log(`🔍 ${providerName} detailed result:`, {
             dataKeys: Object.keys(result.data || {}),
@@ -287,7 +231,7 @@ export class ProviderManager {
             realTimeData: result.data?.realTimeData
           });
         }
-        
+
         return result;
       } catch (error) {
         console.error(`❌ ${providerName} execution failed:`, {
@@ -297,7 +241,7 @@ export class ProviderManager {
         return {
           providerId: providerName,
           requestId: request.id,
-          status: 'error' as const,
+          status: 'error',
           error: (error as Error).message,
           responseTime: 0,
           cost: 0,
@@ -306,26 +250,11 @@ export class ProviderManager {
       }
     });
 
-    // Wait for all providers to complete
+    // Wait for all providers to complete. Rejections are impossible here
+    // because each mapper catches and returns an error-shaped APIResponse.
     console.log('⏳ Waiting for all providers to complete...');
-    const responses = await Promise.allSettled(promises);
-    
-    responses.forEach((response) => {
-      if (response.status === 'fulfilled') {
-        results.push(response.value);
-      } else {
-        console.error('❌ Provider promise rejected:', response.reason);
-        results.push({
-          providerId: 'unknown',
-          requestId: request.id,
-          status: 'error',
-          error: response.reason?.message || 'Unknown error',
-          responseTime: 0,
-          cost: 0,
-          timestamp: new Date(),
-        });
-      }
-    });
+    const responses = await Promise.all(promises);
+    results.push(...responses);
 
     // Calculate total cost
     const totalCost = results.reduce((sum, result) => sum + result.cost, 0);
@@ -369,31 +298,20 @@ export class ProviderManager {
     const providerType = provider.getType();
     const providerName = provider.getName();
 
+    // Pull locale / device overrides from the request's metadata bag. These
+    // are optional; provider defaults apply when absent. Shape:
+    //   metadata: { locationCode?: number; languageCode?: string;
+    //               device?: string; os?: string }
+    const md = request.metadata ?? {};
+    const userId = request.userId;
+
     switch (providerName) {
-      case 'azure-openai':
-        return {
-          model: 'gpt-4',
-          messages: [
-            { role: 'user', content: request.prompt }
-          ],
-          temperature: 0.7,
-          max_tokens: 1000,
-        };
-
-      case 'azure-openai-search':
-        return {
-          messages: [
-            { role: 'user', content: request.prompt }
-          ],
-          temperature: 0.7,
-          max_tokens: 4000, // Increased from 1000 for more detailed responses
-        };
-
       case 'chatgptsearch':
         return {
           input: request.prompt,
-          model: 'gpt-4.1',
+          model: 'gpt-5.4-mini',
           temperature: 0.7,
+          _userId: userId,
         };
 
       case 'perplexity':
@@ -402,21 +320,25 @@ export class ProviderManager {
           model: 'sonar-pro',
           temperature: 0.7,
           max_tokens: 1000,
+          _userId: userId,
         };
-      
+
       case 'google-ai-overview':
+        // Only forward override fields when explicitly supplied on
+        // metadata — the provider applies documented defaults itself.
         return {
           keyword: request.prompt,
-          location_code: 2840, // US
-          language_code: 'en',
-          device: 'desktop',
-          os: 'windows',
+          ...(md.locationCode !== undefined && { location_code: md.locationCode }),
+          ...(md.languageCode !== undefined && { language_code: md.languageCode }),
+          ...(md.device !== undefined && { device: md.device }),
+          ...(md.os !== undefined && { os: md.os }),
           depth: 10,
           group_organic_results: true,
           load_async_ai_overview: true,
           people_also_ask_click_depth: 4,
+          _userId: userId,
         };
-      
+
       case 'google-gemini':
         return {
           contents: [{
@@ -425,11 +347,12 @@ export class ProviderManager {
           generationConfig: {
             temperature: 0.7,
             maxOutputTokens: 1000,
-          }
+          },
+          _userId: userId,
         };
-      
+
       default:
-        return { prompt: request.prompt };
+        return { prompt: request.prompt, _userId: userId };
     }
   }
 

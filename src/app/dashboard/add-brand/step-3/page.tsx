@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { ArrowLeft, Check, Search, Sparkles, RefreshCw, Eye, Tag, TrendingUp, ShoppingCart, Lightbulb, Target, X, Plus, AlertCircle } from 'lucide-react';
+import { serverTimestamp } from 'firebase/firestore';
 import WebLogo from '@/components/shared/WebLogo';
 import { CompanyInfo } from '@/lib/get-company-info';
 import { useAIQuery } from '@/hooks/useAIQuery';
@@ -38,6 +39,11 @@ export default function AddBrandStep3(): React.ReactElement {
   const [showAddQueryModal, setShowAddQueryModal] = useState(false);
   const [newQuery, setNewQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<'Awareness' | 'Interest' | 'Consideration' | 'Purchase'>('Awareness');
+  // Query-modal topic picker state. Separate from the sidebar's selectedTopic
+  // (which is a filter, not an "I'm attaching to this topic" signal).
+  const [newQueryTopic, setNewQueryTopic] = useState<string>('');
+  const [isCreatingNewQueryTopic, setIsCreatingNewQueryTopic] = useState<boolean>(false);
+  const [newQueryTopicDraft, setNewQueryTopicDraft] = useState<string>('');
   const [isCompleting, setIsCompleting] = useState(false);
   const [selectedQueries, setSelectedQueries] = useState<Set<number>>(new Set());
   
@@ -119,7 +125,7 @@ Output format (return ONLY valid JSON array):
     try {
       await executeQuery(
         prompt,
-        ['azure-openai'], // Only use OpenAI for now, Gemini available for future use
+        ['chatgptsearch', 'google-gemini'],
         'high',
         'query-generation'
       );
@@ -316,7 +322,10 @@ Output format (return ONLY valid JSON array):
         companyName: companyData.companyName,
         shortDescription: companyData.shortDescription,
         productsAndServices: companyData.productsAndServices || [],
-        keywords: companyData.keywords || [],
+        // Persist every topic that's actually in use — declared topics plus
+        // any query-derived ones — so the brand's keyword list matches what
+        // its queries reference. Dedupe case-insensitively.
+        keywords: allTopics,
         competitors: companyData.competitors || [],
         
         // Step 3 - Generated Queries (only selected ones)
@@ -349,21 +358,25 @@ Output format (return ONLY valid JSON array):
         // Generated brand analytics
         brandsbasicData,
         
-        // Metadata
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        // Metadata — server-authoritative audit timestamps.
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        // `timestamp` (ms-since-epoch) is kept for legacy sort fallbacks in
+        // useUserBrands; new readers should prefer createdAt.
         timestamp: Date.now(),
         totalQueries: selectedQueries.size,
         setupComplete: true,
         currentStep: 3,
-        
-        // Credit usage tracking
+
+        // Credit usage tracking. creditTransaction.timestamp lives inside a
+        // nested map (not an array), so serverTimestamp() is allowed and
+        // matches the audit-timestamp policy for the rest of this doc.
         creditsUsed: 100,
         creditTransaction: {
           amount: 100,
           type: 'deduction',
           reason: 'Brand setup completion',
-          timestamp: new Date().toISOString()
+          timestamp: serverTimestamp()
         }
       };
 
@@ -460,7 +473,7 @@ Output format (return ONLY valid JSON array):
       case 'Interest': return 'bg-yellow-100 text-yellow-700 border-yellow-200';
       case 'Consideration': return 'bg-purple-100 text-purple-700 border-purple-200';
       case 'Purchase': return 'bg-green-100 text-green-700 border-green-200';
-      default: return 'bg-gray-100 text-gray-700 border-gray-200';
+      default: return 'bg-gray-100 text-foreground border-gray-200';
     }
   };
 
@@ -482,9 +495,37 @@ Output format (return ONLY valid JSON array):
     ? queriesByKeyword 
     : { [selectedTopic]: queriesByKeyword[selectedTopic] || [] };
 
-  // Get all topics (original keywords + additional topics)
-  const allTopics = [...(companyData?.keywords || []), ...additionalTopics];
-  const totalTopics = allTopics.length;
+  // Declared topics are what the user/onboarding explicitly registered —
+  // they're what count against the 10-topic cap.
+  const declaredTopics = [...(companyData?.keywords || []), ...additionalTopics];
+
+  // Query-derived topics: keywords that appear on generatedQueries but were
+  // never added to brand.keywords (e.g. AI-generated queries with their own
+  // categories). We surface these in the sidebar/picker so the user can
+  // actually see every topic in use — otherwise a query's topic would
+  // invisibly exist only on the row.
+  const allTopics = (() => {
+    const seen = new Set<string>();
+    const merged: string[] = [];
+    for (const raw of declaredTopics) {
+      const t = typeof raw === 'string' ? raw.trim() : '';
+      if (!t) continue;
+      const key = t.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(t);
+    }
+    for (const q of generatedQueries) {
+      const t = typeof q?.keyword === 'string' ? q.keyword.trim() : '';
+      if (!t) continue;
+      const key = t.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(t);
+    }
+    return merged;
+  })();
+  const totalTopics = declaredTopics.length;
   const canAddMoreTopics = totalTopics < 10;
 
   const handleAddTopic = () => {
@@ -531,39 +572,124 @@ Output format (return ONLY valid JSON array):
 
   // Query modal handlers
   const handleAddQuery = () => {
+    // Seed the modal's topic picker:
+    //   - If the sidebar is filtered to a specific topic, pre-select it
+    //   - Else if there's at least one topic, default to the first
+    //   - Else open directly in "create new topic" mode
+    const sidebarTopic = selectedTopic !== 'all' ? selectedTopic : '';
+    const firstTopic = allTopics[0] ?? '';
+    const initial = sidebarTopic || firstTopic;
+    setNewQueryTopic(initial);
+    setNewQueryTopicDraft('');
+    setIsCreatingNewQueryTopic(!initial);
     setShowAddQueryModal(true);
   };
 
-  const handleSaveQuery = () => {
-    if (newQuery.trim()) {
-      const newQueryObject: GeneratedQuery = {
-        keyword: selectedTopic === 'all' ? allTopics[0] || 'general' : selectedTopic,
-        query: newQuery.trim(),
-        category: selectedCategory,
-        containsBrand: newQuery.toLowerCase().includes(companyData?.companyName?.toLowerCase() || '') ? 1 : 0
-      };
-      
-      const newIndex = generatedQueries.length;
-      setGeneratedQueries(prev => [...prev, newQueryObject]);
-      
-      // Auto-select the newly added query
-      setSelectedQueries(prev => new Set([...prev, newIndex]));
-      
-      // Show success notification
-      showSuccess(
-        'Query Added Successfully!',
-        `Added "${newQuery.trim()}" to your ${selectedCategory.toLowerCase()} queries.`
-      );
-      
-      setNewQuery('');
-      setSelectedCategory('Awareness');
-      setShowAddQueryModal(false);
+  const resolveQueryTopic = (): string => {
+    if (isCreatingNewQueryTopic) return newQueryTopicDraft.trim().toLowerCase();
+    return newQueryTopic.trim();
+  };
+
+  // Confirm the typed new-topic draft: register it on the brand's topic list
+  // (respecting the 10-topic cap and dedupe), select it, and collapse the
+  // input back into the chip view. Also triggered by Enter in the input.
+  const handleConfirmNewTopic = () => {
+    const draft = newQueryTopicDraft.trim().toLowerCase();
+    if (!draft) return;
+
+    const existsAlready = allTopics.some(t => t.toLowerCase() === draft);
+    if (existsAlready) {
+      // Just select the existing match instead of duplicating.
+      setNewQueryTopic(allTopics.find(t => t.toLowerCase() === draft) ?? draft);
+      setIsCreatingNewQueryTopic(false);
+      setNewQueryTopicDraft('');
+      return;
     }
+
+    if (!canAddMoreTopics) {
+      showError(
+        'Topic limit reached',
+        'You already have 10 topics. Remove one before adding a new one.'
+      );
+      return;
+    }
+
+    setAdditionalTopics(prev => [...prev, draft]);
+    if (companyData) {
+      const updatedCompanyData = {
+        ...companyData,
+        keywords: [...(companyData.keywords || []), draft],
+      };
+      sessionStorage.setItem('companyInfo', JSON.stringify(updatedCompanyData));
+    }
+    setNewQueryTopic(draft);
+    setIsCreatingNewQueryTopic(false);
+    setNewQueryTopicDraft('');
+  };
+
+  const handleSaveQuery = () => {
+    const topic = resolveQueryTopic();
+    if (!newQuery.trim()) return;
+    if (!topic) {
+      showError('Topic required', 'Pick an existing topic or create a new one.');
+      return;
+    }
+
+    // If user created a new topic, register it on the brand's topic list.
+    // Respects the 10-topic cap; silently no-ops on duplicates.
+    const isNewTopic =
+      isCreatingNewQueryTopic &&
+      !allTopics.some(t => t.toLowerCase() === topic.toLowerCase());
+    if (isNewTopic) {
+      if (!canAddMoreTopics) {
+        showError(
+          'Topic limit reached',
+          'You already have 10 topics. Remove one before adding a new one.'
+        );
+        return;
+      }
+      setAdditionalTopics(prev => [...prev, topic]);
+      if (companyData) {
+        const updatedCompanyData = {
+          ...companyData,
+          keywords: [...(companyData.keywords || []), topic],
+        };
+        sessionStorage.setItem('companyInfo', JSON.stringify(updatedCompanyData));
+      }
+    }
+
+    const newQueryObject: GeneratedQuery = {
+      keyword: topic,
+      query: newQuery.trim(),
+      category: selectedCategory,
+      containsBrand: newQuery.toLowerCase().includes(companyData?.companyName?.toLowerCase() || '') ? 1 : 0
+    };
+
+    const newIndex = generatedQueries.length;
+    setGeneratedQueries(prev => [...prev, newQueryObject]);
+    setSelectedQueries(prev => new Set([...prev, newIndex]));
+
+    showSuccess(
+      'Query Added Successfully!',
+      isNewTopic
+        ? `New topic "${topic}" created and query attached.`
+        : `Added "${newQuery.trim()}" to "${topic}" under ${selectedCategory.toLowerCase()}.`
+    );
+
+    setNewQuery('');
+    setSelectedCategory('Awareness');
+    setNewQueryTopic('');
+    setNewQueryTopicDraft('');
+    setIsCreatingNewQueryTopic(false);
+    setShowAddQueryModal(false);
   };
 
   const handleCancelQuery = () => {
     setNewQuery('');
     setSelectedCategory('Awareness');
+    setNewQueryTopic('');
+    setNewQueryTopicDraft('');
+    setIsCreatingNewQueryTopic(false);
     setShowAddQueryModal(false);
   };
 
@@ -616,33 +742,25 @@ Output format (return ONLY valid JSON array):
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0E353C] flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#93E85F]"></div>
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#0E353C] flex flex-col">
+    <div className="min-h-screen bg-background flex flex-col">
       {/* Header with Logo and Step Indicators */}
       <div className="flex flex-col items-center pt-8 pb-6">
         <div className="flex flex-col items-center space-y-2 mb-8">
-          {/* AI Monitor Logo */}
+          {/* Genos Logo */}
           <div className="relative w-48 h-12">
             <Image
-              src="/getcito-logo-dark.webp"
-              alt="AI Monitor Logo"
+              src="/logo_no_background.png"
+              alt="Genos Logo"
               width={192}
               height={48}
-              className="block dark:hidden w-full h-auto"
-              priority
-            />
-            <Image
-              src="/AI-Monitor-Logo-V3-long-dark-themel.png"
-              alt="AI Monitor Logo"
-              width={192}
-              height={48}
-              className="hidden dark:block w-full h-auto"
+              className="w-full h-auto"
               priority
             />
           </div>
@@ -652,54 +770,54 @@ Output format (return ONLY valid JSON array):
         <div className="flex items-center space-x-8">
           {/* Step 1 - Completed */}
           <div className="flex flex-col items-center">
-            <div className="w-12 h-12 bg-[#93E85F] text-black rounded-full flex items-center justify-center text-lg font-semibold mb-2">
+            <div className="w-12 h-12 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-lg font-semibold mb-2">
               ✓
             </div>
-            <span className="text-gray-300 text-sm">Domain</span>
+            <span className="text-muted-foreground text-sm">Domain</span>
           </div>
 
           {/* Connector */}
-          <div className="w-16 h-px bg-[#93E85F]"></div>
+          <div className="w-16 h-px bg-primary"></div>
 
           {/* Step 2 - Completed */}
           <div className="flex flex-col items-center">
-            <div className="w-12 h-12 bg-[#93E85F] text-black rounded-full flex items-center justify-center text-lg font-semibold mb-2">
+            <div className="w-12 h-12 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-lg font-semibold mb-2">
               ✓
             </div>
-            <span className="text-gray-300 text-sm">Brand</span>
+            <span className="text-muted-foreground text-sm">Brand</span>
           </div>
 
           {/* Connector */}
-          <div className="w-16 h-px bg-[#93E85F]"></div>
+          <div className="w-16 h-px bg-primary"></div>
 
           {/* Step 3 - Active */}
           <div className="flex flex-col items-center">
-            <div className="w-12 h-12 bg-[#93E85F] text-black rounded-full flex items-center justify-center text-lg font-semibold mb-2">
+            <div className="w-12 h-12 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-lg font-semibold mb-2">
               3
             </div>
-            <span className="text-white text-sm font-medium">Queries</span>
+            <span className="text-foreground text-sm font-medium">Queries</span>
           </div>
         </div>
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex px-4 max-w-7xl mx-auto">
+      <div className="flex-1 flex px-8 w-full">
         {/* Sidebar - Topics */}
         <div className="w-80 flex-shrink-0 mr-8">
-          <div className="bg-[#0a2a30] border border-[#1a4a54] rounded-2xl p-6 shadow-sm sticky top-8">
+          <div className="bg-card border border-border rounded-2xl p-6 shadow-sm sticky top-8">
             {/* Brand Display */}
             {companyData && (
               <div className="mb-6 pb-4 border-b border-border">
                 <div className="flex items-center space-x-3 p-3">
                   <WebLogo domain={domain} size={24} />
-                  <span className="text-white font-medium truncate">
+                  <span className="text-foreground font-medium truncate">
                     {companyData.companyName}
                   </span>
                 </div>
               </div>
             )}
 
-            <h2 className="text-lg font-semibold text-white mb-4">Topics</h2>
+            <h2 className="text-lg font-semibold text-foreground mb-4">Topics</h2>
             
             {/* Add Topic Button */}
             <button 
@@ -707,8 +825,8 @@ Output format (return ONLY valid JSON array):
               disabled={!canAddMoreTopics}
               className={`w-full flex items-center justify-center space-x-2 rounded-lg px-4 py-2 mb-6 transition-colors ${
                 canAddMoreTopics
-                  ? 'text-[#93E85F] border border-[#93E85F] hover:bg-[#93E85F]/5'
-                  : 'text-gray-400 border border-gray-600 cursor-not-allowed'
+                  ? 'text-primary border border-primary hover:bg-primary/5'
+                  : 'text-muted-foreground border border-gray-600 cursor-not-allowed'
               }`}
             >
               <Plus className="h-4 w-4" />
@@ -722,8 +840,8 @@ Output format (return ONLY valid JSON array):
                 onClick={() => setSelectedTopic('all')}
                 className={`flex items-center justify-between p-3 rounded-lg cursor-pointer transition-colors ${
                   selectedTopic === 'all'
-                    ? 'bg-[#93E85F] text-black'
-                    : 'bg-[#0E353C] border border-[#1a4a54] text-gray-300 hover:bg-[#164a54]'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-background border border-border text-muted-foreground hover:bg-muted'
                 }`}
               >
                 <span className="font-medium">All Topics</span>
@@ -734,15 +852,18 @@ Output format (return ONLY valid JSON array):
 
               {/* Individual Topics/Keywords */}
               {allTopics.map((topic, index) => {
-                const topicQueries = generatedQueries.filter(q => q.keyword === topic);
+                const topicQueries = generatedQueries.filter(
+                  q => typeof q?.keyword === 'string' &&
+                    q.keyword.trim().toLowerCase() === topic.toLowerCase()
+                );
                 return (
                   <div 
                     key={index} 
                     onClick={() => setSelectedTopic(topic)}
                     className={`flex items-center justify-between p-3 rounded-lg cursor-pointer transition-colors ${
                       selectedTopic === topic
-                        ? 'bg-[#93E85F] text-black'
-                        : 'text-gray-300 hover:bg-[#164a54]'
+                        ? 'bg-primary text-primary-foreground'
+                        : 'text-muted-foreground hover:bg-muted'
                     }`}
                   >
                     <span className="capitalize">{topic}</span>
@@ -754,8 +875,8 @@ Output format (return ONLY valid JSON array):
               })}
               
               {/* Topic Count */}
-              <div className="mt-4 pt-4 border-t border-[#1a4a54]">
-                <div className="text-xs text-gray-300">
+              <div className="mt-4 pt-4 border-t border-border">
+                <div className="text-xs text-muted-foreground">
                   {totalTopics}/10 topics added
                 </div>
               </div>
@@ -766,11 +887,11 @@ Output format (return ONLY valid JSON array):
         {/* Main Content Area */}
         <div className="flex-1">
           {/* Main Card */}
-          <div className="bg-[#0a2a30] border border-[#1a4a54] rounded-2xl p-8 shadow-lg">
+          <div className="bg-card border border-border rounded-2xl p-8 shadow-2xl">
             {/* Header */}
             <div className="flex items-center justify-between mb-8">
               <div>
-                <h1 className="text-3xl font-bold text-white mb-2">
+                <h1 className="text-3xl font-bold text-foreground mb-2">
                   {selectedTopic === 'all' ? 'All Topics' : selectedTopic.charAt(0).toUpperCase() + selectedTopic.slice(1)}
                 </h1>
                 <div className="flex items-center space-x-4 text-sm text-muted-foreground">
@@ -779,14 +900,14 @@ Output format (return ONLY valid JSON array):
               </div>
               <div className="flex items-center space-x-4">
                 <div className="flex items-center space-x-2">
-                  <span className="text-sm text-gray-300">
+                  <span className="text-sm text-muted-foreground">
                     {filteredQueries.length}/{generatedQueries.length} queries shown
                   </span>
                 </div>
                 {generatedQueries.length > 0 && (
                   <button
                     onClick={handleAddQuery}
-                    className="inline-flex items-center space-x-2 bg-[#93E85F] text-black px-4 py-2 rounded-lg hover:bg-[#93E85F]/90 transition-colors"
+                    className="inline-flex items-center space-x-2 bg-primary text-primary-foreground px-4 py-2 rounded-lg hover:bg-primary/90 transition-colors"
                   >
                     <Plus className="h-4 w-4" />
                     <span>Add a prompt</span>
@@ -801,7 +922,7 @@ Output format (return ONLY valid JSON array):
                 <button
                   onClick={generateQueries}
                   disabled={isGenerating || !companyData}
-                  className="inline-flex items-center space-x-2 bg-[#93E85F] text-black px-8 py-4 rounded-xl hover:bg-[#93E85F]/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="inline-flex items-center space-x-2 bg-primary text-primary-foreground px-8 py-4 rounded-xl hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {isGenerating ? (
                     <>
@@ -825,8 +946,8 @@ Output format (return ONLY valid JSON array):
              {generatedQueries.length > 0 && (
                <div className="space-y-8">
                 <div>
-                  <h2 className="text-xl font-semibold text-white mb-4">Query Intent Distribution</h2>
-                  <p className="text-white text-sm mb-6">
+                  <h2 className="text-xl font-semibold text-foreground mb-4">Query Intent Distribution</h2>
+                  <p className="text-foreground text-sm mb-6">
                     Shows the percentage breakdown of different intents based on the queries sent to the AI.
                   </p>
                   
@@ -857,7 +978,7 @@ Output format (return ONLY valid JSON array):
                   </div>
                   
                   {/* Intent Legend */}
-                  <div className="flex flex-wrap gap-6 text-sm text-white">
+                  <div className="flex flex-wrap gap-6 text-sm text-foreground">
                     {['Awareness', 'Interest', 'Consideration', 'Purchase'].map((category, index) => {
                       const count = filteredQueries.filter(q => q.category === category).length;
                       const percentage = filteredQueries.length > 0 ? Math.round((count / filteredQueries.length) * 100) : 0;
@@ -878,15 +999,15 @@ Output format (return ONLY valid JSON array):
                                                  {/* Prompts Table */}
                 <div>
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-semibold text-white">
-                      Prompts <span className="text-white">({filteredQueries.length})</span>
+                    <h3 className="text-lg font-semibold text-foreground">
+                      Prompts <span className="text-foreground">({filteredQueries.length})</span>
                     </h3>
                     <div className="flex items-center space-x-2">
-                      <button className="flex items-center space-x-2 text-white hover:text-primary transition-colors">
+                      <button className="flex items-center space-x-2 text-foreground hover:text-primary transition-colors">
                         <span>🎯 Intents</span>
                         <span className="text-xs">▼</span>
                       </button>
-                      <button className="flex items-center space-x-2 text-white hover:text-primary transition-colors">
+                      <button className="flex items-center space-x-2 text-foreground hover:text-primary transition-colors">
                         <span># Topics</span>
                         <span className="text-xs">▼</span>
                       </button>
@@ -894,9 +1015,9 @@ Output format (return ONLY valid JSON array):
                   </div>
                   
                   {/* Table */}
-                  <div className="bg-[#1a2a2e] border border-gray-700 rounded-lg overflow-hidden shadow-sm">
+                  <div className="bg-card border border-border rounded-lg overflow-hidden shadow-sm">
                     {/* Table Header */}
-                    <div className="grid grid-cols-10 gap-4 p-4 bg-[#0f1c1f] border-b border-gray-700 text-sm font-semibold text-white">
+                    <div className="grid grid-cols-10 gap-4 p-4 bg-card border-b border-gray-700 text-sm font-semibold text-foreground">
                       <div className="col-span-1">
                         <input 
                           type="checkbox" 
@@ -906,7 +1027,7 @@ Output format (return ONLY valid JSON array):
                           title={areAllFilteredSelected ? "Deselect all" : "Select all"}
                         />
                       </div>
-                      <div className="col-span-6">Prompts <span className="text-white">({selectedFilteredCount}/{filteredQueries.length} selected)</span></div>
+                      <div className="col-span-6">Prompts <span className="text-foreground">({selectedFilteredCount}/{filteredQueries.length} selected)</span></div>
                       <div className="col-span-2">Topic</div>
                       <div className="col-span-1">Intent</div>
                     </div>
@@ -918,7 +1039,7 @@ Output format (return ONLY valid JSON array):
                         const isSelected = selectedQueries.has(actualIndex);
                         
                         return (
-                        <div key={index} className="grid grid-cols-10 gap-4 p-4 hover:bg-[#0f1c1f] transition-colors">
+                        <div key={index} className="grid grid-cols-10 gap-4 p-4 hover:bg-card transition-colors">
                           <div className="col-span-1">
                             <input 
                               type="checkbox" 
@@ -928,12 +1049,12 @@ Output format (return ONLY valid JSON array):
                             />
                           </div>
                           <div className="col-span-6">
-                            <p className="text-white">
+                            <p className="text-foreground">
                               {query.query}
                             </p>
                           </div>
                           <div className="col-span-2">
-                            <span className="text-gray-300 capitalize text-sm">
+                            <span className="text-muted-foreground capitalize text-sm">
                               {query.keyword}
                             </span>
                           </div>
@@ -971,7 +1092,7 @@ Output format (return ONLY valid JSON array):
                 </div>
                 <button
                   onClick={generateQueries}
-                  className="inline-flex items-center space-x-2 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors"
+                  className="inline-flex items-center space-x-2 bg-red-600 text-foreground px-4 py-2 rounded-lg hover:bg-red-700 transition-colors"
                 >
                   <RefreshCw className="h-4 w-4" />
                   <span>Try Again</span>
@@ -986,7 +1107,7 @@ Output format (return ONLY valid JSON array):
           <div className="flex justify-between mt-8">
             <button
               onClick={() => router.push('/dashboard/add-brand/step-2')}
-              className="flex items-center space-x-2 bg-[#164a54] text-white px-6 py-3 rounded-xl hover:bg-[#1a4a54] transition-colors"
+              className="flex items-center space-x-2 bg-muted text-foreground px-6 py-3 rounded-xl hover:bg-border transition-colors"
             >
               <ArrowLeft className="h-5 w-5" />
               <span>Back</span>
@@ -995,7 +1116,7 @@ Output format (return ONLY valid JSON array):
                           <button
                 onClick={handleComplete}
                 disabled={!queryState.result || queryState.loading || selectedQueries.size < 4 || isCompleting || credits < 100}
-                className="flex items-center space-x-2 bg-[#93E85F] text-black px-6 py-3 rounded-xl hover:bg-[#93E85F]/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="flex items-center space-x-2 bg-primary text-primary-foreground px-6 py-3 rounded-xl hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {isCompleting ? (
                   <>
@@ -1052,7 +1173,7 @@ Output format (return ONLY valid JSON array):
                   onChange={(e) => setNewTopicName(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder="e.g. Vegan products, Eco-friendly bags"
-                  className="w-full px-4 py-3 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#000C60] focus:border-transparent bg-background text-foreground"
+                  className="w-full px-4 py-3 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent bg-background text-foreground"
                   autoFocus
                 />
               </div>
@@ -1082,7 +1203,7 @@ Output format (return ONLY valid JSON array):
               <button
                 onClick={handleSaveTopic}
                 disabled={!newTopicName.trim() || !canAddMoreTopics}
-                className="px-6 py-2 bg-[#8B5CF6] text-white rounded-lg hover:bg-[#8B5CF6]/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="px-6 py-2 bg-primary text-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 Save Topic
               </button>
@@ -1093,10 +1214,10 @@ Output format (return ONLY valid JSON array):
 
       {/* Add Query Modal */}
       {showAddQueryModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-card border border-border rounded-2xl p-6 w-full max-w-lg mx-4 shadow-xl">
-            {/* Modal Header */}
-            <div className="flex items-center justify-between mb-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-card border border-border rounded-2xl w-full max-w-lg shadow-xl flex flex-col max-h-[90vh]">
+            {/* Modal Header — fixed */}
+            <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-border/50 flex-shrink-0">
               <h3 className="text-lg font-semibold text-foreground">Add New Query</h3>
               <button
                 onClick={handleCancelQuery}
@@ -1106,8 +1227,8 @@ Output format (return ONLY valid JSON array):
               </button>
             </div>
 
-            {/* Modal Content */}
-            <div className="space-y-6">
+            {/* Modal Content — scrollable */}
+            <div className="space-y-6 overflow-y-auto px-6 py-5 flex-1 min-h-0">
               <p className="text-muted-foreground text-sm">
                 Add a new query to your list for tracking and analysis.
               </p>
@@ -1122,10 +1243,104 @@ Output format (return ONLY valid JSON array):
                   value={newQuery}
                   onChange={(e) => setNewQuery(e.target.value)}
                   onKeyDown={handleQueryKeyDown}
-                  placeholder="e.g. what is the best tool for GEO? FYI it's AI Monitor 😊"
-                  className="w-full px-4 py-3 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#000C60] focus:border-transparent bg-background text-foreground"
+                  placeholder="e.g. what is the best tool for GEO? FYI it's Genos 😊"
+                  className="w-full px-4 py-3 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent bg-background text-foreground"
                   autoFocus
                 />
+              </div>
+
+              {/* Topic Selection */}
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">
+                  Topic
+                </label>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Pick an existing topic or create a new one. Topics group
+                  queries for analytics. {totalTopics}/10 topics used.
+                </p>
+
+                {!isCreatingNewQueryTopic && (
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {allTopics.map(topic => {
+                      const selected = newQueryTopic === topic;
+                      return (
+                        <button
+                          key={topic}
+                          type="button"
+                          onClick={() => setNewQueryTopic(topic)}
+                          className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
+                            selected
+                              ? 'border-blue-300 bg-blue-50 text-blue-700'
+                              : 'border-border hover:bg-muted/30'
+                          }`}
+                        >
+                          {topic}
+                        </button>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      disabled={!canAddMoreTopics}
+                      onClick={() => {
+                        if (!canAddMoreTopics) return;
+                        setIsCreatingNewQueryTopic(true);
+                        setNewQueryTopic('');
+                      }}
+                      className={`px-3 py-1.5 rounded-full text-sm border border-dashed transition-colors ${
+                        canAddMoreTopics
+                          ? 'border-border text-muted-foreground hover:bg-muted/30'
+                          : 'border-border/50 text-muted-foreground/50 cursor-not-allowed'
+                      }`}
+                    >
+                      {canAddMoreTopics ? '+ Create new topic' : '+ Topic limit reached'}
+                    </button>
+                  </div>
+                )}
+
+                {isCreatingNewQueryTopic && (
+                  <div className="space-y-2">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={newQueryTopicDraft}
+                        onChange={(e) => setNewQueryTopicDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && newQueryTopicDraft.trim()) {
+                            e.preventDefault();
+                            handleConfirmNewTopic();
+                          }
+                        }}
+                        placeholder="e.g. LLM Observability"
+                        className="flex-1 px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent bg-background text-foreground"
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        onClick={handleConfirmNewTopic}
+                        disabled={!newQueryTopicDraft.trim() || !canAddMoreTopics}
+                        className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        Add
+                      </button>
+                      {allTopics.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsCreatingNewQueryTopic(false);
+                            setNewQueryTopicDraft('');
+                            setNewQueryTopic(allTopics[0] ?? '');
+                          }}
+                          className="px-3 py-2 text-sm text-muted-foreground hover:text-foreground"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Press Enter or click Add to register this topic.
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Category Selection */}
@@ -1149,7 +1364,7 @@ Output format (return ONLY valid JSON array):
                           <div className="w-3 h-3 rounded bg-blue-500"></div>
                           <span className="font-medium text-foreground">Awareness</span>
                           {selectedCategory === 'Awareness' && (
-                            <span className="bg-blue-600 text-white text-xs px-2 py-1 rounded-full">
+                            <span className="bg-blue-600 text-foreground text-xs px-2 py-1 rounded-full">
                               AI Suggestion
                             </span>
                           )}
@@ -1230,8 +1445,8 @@ Output format (return ONLY valid JSON array):
               </div>
             </div>
 
-            {/* Modal Footer */}
-            <div className="flex items-center justify-end space-x-3 mt-6">
+            {/* Modal Footer — fixed */}
+            <div className="flex items-center justify-end space-x-3 px-6 py-4 border-t border-border/50 flex-shrink-0">
               <button
                 onClick={handleCancelQuery}
                 className="px-4 py-2 text-muted-foreground hover:text-foreground transition-colors"
@@ -1240,8 +1455,8 @@ Output format (return ONLY valid JSON array):
               </button>
               <button
                 onClick={handleSaveQuery}
-                disabled={!newQuery.trim()}
-                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                disabled={!newQuery.trim() || !resolveQueryTopic()}
+                className="px-6 py-2 bg-blue-600 text-foreground rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 Add Query
               </button>

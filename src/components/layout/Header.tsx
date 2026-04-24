@@ -192,7 +192,7 @@ export default function Header({ title }: HeaderProps): React.ReactElement {
                       <Plus className="h-3 w-3 text-white" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-[#000C60]">Add Brand</p>
+                      <p className="text-sm font-medium text-primary">Add Brand</p>
                       <p className="text-xs text-muted-foreground">Create a new brand</p>
                     </div>
                   </Link>
@@ -203,7 +203,7 @@ export default function Header({ title }: HeaderProps): React.ReactElement {
             {/* Add Brand Button */}
             <Link
               href="/dashboard/add-brand/step-1"
-              className="flex items-center space-x-2 bg-[#000C60] text-white px-4 py-2 rounded-xl hover:bg-[#000C60]/90 transition-colors"
+              className="flex items-center space-x-2 bg-primary/10 text-primary px-4 py-2 rounded-full hover:bg-primary/20 transition-colors"
             >
               <Plus className="h-4 w-4" />
               <span className="text-sm hidden sm:inline">Add Brand</span>

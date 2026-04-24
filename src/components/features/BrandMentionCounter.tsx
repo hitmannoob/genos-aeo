@@ -1,12 +1,42 @@
 'use client'
 import React from 'react';
-import { matchCompetitorsInText, Competitor } from '@/lib/competitor-matching';
+import { matchCompetitorsInText, matchesWord, Competitor } from '@/lib/competitor-matching';
 
 // Unified interface for all provider citations
 interface Citation {
   url: string;
   text: string;
   source?: string;
+}
+
+// Parse a URL and return its lowercased hostname with any leading `www.` stripped,
+// or null if the URL is malformed.
+function getHostname(url: string): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return null;
+  }
+}
+
+// Strip protocol, `www.`, and any trailing path from a domain-ish string and lowercase it.
+function normalizeDomainString(domain: string): string {
+  if (!domain) return '';
+  return domain
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .split('/')[0]
+    .toLowerCase()
+    .trim();
+}
+
+// True iff the URL's hostname exactly equals the normalized domain.
+function hostMatches(url: string, domain: string): boolean {
+  const host = getHostname(url);
+  const normalizedDomain = normalizeDomainString(domain);
+  if (!host || !normalizedDomain) return false;
+  return host === normalizedDomain;
 }
 
 
@@ -48,12 +78,13 @@ interface BrandMentionAnalysis {
   };
 }
 
-// Function to check if brand is mentioned in text
-function isBrandMentioned(text: string, brandName: string): boolean {
+// Function to check if brand is mentioned in text.
+// Uses the same matcher as competitors (name + domain substring + fuzzy) so
+// brand vs. competitor detection is symmetric and SOV math is unbiased.
+function isBrandMentioned(text: string, brandName: string, brandDomain?: string): boolean {
   if (!text || !brandName) return false;
-  const lowerText = text.toLowerCase();
-  const lowerBrandName = brandName.toLowerCase();
-  return lowerText.includes(lowerBrandName);
+  const entity: Competitor = { name: brandName, domain: brandDomain };
+  return matchCompetitorsInText(text, [entity]).length > 0;
 }
 
 // Function to check if brand domain is cited in text
@@ -70,28 +101,21 @@ function isDomainCited(text: string, brandDomain: string): boolean {
   return false;
 }
 
-// Function to count brand mentions in text
-function countBrandMentions(text: string, brandName: string): number {
+// Count brand mentions using the same matcher as competitors so SOV is comparable.
+// matchCompetitorsInText returns one MatchResult per matched term (name, domain,
+// alias, fuzzy hit), matching the semantics used by countCompetitorMentions below.
+function countBrandMentions(text: string, brandName: string, brandDomain?: string): number {
   if (!text || !brandName) return 0;
-  const lowerText = text.toLowerCase();
-  const lowerBrandName = brandName.toLowerCase();
-  const regex = new RegExp(lowerBrandName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
-  const matches = text.match(regex);
-  return matches ? matches.length : 0;
+  const entity: Competitor = { name: brandName, domain: brandDomain };
+  return matchCompetitorsInText(text, [entity]).length;
 }
 
-// Function to count domain citations in citations array
+// Function to count domain citations in citations array.
+// Uses a strict hostname-equality check so that brand domain "apple.com" does
+// NOT match "pineapple.com" or "apple.com.phishing.net".
 function countDomainCitations(citations: Citation[], brandDomain: string): number {
   if (!brandDomain) return 0;
-  const lowerDomain = brandDomain.toLowerCase();
-  const httpsWwwDomain = `https://www.${lowerDomain}`;
-  const httpsDomain = `https://${lowerDomain}`;
-  return citations.filter(citation => {
-    const lowerUrl = citation.url.toLowerCase();
-    if (lowerUrl.includes(httpsWwwDomain)) return true;
-    if (lowerUrl.includes(httpsDomain)) return true;
-    return false;
-  }).length;
+  return citations.filter(citation => hostMatches(citation.url, brandDomain)).length;
 }
 
 // Function to check if competitors are mentioned in text
@@ -102,14 +126,23 @@ function areCompetitorsMentioned(text: string, competitors: string[]): boolean {
   return matches.length > 0;
 }
 
-// Function to check if competitors are cited in citations
+// Function to check if competitors are cited in citations.
+// A competitor is considered "cited" if its normalized form matches the
+// citation URL's hostname exactly, or if it appears as a whole word in the
+// citation's text (whole-word check guards against e.g. "Apple" matching
+// inside "pineapple").
 function areCompetitorsCited(citations: Citation[], competitors: string[]): boolean {
   if (!citations || !competitors.length) return false;
-  return citations.some(citation => 
-    competitors.some(competitor => 
-      citation.url.toLowerCase().includes(competitor.toLowerCase()) ||
-      citation.text.toLowerCase().includes(competitor.toLowerCase())
-    )
+  return citations.some(citation =>
+    competitors.some(competitor => {
+      if (!competitor) return false;
+      const normalizedCompetitor = normalizeDomainString(competitor);
+      const hostHit = normalizedCompetitor
+        ? hostMatches(citation.url, normalizedCompetitor)
+        : false;
+      const textHit = matchesWord(citation.text || '', competitor);
+      return hostHit || textHit;
+    })
   );
 }
 
@@ -121,14 +154,20 @@ function countCompetitorMentions(text: string, competitors: string[]): number {
   return matches.length;
 }
 
-// Function to count competitor citations
+// Function to count competitor citations using the same strict
+// hostname-equality + whole-word text semantics as areCompetitorsCited.
 function countCompetitorCitations(citations: Citation[], competitors: string[]): number {
   if (!citations || !competitors.length) return 0;
-  return citations.filter(citation => 
-    competitors.some(competitor => 
-      citation.url.toLowerCase().includes(competitor.toLowerCase()) ||
-      citation.text.toLowerCase().includes(competitor.toLowerCase())
-    )
+  return citations.filter(citation =>
+    competitors.some(competitor => {
+      if (!competitor) return false;
+      const normalizedCompetitor = normalizeDomainString(competitor);
+      const hostHit = normalizedCompetitor
+        ? hostMatches(citation.url, normalizedCompetitor)
+        : false;
+      const textHit = matchesWord(citation.text || '', competitor);
+      return hostHit || textHit;
+    })
   ).length;
 }
 
@@ -148,9 +187,9 @@ export function analyzeBrandMentions(
   // Analyze ChatGPT
   if (queryResults.chatgpt?.response) {
     const citations = queryResults.chatgpt.citations || [];
-    const brandMentioned = isBrandMentioned(queryResults.chatgpt.response, brandName);
+    const brandMentioned = isBrandMentioned(queryResults.chatgpt.response, brandName, brandDomain);
     const domainCited = isDomainCited(queryResults.chatgpt.response, brandDomain);
-    const brandMentionCount = countBrandMentions(queryResults.chatgpt.response, brandName);
+    const brandMentionCount = countBrandMentions(queryResults.chatgpt.response, brandName, brandDomain);
     const domainCitationCount = countDomainCitations(citations, brandDomain);
     
     // Add competitor analysis
@@ -178,9 +217,9 @@ export function analyzeBrandMentions(
   if (queryResults.googleAI) {
     const aiOverviewText = queryResults.googleAI.aiOverview || '';
     const citations = queryResults.googleAI.citations || [];
-    const brandMentioned = isBrandMentioned(aiOverviewText, brandName);
+    const brandMentioned = isBrandMentioned(aiOverviewText, brandName, brandDomain);
     const domainCited = isDomainCited(aiOverviewText, brandDomain);
-    const brandMentionCount = countBrandMentions(aiOverviewText, brandName);
+    const brandMentionCount = countBrandMentions(aiOverviewText, brandName, brandDomain);
     const domainCitationCount = countDomainCitations(citations, brandDomain);
     
     // Add competitor analysis
@@ -207,9 +246,9 @@ export function analyzeBrandMentions(
   // Analyze Perplexity
   if (queryResults.perplexity?.response) {
     const citations = queryResults.perplexity.citations || [];
-    const brandMentioned = isBrandMentioned(queryResults.perplexity.response, brandName);
+    const brandMentioned = isBrandMentioned(queryResults.perplexity.response, brandName, brandDomain);
     const domainCited = isDomainCited(queryResults.perplexity.response, brandDomain);
-    const brandMentionCount = countBrandMentions(queryResults.perplexity.response, brandName);
+    const brandMentionCount = countBrandMentions(queryResults.perplexity.response, brandName, brandDomain);
     const domainCitationCount = countDomainCitations(citations, brandDomain);
     
     // Add competitor analysis

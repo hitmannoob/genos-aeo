@@ -1,5 +1,5 @@
 import firebase_app from "../config";
-import { getFirestore, doc, setDoc, getDoc, updateDoc, increment } from "firebase/firestore";
+import { getFirestore, doc, setDoc, getDoc, updateDoc, increment, serverTimestamp } from "firebase/firestore";
 import { User } from "firebase/auth";
 
 // Get the Firestore instance
@@ -11,8 +11,11 @@ export interface UserProfile {
   displayName: string;
   photoURL?: string;
   credits: number;
-  createdAt: string;
-  lastLoginAt: string;
+  // createdAt / lastLoginAt are written as serverTimestamp() and may come back
+  // as a Firestore Timestamp, a legacy ISO string, or a Date. Normalise via
+  // toIsoString before display/sort.
+  createdAt: any;
+  lastLoginAt: any;
   isNewUser?: boolean;
 }
 
@@ -24,36 +27,34 @@ export async function createUserProfile(user: User, isNewUser: boolean = false):
   try {
     const userRef = doc(db, 'users', user.uid);
     const userDoc = await getDoc(userRef);
-    
-    const now = new Date().toISOString();
-    
+
     if (!userDoc.exists() || isNewUser) {
-      // Create new user profile with 500 credits
+      // Create new user profile with 1000 credits
       const userProfile: Partial<UserProfile> = {
         uid: user.uid,
         email: user.email || '',
         displayName: user.displayName || user.email?.split('@')[0] || 'User',
-        credits: 500, // Give 500 credits to new users
-        createdAt: now,
-        lastLoginAt: now,
+        credits: 1000, // Give 1000 credits to new users
+        createdAt: serverTimestamp(),
+        lastLoginAt: serverTimestamp(),
         isNewUser: true
       };
-      
+
       // Only add photoURL if it exists
       if (user.photoURL) {
         userProfile.photoURL = user.photoURL;
       }
-      
+
       await setDoc(userRef, userProfile);
       result = userProfile as UserProfile;
-      console.log('🎉 New user created with 500 credits:', user.email);
+      console.log('🎉 New user created with 1000 credits:', user.email);
     } else {
       // Update existing user's last login
       const existingData = userDoc.data() as UserProfile;
       const updateData: Partial<UserProfile> = {
         email: user.email || existingData.email,
         displayName: user.displayName || existingData.displayName,
-        lastLoginAt: now,
+        lastLoginAt: serverTimestamp(),
         isNewUser: false
       };
       

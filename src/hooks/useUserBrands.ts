@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuthContext } from '@/context/AuthContext';
 import { getUserBrands, UserBrand } from '@/firebase/firestore/getUserBrands';
+import { toIsoString } from '@/firebase/firestore/timestamps';
 
 interface UseUserBrandsReturn {
   brands: UserBrand[];
@@ -41,10 +42,15 @@ export function useUserBrands(): UseUserBrandsReturn {
         setError('Failed to load brands. Please try again.');
         setBrands([]);
       } else {
-        // Sort brands by timestamp (or createdAt) descending (latest first)
+        // Sort brands by timestamp (or createdAt) descending (latest first).
+        // createdAt may be a Firestore Timestamp (serverTimestamp write), a
+        // legacy ISO string, or a Date — normalise through toIsoString so
+        // new Date(...).getTime() behaves consistently.
         const sortedBrands = (result || []).slice().sort((a, b) => {
-          const aTime = a.timestamp || new Date(a.createdAt || 0).getTime() || 0;
-          const bTime = b.timestamp || new Date(b.createdAt || 0).getTime() || 0;
+          const aIso = toIsoString((a as any).createdAt);
+          const bIso = toIsoString((b as any).createdAt);
+          const aTime = (a as any).timestamp || (aIso ? new Date(aIso).getTime() : 0);
+          const bTime = (b as any).timestamp || (bIso ? new Date(bIso).getTime() : 0);
           return bTime - aTime;
         });
         console.log('✅ useUserBrands - Successfully fetched brands:', {

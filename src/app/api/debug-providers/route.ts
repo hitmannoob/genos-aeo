@@ -7,7 +7,6 @@ export async function GET(request: NextRequest) {
     // Check environment variables
     const envCheck = {
       OPENAI_API_KEY: !!process.env.OPENAI_API_KEY,
-      AZURE_OPENAI_API_KEY: !!process.env.AZURE_OPENAI_API_KEY,
       GOOGLE_AI_API_KEY: !!process.env.GOOGLE_AI_API_KEY || !!process.env.GEMINI_API_KEY,
       PERPLEXITY_API_KEY: !!process.env.PERPLEXITY_API_KEY,
       DATAFORSEO_USERNAME: !!process.env.DATAFORSEO_USERNAME,
@@ -73,13 +72,6 @@ export async function GET(request: NextRequest) {
     const providerImports: Record<string, string> = {};
     
     try {
-      const { AzureOpenAIProvider } = await import('@/lib/api-providers/openai-provider');
-      providerImports['AzureOpenAIProvider'] = '✅ Success';
-    } catch (error) {
-      providerImports['AzureOpenAIProvider'] = `❌ ${error instanceof Error ? error.message : String(error)}`;
-    }
-    
-    try {
       const { GeminiProvider } = await import('@/lib/api-providers/gemini-provider');
       providerImports['GeminiProvider'] = '✅ Success';
     } catch (error) {
@@ -91,13 +83,6 @@ export async function GET(request: NextRequest) {
       providerImports['ChatGPTSearchProvider'] = '✅ Success';
     } catch (error) {
       providerImports['ChatGPTSearchProvider'] = `❌ ${error instanceof Error ? error.message : String(error)}`;
-    }
-
-    try {
-      const { AzureOpenAISearchProvider } = await import('@/lib/api-providers/azure-openai-search-provider');
-      providerImports['AzureOpenAISearchProvider'] = '✅ Success';
-    } catch (error) {
-      providerImports['AzureOpenAISearchProvider'] = `❌ ${error instanceof Error ? error.message : String(error)}`;
     }
 
     try {
@@ -168,7 +153,6 @@ export async function GET(request: NextRequest) {
         providerManagerImportError ? '⚠️ Check provider manager implementation' : null,
         providersError ? '⚠️ Check provider initialization' : null,
         !availableProviders.includes('chatgptsearch') ? '⚠️ ChatGPT Search provider not available' : null,
-        !availableProviders.includes('azure-openai-search') ? '⚠️ Azure OpenAI Search provider not available' : null,
         !availableProviders.includes('perplexity') ? '⚠️ Perplexity provider not available' : null,
         !availableProviders.includes('google-ai-overview') ? '⚠️ Google AI Overview provider not available' : null,
       ].filter(Boolean)

@@ -154,54 +154,40 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
 
       {/* Sidebar */}
       <div
-        className={`fixed lg:static inset-y-0 left-0 z-50 w-72 bg-[#0E353C] border-r border-[#1a4a54] transform ${
+        className={`fixed lg:static inset-y-0 left-0 z-50 w-72 bg-muted/40 border-r border-border transform ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
         } lg:translate-x-0 transition-transform duration-300 ease-in-out`}
       >
         <div className="flex flex-col h-full">
           {/* Logo */}
-          <div className="flex items-center px-6 py-6">
+          <div className="flex items-center px-6 pt-4 pb-0">
             <div className="flex items-center justify-center w-full">
-              {/* Light theme logo only - TODO: Restore theme-aware logos when implementing theme switching */}
-              <div className="relative">
-                <Image
-                  src="/getcito-logo-dark.webp"
-                  alt="AI Monitor Logo"
-                  width={160}
-                  height={36}
-                  style={{ width: 'auto', height: 'auto' }}
-                  priority
-                  className="h-9 w-auto"
-                />
-                {/* TODO: Restore dark theme logo when implementing theme switching
-                <Image
-                  src="/AI-Monitor-Logo-V3-long-dark-themel.png"
-                  alt="AI Monitor Logo"
-                  width={160}
-                  height={36}
-                  className="hidden dark:block h-9 w-auto"
-                  style={{ width: 'auto', height: 'auto' }}
-                  priority
-                />
-                */}
-              </div>
+              <Image
+                src="/logo_no_background.png"
+                alt="Genos Logo"
+                width={160}
+                height={36}
+                style={{ width: 'auto', height: 'auto' }}
+                priority
+                className="h-14 w-auto"
+              />
             </div>
           </div>
 
           {/* Navigation */}
-          <nav className="flex-1 px-6 py-6 space-y-1 overflow-y-auto">
+          <nav className="flex-1 px-6 pt-2 pb-6 space-y-1 overflow-y-auto">
             {/* User Brands - Always show, handle loading and empty states */}
             {!brandsLoading && (
               <>
-                <div className="w-full bg-[#0a2a30] border border-[#1a4a54] rounded-xl mb-6 p-4">
-                  <h3 className="text-sm font-medium text-white mb-3">Your Brands</h3>
-                  
+                <div className="w-full mb-6">
+                  <h3 className="text-sm font-medium text-foreground mb-3">Your Brands</h3>
+
                   {/* Always show dropdown - regardless of brand count */}
                   <div className="relative" ref={dropdownRef}>
                     {/* Dropdown Button */}
                     <button
                       onClick={() => setIsBrandsDropdownOpen(!isBrandsDropdownOpen)}
-                      className="w-full flex items-center space-x-3 p-2 bg-[#0a2a30] rounded-xl border border-[#1a4a54] hover:bg-[#164a54] transition-colors"
+                      className="w-full flex items-center space-x-3 p-2 bg-card rounded-xl border border-border hover:bg-muted transition-colors"
                     >
                       {selectedBrandId && brands.length > 0 && (() => {
                         const selected = brands.find(b => b.id === selectedBrandId);
@@ -209,9 +195,9 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
                           <>
                             <WebLogo domain={selected.domain} size={20} />
                             <div className="flex-1 min-w-0 text-left">
-                              <p className="text-xs font-medium text-white truncate">{selected.companyName}</p>
+                              <p className="text-xs font-medium text-foreground truncate">{selected.companyName}</p>
                               {selected.domain && (
-                                <p className="text-xs text-gray-300 truncate">{selected.domain}</p>
+                                <p className="text-xs text-muted-foreground truncate">{selected.domain}</p>
                               )}
                             </div>
                           </>
@@ -219,23 +205,23 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
                       })()}
                       {(!selectedBrandId || brands.length === 0) && (
                         <div className="flex-1 text-left">
-                          <p className="text-xs font-medium text-gray-300">
+                          <p className="text-xs font-medium text-muted-foreground">
                             {brands.length === 0 ? 'No brands available' : 'Select a brand'}
                           </p>
                         </div>
                       )}
                       <div className="flex-shrink-0">
                         {isBrandsDropdownOpen ? (
-                          <ChevronUp className="h-4 w-4 text-gray-300" />
+                          <ChevronUp className="h-4 w-4 text-muted-foreground" />
                         ) : (
-                          <ChevronDown className="h-4 w-4 text-gray-300" />
+                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
                         )}
                       </div>
                     </button>
 
                     {/* Dropdown Menu */}
                     {isBrandsDropdownOpen && (
-                      <div className="absolute top-full left-0 right-0 mt-1 bg-[#0a2a30] border border-[#1a4a54] rounded-xl shadow-lg z-50 max-h-48 overflow-y-auto">
+                      <div className="absolute top-full left-0 right-0 mt-1 bg-card border border-border rounded-xl shadow-xl z-50 max-h-48 overflow-y-auto">
                         {/* Show brands if available */}
                         {brands.length > 0 ? (
                           <>
@@ -247,33 +233,33 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
                                   setSelectedBrandId(brand.id);
                                   setIsBrandsDropdownOpen(false);
                                 }}
-                                className={`w-full flex items-center space-x-3 p-2 hover:bg-[#164a54] transition-colors text-left ${
-                                  selectedBrandId === brand.id ? 'bg-[#164a54]' : ''
+                                className={`w-full flex items-center space-x-3 p-2 hover:bg-muted transition-colors text-left ${
+                                  selectedBrandId === brand.id ? 'bg-muted' : ''
                                 }`}
                               >
                                 <WebLogo domain={brand.domain} size={20} />
                                 <div className="flex-1 min-w-0">
-                                  <p className="text-xs font-medium text-white truncate">{brand.companyName}</p>
+                                  <p className="text-xs font-medium text-foreground truncate">{brand.companyName}</p>
                                   {brand.domain && (
-                                    <p className="text-xs text-gray-300 truncate">{brand.domain}</p>
+                                    <p className="text-xs text-muted-foreground truncate">{brand.domain}</p>
                                   )}
                                 </div>
                               </button>
                             ))}
                             
                             {/* Separator */}
-                            <div className="border-t border-[#1a4a54] my-1"></div>
+                            <div className="border-t border-border my-1"></div>
                           </>
                         ) : (
                           <>
                             {/* No brands message */}
                             <div className="p-3 text-center">
-                              <p className="text-xs text-gray-300">No brands available</p>
-                              <p className="text-xs text-gray-300 mt-1">Create your first brand below</p>
+                              <p className="text-xs text-muted-foreground">No brands available</p>
+                              <p className="text-xs text-muted-foreground mt-1">Create your first brand below</p>
                             </div>
 
                             {/* Separator */}
-                            <div className="border-t border-[#1a4a54] my-1"></div>
+                            <div className="border-t border-border my-1"></div>
                           </>
                         )}
                         
@@ -281,14 +267,14 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
                         <Link
                           href="/dashboard/add-brand/step-1"
                           onClick={() => setIsBrandsDropdownOpen(false)}
-                          className="w-full flex items-center space-x-3 p-2 hover:bg-[#164a54] transition-colors text-left rounded-b-xl"
+                          className="w-full flex items-center space-x-3 p-2 hover:bg-muted transition-colors text-left rounded-b-xl"
                         >
-                          <div className="w-5 h-5 bg-[#00B087] rounded-full flex items-center justify-center flex-shrink-0">
-                            <Plus className="h-3 w-3 text-white" />
+                          <div className="w-5 h-5 bg-primary rounded-full flex items-center justify-center flex-shrink-0">
+                            <Plus className="h-3 w-3 text-foreground" />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="text-xs font-medium text-white">Add Brand</p>
-                            <p className="text-xs text-gray-300">Create a new brand</p>
+                            <p className="text-xs font-medium text-foreground">Add Brand</p>
+                            <p className="text-xs text-muted-foreground">Create a new brand</p>
                           </div>
                         </Link>
                       </div>
@@ -297,26 +283,26 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
                 </div>
 
                 {/* Horizontal line - Always show */}
-                <div className="border-t border-[#1a4a54] mb-8"></div>
+                <div className="border-t border-border mb-8"></div>
               </>
             )}
 
             {/* Loading state */}
             {brandsLoading && (
               <>
-                <div className="w-full bg-[#0a2a30] border border-[#1a4a54] rounded-xl mb-6 p-4">
-                  <h3 className="text-sm font-medium text-white mb-3">Your Brands</h3>
-                  <div className="flex items-center space-x-3 p-2 bg-[#0a2a30] rounded-lg border border-[#1a4a54]">
-                    <div className="w-5 h-5 bg-[#164a54] rounded-full animate-pulse"></div>
+                <div className="w-full mb-6">
+                  <h3 className="text-sm font-medium text-foreground mb-3">Your Brands</h3>
+                  <div className="flex items-center space-x-3 p-2 bg-card rounded-lg border border-border">
+                    <div className="w-5 h-5 bg-muted rounded-full animate-pulse"></div>
                     <div className="flex-1 min-w-0">
-                      <div className="h-3 bg-[#164a54] rounded w-24 mb-1 animate-pulse"></div>
-                      <div className="h-2 bg-[#164a54] rounded w-16 animate-pulse"></div>
+                      <div className="h-3 bg-muted rounded w-24 mb-1 animate-pulse"></div>
+                      <div className="h-2 bg-muted rounded w-16 animate-pulse"></div>
                     </div>
                   </div>
                 </div>
 
                 {/* Horizontal line */}
-                <div className="border-t border-[#1a4a54] mb-8"></div>
+                <div className="border-t border-border mb-8"></div>
               </>
             )}
             
@@ -332,14 +318,14 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
                   href={item.href}
                   className={`group flex items-center space-x-3 px-4 py-3 rounded-xl transition-all duration-200 ${
                     isActive
-                      ? 'bg-[#93E85F] text-black shadow-lg shadow-[#93E85F]/20'
-                      : 'text-gray-300 hover:bg-[#164a54] hover:text-white'
+                      ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/20'
+                      : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                   }`}
                 >
-                  <Icon className={`h-5 w-5 ${isActive ? 'text-black' : 'text-gray-300 group-hover:text-white'} transition-colors`} />
+                  <Icon className={`h-5 w-5 ${isActive ? 'text-primary-foreground' : 'text-muted-foreground group-hover:text-foreground'} transition-colors`} />
                   <span className="font-medium">{item.name}</span>
                   {isActive && (
-                    <div className="ml-auto w-2 h-2 bg-black rounded-full"></div>
+                    <div className="ml-auto w-2 h-2 bg-primary-foreground rounded-full"></div>
                   )}
                 </Link>
               );
@@ -371,7 +357,7 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
           */}
 
           {/* User section */}
-          <div className="p-4 border-t border-[#1a4a54]">
+          <div className="p-4 border-t border-border">
             {/* Credits Display */}
             {userProfile && typeof userProfile.credits === 'number' && (
               <div className={`mb-3 px-4 py-2 rounded-xl border ${
@@ -379,7 +365,7 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
                   ? 'bg-gradient-to-r from-red-50 to-orange-50 border-red-200' 
                   : userProfile.credits < 100
                   ? 'bg-gradient-to-r from-yellow-50 to-orange-50 border-yellow-200'
-                  : 'bg-gradient-to-r from-[#000C60]/10 to-[#00B087]/10 border-[#000C60]/20'
+                  : 'bg-gradient-to-r from-primary/10 to-primary/10 border-primary/20'
               }`}>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2">
@@ -388,14 +374,14 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
                         ? 'text-red-600' 
                         : userProfile.credits < 100
                         ? 'text-yellow-600'
-                        : 'text-[#000C60]'
+                        : 'text-primary'
                     }`} />
                     <span className={`text-xs font-medium ${
                       userProfile.credits < 50 
                         ? 'text-red-600' 
                         : userProfile.credits < 100
                         ? 'text-yellow-600'
-                        : 'text-[#000C60]'
+                        : 'text-primary'
                     }`}>Available Credits</span>
                   </div>
                   <span className={`text-sm font-bold ${
@@ -403,7 +389,7 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
                       ? 'text-red-600' 
                       : userProfile.credits < 100
                       ? 'text-yellow-600'
-                      : 'text-[#000C60]'
+                      : 'text-primary'
                   }`}>{userProfile.credits.toLocaleString()}</span>
                 </div>
                 {userProfile.credits < 50 && (
@@ -414,7 +400,7 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
               </div>
             )}
             
-            <div className="flex items-center space-x-3 px-4 py-3 rounded-xl bg-[#164a54] border border-[#1a4a54]">
+            <div className="flex items-center space-x-3 px-4 py-3 rounded-xl bg-muted border border-border">
               {userProfile?.photoURL ? (
                 <img
                   src={userProfile.photoURL}
@@ -422,21 +408,21 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
                   className="w-10 h-10 rounded-full object-cover"
                 />
               ) : (
-                <div className="w-10 h-10 bg-gradient-to-br from-[#00B087] to-[#00A078] rounded-full flex items-center justify-center">
-                  <User className="h-5 w-5 text-white" />
+                <div className="w-10 h-10 bg-gradient-to-br from-primary to-primary rounded-full flex items-center justify-center">
+                  <User className="h-5 w-5 text-foreground" />
                 </div>
               )}
               <div className="flex-1 min-w-0">
-                <p className="text-white text-sm font-medium truncate">
+                <p className="text-foreground text-sm font-medium truncate">
                   {userProfile?.displayName || user?.displayName || user?.email?.split('@')[0] || 'User'}
                 </p>
-                <p className="text-gray-300 text-xs truncate">
+                <p className="text-muted-foreground text-xs truncate">
                   {userProfile?.email || user?.email || 'No email'}
                 </p>
               </div>
               <button
                 onClick={handleSignOut}
-                className="text-gray-300 hover:text-white transition-colors p-1"
+                className="text-muted-foreground hover:text-foreground transition-colors p-1"
                 title="Sign out"
               >
                 <LogOut className="h-4 w-4" />

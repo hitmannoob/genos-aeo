@@ -1,14 +1,48 @@
 import { APIResponse, ProviderConfig } from './types';
 
+// Sentinel userId used when no per-user identity is provided. All such
+// callers share a single "global" bucket — convenient for health checks
+// and test endpoints, but callers that represent real user traffic should
+// pass the actual userId so limits are enforced per user.
+const GLOBAL_BUCKET_KEY = '__global__';
+
+interface TokenBucket {
+  tokens: number;
+  lastRefillMs: number;
+}
+
 export abstract class BaseAPIProvider {
   protected config: ProviderConfig;
   protected name: string;
   protected type: 'ai' | 'seo' | 'data' | 'analytics';
 
-  constructor(name: string, type: 'ai' | 'seo' | 'data' | 'analytics', config: ProviderConfig) {
+  // Rate-limit configuration. Default: 20 requests / 60 seconds / user.
+  private readonly rateLimitPerMinute: number;
+  private readonly rateLimitCapacity: number;
+  private readonly rateLimitRefillPerMs: number;
+
+  // Per-user token buckets. NOTE: this limiter is single-process and
+  // in-memory only. If deployed to multiple instances (serverless, multiple
+  // pods, etc.) each instance will keep its own bucket and the effective
+  // limit multiplies by the instance count.
+  // TODO: swap for a Redis (or Firestore-backed) limiter in production so
+  // state is shared across instances.
+  private readonly buckets: Map<string, TokenBucket> = new Map();
+
+  constructor(
+    name: string,
+    type: 'ai' | 'seo' | 'data' | 'analytics',
+    config: ProviderConfig,
+    options: { rateLimitPerMinute?: number } = {}
+  ) {
     this.name = name;
     this.type = type;
     this.config = config;
+
+    this.rateLimitPerMinute = options.rateLimitPerMinute ?? 20;
+    this.rateLimitCapacity = this.rateLimitPerMinute;
+    // Tokens per millisecond so we can do continuous refill on every check.
+    this.rateLimitRefillPerMs = this.rateLimitPerMinute / 60_000;
   }
 
   // Abstract methods that each provider must implement
@@ -83,15 +117,49 @@ export abstract class BaseAPIProvider {
     throw lastError!;
   }
 
-  // Rate limiting check (to be implemented with Redis in production)
-  protected async checkRateLimit(): Promise<boolean> {
-    // TODO: Implement Redis-based rate limiting
+  // Per-user token-bucket rate limiter.
+  // Returns true and decrements a token if one is available; returns false
+  // when the bucket is empty. Tokens refill continuously at
+  // `rateLimitPerMinute / 60_000` per ms, capped at `rateLimitPerMinute`.
+  //
+  // Pass the request's userId so the bucket is keyed per user; callers with
+  // no userId (health checks, test endpoints) fall back to a shared global
+  // bucket.
+  //
+  // NOTE: single-process in-memory only. If deployed to multiple instances,
+  // swap for a Redis or Firestore-backed limiter so state is shared.
+  // TODO: Implement Redis-based rate limiting for multi-instance deploys.
+  protected async checkRateLimit(userId?: string): Promise<boolean> {
+    const key = userId && userId.trim() !== '' ? userId : GLOBAL_BUCKET_KEY;
+    const now = Date.now();
+
+    let bucket = this.buckets.get(key);
+    if (!bucket) {
+      bucket = { tokens: this.rateLimitCapacity, lastRefillMs: now };
+      this.buckets.set(key, bucket);
+    } else {
+      const elapsed = now - bucket.lastRefillMs;
+      if (elapsed > 0) {
+        bucket.tokens = Math.min(
+          this.rateLimitCapacity,
+          bucket.tokens + elapsed * this.rateLimitRefillPerMs
+        );
+        bucket.lastRefillMs = now;
+      }
+    }
+
+    if (bucket.tokens < 1) {
+      return false;
+    }
+
+    bucket.tokens -= 1;
     return true;
   }
 
-  // Cost calculation
-  protected calculateCost(tokensUsed?: number): number {
-    // Base cost calculation - can be overridden by specific providers
+  // Cost calculation — providers override this with whatever signature makes
+  // sense for their API (token counts, raw response objects, etc.). The
+  // default implementation returns a minimal flat fee.
+  protected calculateCost(..._args: any[]): number {
     return 0.001; // Default minimal cost
   }
 

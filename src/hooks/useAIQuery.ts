@@ -29,7 +29,7 @@ export function useAIQuery() {
 
   const executeQuery = async (
     prompt: string,
-    providers: string[] = ['azure-openai', 'google-gemini'],
+    providers: string[] = ['chatgptsearch', 'google-gemini'],
     priority: 'low' | 'medium' | 'high' = 'medium',
     userId: string = 'default-user'
   ): Promise<AIQueryResult | null> => {

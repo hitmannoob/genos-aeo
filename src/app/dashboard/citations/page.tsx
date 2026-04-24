@@ -3,29 +3,19 @@ import React, { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { useBrandContext } from '@/context/BrandContext';
 import { useLifetimeCitations } from '@/hooks/useLifetimeCitations';
-import { useBrandAnalyticsCombined } from '@/hooks/useBrandAnalytics';
-import { useTotalCitations } from '@/hooks/useTotalCitations';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import Card from '@/components/shared/Card';
-// Citation extraction functions no longer needed - using lifetime data
 import WebLogo from '@/components/shared/WebLogo';
-import { 
-  Quote, 
+import {
+  Quote,
   ExternalLink,
-  Search, 
-  Filter,
   Download,
   RefreshCw,
   AlertCircle,
+  AlertTriangle,
   Globe,
   BarChart3,
-  Calendar,
-  Clock,
-  Eye,
-  SortAsc,
-  SortDesc,
-  ArrowUpDown,
-  MessageSquare
+  MessageSquare,
 } from 'lucide-react';
 import CitationsTable from '@/components/features/CitationsTable';
 
@@ -50,68 +40,19 @@ interface Citation {
 type SortField = 'timestamp' | 'provider' | 'source' | 'domain' | 'query';
 type SortDirection = 'asc' | 'desc';
 
-// Helper function to extract search keywords from Google search URL
-const extractSearchKeywords = (url: string): string => {
-  try {
-    const urlObj = new URL(url);
-    const q = urlObj.searchParams.get('q');
-    return q || 'Google Search';
-  } catch {
-    return 'Google Search';
-  }
-};
-
-// Helper function to check if search keywords mention the brand
-const searchMentionsBrand = (keywords: string, brandName: string, brandDomain?: string): boolean => {
-  const keywordsLower = keywords.toLowerCase();
-  const brandLower = brandName.toLowerCase();
-  
-  // Check if keywords contain brand name
-  if (keywordsLower.includes(brandLower)) return true;
-  
-  // Check if keywords contain brand domain (without TLD)
-  if (brandDomain) {
-    const domainWithoutTld = brandDomain.split('.')[0].toLowerCase();
-    if (keywordsLower.includes(domainWithoutTld)) return true;
-  }
-  
-  return false;
-};
-
-// Helper function to generate mock SEO data
-const generateMockSEOData = (keywords: string) => {
-  // Generate consistent mock data based on keywords hash
-  const hash = keywords.split('').reduce((a, b) => {
-    a = ((a << 5) - a) + b.charCodeAt(0);
-    return a & a;
-  }, 0);
-  
-  const difficulty = Math.abs(hash % 100) + 1; // 1-100
-  const volume = Math.abs(hash % 50000) + 100; // 100-50,000
-  
-  return { difficulty, volume };
-};
-
-// Helper functions no longer needed - using pre-processed lifetime citation data
-
 export default function CitationsPage(): React.ReactElement {
   const { selectedBrand, brands, loading: brandLoading } = useBrandContext();
-  const { 
-    citations: lifetimeCitations, 
-    loading: queriesLoading, 
-    error: queriesError, 
+
+  // Single source of truth — the same pipeline that powers overview / competitors.
+  // useLifetimeCitations now returns the computed lifetimeAnalytics itself so we
+  // get citations, analytics, and the truncation flag from one fetch.
+  const {
+    citations: lifetimeCitations,
+    analytics: lifetimeAnalytics,
+    loading: queriesLoading,
+    error: queriesError,
     refetch,
-    stats: lifetimeStats 
-  } = useLifetimeCitations({ 
-    brandId: selectedBrand?.id 
-  });
-  
-  // Get analytics data to match dashboard calculations
-  // This ensures domain citations count matches between dashboard and citations pages
-  const { lifetimeAnalytics } = useBrandAnalyticsCombined(selectedBrand?.id);
-  
-  // Get total citations count using the same hook as dashboard
-  const { totalCitations: totalCitationsFromHook } = useTotalCitations({ brandId: selectedBrand?.id });
+  } = useLifetimeCitations({ brandId: selectedBrand?.id });
   
   // State for filtering and sorting
   const [searchTerm, setSearchTerm] = useState('');
@@ -304,7 +245,7 @@ export default function CitationsPage(): React.ReactElement {
           <p className="text-muted-foreground mb-4">
             Add your first brand to start analyzing citations.
           </p>
-          <Link href="/dashboard/add-brand/step-1" className="bg-[#000C60] text-white px-4 py-2 rounded-lg hover:bg-[#000C60]/90 transition-colors">
+          <Link href="/dashboard/add-brand/step-1" className="bg-primary text-primary-foreground px-4 py-2 rounded-full hover:bg-primary/90 transition-colors">
             Add Brand
           </Link>
         </div>
@@ -337,17 +278,13 @@ export default function CitationsPage(): React.ReactElement {
             <div>
               <h1 className="text-2xl font-bold text-foreground">Citations Analysis</h1>
               <p className="text-muted-foreground">for {selectedBrand.companyName}</p>
-              <div className="flex items-center space-x-2 mt-2">
-                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                <span className="text-sm text-green-600 font-medium">Based on Lifetime Performance Data</span>
-              </div>
             </div>
           </div>
           <div className="flex items-center space-x-3">
             <button
               onClick={refetch}
               disabled={queriesLoading}
-              className="flex items-center space-x-2 px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              className="flex items-center space-x-2 px-4 py-2 border border-border rounded-full hover:bg-muted transition-colors"
             >
               <RefreshCw className={`h-4 w-4 ${queriesLoading ? 'animate-spin' : ''}`} />
               <span>Refresh</span>
@@ -355,7 +292,7 @@ export default function CitationsPage(): React.ReactElement {
             <button
               onClick={handleExport}
               disabled={filteredAndSortedCitations.length === 0}
-              className="flex items-center space-x-2 bg-[#000C60] text-white px-4 py-2 rounded-lg hover:bg-[#000C60]/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="flex items-center space-x-2 bg-primary/10 text-primary px-4 py-2 rounded-full hover:bg-primary/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               <Download className="h-4 w-4" />
               <span>Export CSV</span>
@@ -363,13 +300,29 @@ export default function CitationsPage(): React.ReactElement {
           </div>
         </div>
 
+        {/* Cloud Storage truncation warning — surface stale/incomplete data so
+            users don't act on numbers that are silently missing ~everything. */}
+        {lifetimeAnalytics?.dataTruncated && (
+          <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900">
+            <AlertTriangle className="h-5 w-5 flex-shrink-0 mt-0.5" />
+            <div className="text-sm">
+              <div className="font-semibold">Citations are running on a partial dataset.</div>
+              <div className="mt-1">
+                We couldn't load the full query history from Cloud Storage, so the
+                citations below are extracted from the most recent ~50 queries only.
+                Reload the page to retry, or contact support if this persists.
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Data Source Info Banner */}
-        <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+        <div className="bg-primary/5 border border-primary/20 rounded-lg p-4">
           <div className="flex items-center space-x-3">
-            <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+            <div className="w-3 h-3 bg-primary rounded-full"></div>
             <div>
-              <h3 className="font-semibold text-green-900">Lifetime Performance Data</h3>
-              <p className="text-sm text-green-700">
+              <h3 className="font-semibold text-foreground">Lifetime Performance Data</h3>
+              <p className="text-sm text-muted-foreground">
                 Citations are sourced from all historical queries processed for your brand, providing comprehensive long-term citation patterns and trends.
               </p>
             </div>
@@ -453,7 +406,7 @@ export default function CitationsPage(): React.ReactElement {
           <Card className="p-6 lg:col-span-2">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-foreground">Most Cited Domains</h3>
-              <Link href="/dashboard/citations/all-domains" className="text-sm text-blue-600 hover:text-blue-800 flex items-center">
+              <Link href="/dashboard/citations/all-domains" className="text-sm text-primary hover:text-primary/80 flex items-center">
                 View All <ExternalLink className="h-4 w-4 ml-1" />
               </Link>
             </div>
@@ -500,11 +453,19 @@ export default function CitationsPage(): React.ReactElement {
         <Card className="p-6">
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-lg font-semibold text-foreground">All Citations</h3>
-            <div className="text-sm text-muted-foreground">
-              Total: {totalCitationsFromHook} citations
+            <div className="text-right text-sm text-muted-foreground">
+              <div>Total: {allCitations.filter(c => c.domain).length} citations</div>
+              {allCitations.length - allCitations.filter(c => c.domain).length > 0 && (
+                <div className="text-xs mt-1">
+                  {allCitations.length - allCitations.filter(c => c.domain).length} citation(s) skipped — unparseable URL
+                </div>
+              )}
             </div>
           </div>
-          <CitationsTable citations={allCitations.filter(c => c.domain)} />
+          <CitationsTable
+            citations={allCitations.filter(c => c.domain)}
+            queries={selectedBrand?.queries || []}
+          />
         </Card>
       </div>
     </DashboardLayout>

@@ -57,11 +57,11 @@ export function AuthContextProvider( { children }: AuthContextProviderProps ): R
         const { result: existingProfile } = await getUserProfile(user.uid);
         
         if (!existingProfile) {
-          // New user - create profile with 500 credits
+          // New user - create profile with 1000 credits
           const { result: newProfile, error } = await createUserProfile(user, true);
           if (newProfile && !error) {
             setUserProfile(newProfile);
-            console.log('🎉 New user profile created with 500 credits');
+            console.log('🎉 New user profile created with 1000 credits');
           }
         } else {
           // Existing user - update their profile info and load credits

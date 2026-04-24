@@ -1,5 +1,28 @@
 // Core types for the multi-provider API system
 
+// Canonical citation shape shared across providers.
+// Individual providers should emit citations in their raw format and a
+// `NormalizedCitation[]` parallel array via their own `extractNormalizedCitations`
+// helper so downstream code has a stable contract.
+export interface NormalizedCitation {
+  url: string;           // absolute URL
+  domain: string;        // lowercased hostname, www. stripped, no path
+  title?: string;        // best-effort from provider metadata
+  sourceProvider: 'chatgpt' | 'perplexity' | 'google-ai-overview' | 'gemini';
+  rawKind: string;       // e.g. 'annotation', 'structured', 'ai-overview-reference', 'metadata'
+}
+
+// Parse a URL and return a lowercased hostname stripped of `www.`, or null
+// if the value isn't a valid absolute URL. Callers should filter out nulls.
+export function parseDomain(url: string | undefined | null): string | null {
+  if (!url || typeof url !== 'string') return null;
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return null;
+  }
+}
+
 export interface APIProvider {
   name: string;
   type: 'ai' | 'seo' | 'data' | 'analytics';
@@ -67,43 +90,6 @@ export interface ChatGPTSearchRequest {
   model?: string;
   temperature?: number;
   max_tokens?: number;
-}
-
-export interface AzureOpenAISearchRequest {
-  messages: Array<{
-    role: 'system' | 'user' | 'assistant';
-    content: string;
-  }>;
-  temperature?: number;
-  max_tokens?: number;
-  data_sources?: Array<{
-    type: 'azure_search';
-    parameters: {
-      endpoint: string;
-      index_name: string;
-      authentication: {
-        type: 'api_key' | 'system_assigned_managed_identity' | 'user_assigned_managed_identity';
-        key?: string;
-        managed_identity_resource_id?: string;
-      };
-      query_type?: 'simple' | 'semantic' | 'vector';
-      in_scope?: boolean;
-      top_n_documents?: number;
-      strictness?: number;
-      role_information?: string;
-      embedding_dependency?: {
-        type: 'deployment_name';
-        deployment_name: string;
-      };
-      fields_mapping?: {
-        content_fields?: string[];
-        filepath_field?: string;
-        title_field?: string;
-        url_field?: string;
-        vector_fields?: string[];
-      };
-    };
-  }>;
 }
 
 export interface PerplexityRequest {

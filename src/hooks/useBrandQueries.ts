@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAuthContext } from '@/context/AuthContext';
 import { getBrandInfo } from '@/firebase/firestore/brandDataService';
 import { retrieveDocumentWithLargeData } from '@/firebase/storage/cloudStorage';
+import { toIsoString } from '@/firebase/firestore/timestamps';
 import type { UserBrand } from '@/firebase/firestore/getUserBrands';
 
 // Interface for processed query results (the format stored in brand documents)
@@ -139,7 +140,7 @@ export function useBrandQueries(options: UseBrandQueriesOptions = {}): UseBrandQ
       console.log('✅ Brand queries fetched:', {
         brandName: brand.companyName,
         queriesCount: queryResults.length,
-        lastProcessed: brand.lastProcessedAt?.toDate?.()?.toISOString() || 'Never'
+        lastProcessed: toIsoString((brand as any).lastProcessedAt) || 'Never'
       });
       
       // Sort by date descending (newest first)

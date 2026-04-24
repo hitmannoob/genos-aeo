@@ -1,5 +1,5 @@
 import { BaseAPIProvider } from './base-provider';
-import { APIResponse, ProviderConfig, GoogleAIOverviewRequest } from './types';
+import { APIResponse, ProviderConfig, GoogleAIOverviewRequest, NormalizedCitation, parseDomain } from './types';
 
 export class GoogleAIOverviewProvider extends BaseAPIProvider {
   private apiUrl: string;
@@ -13,19 +13,19 @@ export class GoogleAIOverviewProvider extends BaseAPIProvider {
     super('google-ai-overview', 'seo', config);
     this.apiUrl = 'https://api.dataforseo.com/v3/serp/google/organic/live/advanced';
     
-    // Use provided auth header or create from username/password
+    // Use provided auth header or create from username/password.
+    // No hardcoded fallback: misconfiguration must fail loudly.
     if (config.authHeader) {
       this.authHeader = config.authHeader;
     } else if (config.username && config.password) {
       const credentials = Buffer.from(`${config.username}:${config.password}`).toString('base64');
       this.authHeader = `Basic ${credentials}`;
     } else {
-      // Use the test credentials for now (we'll move to .env later)
-      this.authHeader = 'Basic dGVhbUBnZXRhaW1vbml0b3IuY29tOjA2YjZjYzAwYTEyZTU0ZGI=';
+      throw new Error('GoogleAIOverviewProvider: authHeader or (username + password) must be provided');
     }
   }
 
-  async execute(request: GoogleAIOverviewRequest): Promise<APIResponse> {
+  async execute(request: GoogleAIOverviewRequest & { _userId?: string }): Promise<APIResponse> {
     const startTime = Date.now();
     const requestId = `google-ai-overview-${Date.now()}`;
 
@@ -38,18 +38,29 @@ export class GoogleAIOverviewProvider extends BaseAPIProvider {
         throw new Error('Invalid request format');
       }
 
-      await this.checkRateLimit();
+      if (!(await this.checkRateLimit(request._userId))) {
+        throw new Error('Rate limit exceeded for google-ai-overview provider');
+      }
 
+      // Defaults are applied here with explicit documentation. Callers may
+      // override any field via the request object (wired through
+      // ProviderManager from APIRequest.metadata).
+      // TODO: wire these to the authenticated user's profile (locale /
+      // market preferences) so we pick the right region automatically.
       const payload = [{
         keyword: request.keyword,
-        location_code: request.location_code || 2840, // Default to US
-        language_code: request.language_code || "en",
-        device: request.device || "desktop",
-        os: request.os || "windows",
-        depth: request.depth || 10,
+        // Default DataForSEO location_code 2840 = United States.
+        location_code: request.location_code ?? 2840,
+        // Default language is English.
+        language_code: request.language_code ?? 'en',
+        // Default device is desktop (AI Overview coverage is widest here).
+        device: request.device ?? 'desktop',
+        // Default OS is Windows (most common desktop SERP profile).
+        os: request.os ?? 'windows',
+        depth: request.depth ?? 10,
         group_organic_results: request.group_organic_results ?? true,
         load_async_ai_overview: request.load_async_ai_overview ?? true,
-        people_also_ask_click_depth: request.people_also_ask_click_depth || 4
+        people_also_ask_click_depth: request.people_also_ask_click_depth ?? 4
       }];
 
       console.log('🔍 Google AI Overview Request Payload:', JSON.stringify(payload, null, 2));
@@ -229,15 +240,18 @@ export class GoogleAIOverviewProvider extends BaseAPIProvider {
       location: task?.data?.location_name,
       language: task?.data?.language_name,
       device: task?.data?.device,
-      
+
       // Content field for Provider Manager compatibility
       content: aiOverview || '',
-      
+
       // Enhanced AI Overview data
       aiOverview: aiOverview,
       aiOverviewItems: aiOverviewItems,
       aiOverviewReferences: aiOverviewReferences,
       hasAIOverview: hasAIOverview,
+
+      // Canonical normalized citation list for downstream aggregation
+      normalizedCitations: GoogleAIOverviewProvider.extractNormalizedCitations(rawResponse),
       
       // Raw response for browser console debugging
       rawDataForSEOResponse: rawResponse,
@@ -282,6 +296,47 @@ export class GoogleAIOverviewProvider extends BaseAPIProvider {
       // Raw response for debugging
       rawResponse: rawResponse
     };
+  }
+
+  // Build the canonical NormalizedCitation list from a raw DataForSEO AI Overview
+  // response.
+  //
+  // Decision (2026-04): this includes both `ai_overview_reference` items
+  // (genuine AI Overview citations) AND `organic` result URLs. The existing
+  // citation-counting code downstream already treats organic results as
+  // citations, so including them here keeps the migration behavior-compatible.
+  // The `rawKind` field ('ai-overview-reference' vs 'organic-result') lets
+  // later consumers filter organics out if/when product wants stricter counts.
+  static extractNormalizedCitations(rawResponse: any): NormalizedCitation[] {
+    const items = rawResponse?.tasks?.[0]?.result?.[0]?.items || [];
+    const out: NormalizedCitation[] = [];
+    const seen = new Set<string>();
+
+    const push = (url: string | undefined, rawKind: string, title?: string) => {
+      if (!url || typeof url !== 'string') return;
+      const domain = parseDomain(url);
+      if (!domain) return;
+      if (seen.has(url)) return;
+      seen.add(url);
+      out.push({
+        url,
+        domain,
+        title,
+        sourceProvider: 'google-ai-overview',
+        rawKind,
+      });
+    };
+
+    items.forEach((item: any) => {
+      if (!item || typeof item !== 'object') return;
+      if (item.type === 'ai_overview_reference') {
+        push(item.url, 'ai-overview-reference', item.title || item.domain);
+      } else if (item.type === 'organic') {
+        push(item.url, 'organic-result', item.title);
+      }
+    });
+
+    return out;
   }
 
   protected calculateCost(response: any): number {

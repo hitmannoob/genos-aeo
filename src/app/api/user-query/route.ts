@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ProviderManager } from '@/lib/api-providers/provider-manager';
-import { auth } from '@/firebase/firebase-admin';
-import { getUserProfileServer, deductCreditsServer } from '@/firebase/firestore/userProfileServer';
+import { auth, firestore, FieldValue } from '@/firebase/firebase-admin';
+import { getUserProfileServer } from '@/firebase/firestore/userProfileServer';
 
 // Type definitions
 interface UserQueryRequest {
@@ -58,12 +58,19 @@ interface ModalQueryResult {
   };
 }
 
-// Helper function to authenticate user and get profile
-async function authenticateUser(request: NextRequest): Promise<{ uid: string; profile: any } | null> {
+// Helper function to authenticate user and get profile.
+// Supports two modes:
+//   1. User mode: Authorization: Bearer <firebase-id-token> — verified via Admin SDK
+//   2. Cron/service mode: Authorization: Bearer <CRON_SECRET> + X-Cron-User-Id: <uid>
+//      — used by /api/cron/process-scheduled to run on behalf of a brand's owner.
+//      Returns isCron=true so callers can adjust behaviour (e.g. credits).
+async function authenticateUser(
+  request: NextRequest
+): Promise<{ uid: string; profile: any; isCron?: boolean } | null> {
   try {
     // Check for Authorization header
     const authorization = request.headers.get('authorization');
-    
+
     if (!authorization) {
       console.log('❌ No authorization header found');
       return null;
@@ -71,14 +78,31 @@ async function authenticateUser(request: NextRequest): Promise<{ uid: string; pr
 
     // Extract token from "Bearer <token>" format
     const token = authorization.split(' ')[1];
-    
+
     if (!token) {
       console.log('❌ No token found in authorization header');
       return null;
     }
 
+    // Cron/service mode
+    const cronSecret = process.env.CRON_SECRET;
+    if (cronSecret && token === cronSecret) {
+      const cronUserId = request.headers.get('x-cron-user-id');
+      if (!cronUserId) {
+        console.log('❌ Cron request missing X-Cron-User-Id header');
+        return null;
+      }
+      console.log('🔑 Cron-authenticated request for user:', cronUserId);
+      const { result: userProfile, error } = await getUserProfileServer(cronUserId);
+      if (error || !userProfile) {
+        console.log('❌ Cron request: user profile not found for', cronUserId);
+        return null;
+      }
+      return { uid: cronUserId, profile: userProfile, isCron: true };
+    }
+
     console.log('🔑 Verifying Firebase ID token...');
-    
+
     // Verify the Firebase ID token
     const decodedToken = await auth.verifyIdToken(token);
     
@@ -170,7 +194,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { uid, profile } = authResult;
+    const { uid, profile, isCron } = authResult;
     const requiredCredits = 10; // Cost for processing a query
 
     console.log('📝 Processing user query with authentication:', {
@@ -179,12 +203,18 @@ export async function POST(request: NextRequest) {
       userCredits: profile.credits,
       requiredCredits,
       isAutoStart,
+      isCron: !!isCron,
       timestamp: new Date().toISOString()
     });
 
-    // Skip credit check if this is an auto-started query
+    // Advisory upfront credit check: fail fast if the user is obviously
+    // short on credits. This is NOT a reservation — the transaction below
+    // (after provider execution) is the real atomicity guard against
+    // concurrent requests draining credits simultaneously.
+    //
+    // Auto-start queries are free: skip the check AND skip the later
+    // deduction (preserves prior behaviour).
     if (!isAutoStart) {
-      // Check if user has sufficient credits
       if (profile.credits < requiredCredits) {
         return NextResponse.json(
           {
@@ -196,13 +226,127 @@ export async function POST(request: NextRequest) {
           { status: 402 }
         );
       }
+    } else {
+      console.log('🚀 Auto-start query - skipping credit check and deduction');
+    }
 
-      // Deduct credits BEFORE processing
-      console.log('💰 Deducting credits before processing...');
-      const { result: deductionSuccess, error: deductionError } = await deductCreditsServer(uid, requiredCredits);
-      
-      if (!deductionSuccess) {
-        console.error('❌ Credit deduction failed:', deductionError);
+    // Initialize provider manager
+    const providerManager = new ProviderManager();
+
+    // Preferred providers for user queries. Filter to those actually
+    // configured so unconfigured providers don't register as failures
+    // (and don't trip ALL_PROVIDERS_FAILED when only one real failure occurs).
+    const preferredProviders = ['chatgptsearch', 'google-ai-overview', 'perplexity'];
+    const availableProviders = new Set(providerManager.getAvailableProviders());
+    const selectedProviders = preferredProviders.filter(p => availableProviders.has(p));
+    const skippedProviders = preferredProviders.filter(p => !availableProviders.has(p));
+
+    if (selectedProviders.length === 0) {
+      console.error('❌ No user-query providers configured. Preferred:', preferredProviders, 'Available:', Array.from(availableProviders));
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'No AI providers are configured. Set at least one of OPENAI_API_KEY, PERPLEXITY_API_KEY, or DATAFORSEO_USERNAME+DATAFORSEO_PASSWORD.',
+          code: 'NO_PROVIDERS_CONFIGURED',
+          preferredProviders,
+          availableProviders: Array.from(availableProviders)
+        },
+        { status: 503 }
+      );
+    }
+
+    // Create API request for the available providers
+    const apiRequest = {
+      id: `user-query-${Date.now()}`,
+      prompt: query,
+      providers: selectedProviders,
+      userId: uid,
+      priority: 'high' as const,
+      createdAt: new Date(),
+      metadata: {
+        context,
+        type: 'user-query',
+        creditsDeducted: isAutoStart ? 0 : requiredCredits
+      }
+    };
+
+    console.log(`🚀 Executing query with ${selectedProviders.length} provider(s):`, selectedProviders, skippedProviders.length ? `(skipped unconfigured: ${skippedProviders.join(', ')})` : '');
+
+    // Execute the request BEFORE charging credits. This way the user isn't
+    // billed if every provider fails.
+    const jobResult = await providerManager.executeRequest(apiRequest);
+
+    const totalTime = Date.now() - startTime;
+
+    // Determine success: at least one provider returned success.
+    const anySuccess = jobResult.results.some(r => r.status === 'success');
+
+    // If all providers errored, do not deduct credits. Return 502.
+    if (!anySuccess) {
+      console.error('❌ All providers failed for user query — skipping credit deduction', {
+        userId: uid,
+        providerCount: jobResult.results.length,
+        totalTime
+      });
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'All AI providers failed. No credits were deducted.',
+          code: 'ALL_PROVIDERS_FAILED',
+          results: jobResult.results.map(r => ({
+            providerId: r.providerId,
+            status: r.status,
+            error: r.error
+          })),
+          totalTime,
+          timestamp: new Date().toISOString()
+        },
+        { status: 502 }
+      );
+    }
+
+    // Atomic deduct-after-success. Transaction re-reads credits inside the
+    // transaction so concurrent requests cannot both pass the earlier
+    // advisory check and overspend.
+    let creditsBefore = profile.credits;
+    if (!isAutoStart) {
+      try {
+        creditsBefore = await firestore.runTransaction(async (tx) => {
+          const userRef = firestore.collection('users').doc(uid);
+          const snap = await tx.get(userRef);
+          const current = (snap.data()?.credits ?? 0) as number;
+          if (current < requiredCredits) {
+            throw new Error('INSUFFICIENT_CREDITS');
+          }
+          tx.update(userRef, {
+            credits: FieldValue.increment(-requiredCredits)
+          });
+          return current;
+        });
+
+        console.log('✅ Credits deducted successfully:', {
+          userId: uid,
+          deducted: requiredCredits,
+          previousCredits: creditsBefore,
+          newCredits: creditsBefore - requiredCredits
+        });
+      } catch (txError) {
+        const msg = txError instanceof Error ? txError.message : String(txError);
+        if (msg === 'INSUFFICIENT_CREDITS') {
+          // Rare: concurrent requests drained credits while providers ran.
+          // The AI work is already done, but we can't charge them — surface
+          // 402 so the client knows the balance is empty. We do NOT retry.
+          console.warn('⚠️ Credit deduction race: credits drained during provider execution', { userId: uid });
+          return NextResponse.json(
+            {
+              error: `Insufficient credits. Required: ${requiredCredits}.`,
+              code: 'INSUFFICIENT_CREDITS',
+              requiredCredits
+            },
+            { status: 402 }
+          );
+        }
+        console.error('❌ Credit deduction transaction failed:', txError);
         return NextResponse.json(
           {
             error: 'Failed to deduct credits. Please try again.',
@@ -211,44 +355,7 @@ export async function POST(request: NextRequest) {
           { status: 500 }
         );
       }
-
-      console.log('✅ Credits deducted successfully:', {
-        userId: uid,
-        deducted: requiredCredits,
-        previousCredits: profile.credits,
-        newCredits: profile.credits - requiredCredits
-      });
-    } else {
-      console.log('🚀 Auto-start query - skipping credit check and deduction');
     }
-
-    // Initialize provider manager
-    const providerManager = new ProviderManager();
-    
-    // Use only the 3 selected providers
-    const selectedProviders = ['azure-openai-search', 'google-ai-overview', 'perplexity'];
-    
-    // Create API request for the 3 providers
-    const apiRequest = {
-      id: `user-query-${Date.now()}`,
-      prompt: query,
-      providers: selectedProviders,
-      priority: 'high' as const,
-      userId: uid,
-      createdAt: new Date(),
-      metadata: {
-        context,
-        type: 'user-query',
-        creditsDeducted: requiredCredits
-      }
-    };
-
-    console.log('🚀 Executing query with 3 providers:', selectedProviders);
-    
-    // Execute the request
-    const jobResult = await providerManager.executeRequest(apiRequest);
-    
-    const totalTime = Date.now() - startTime;
     
     // Transform results for modal display
     const modalResults: ProviderResult[] = jobResult.results.map(result => ({
@@ -270,7 +377,7 @@ export async function POST(request: NextRequest) {
     jobResult.results.forEach(result => {
       if (result.status === 'success' && result.data) {
         switch (result.providerId) {
-          case 'azure-openai-search':
+          case 'chatgptsearch':
             summary.chatgptSearch = {
               content: result.data.content || '',
               webSearchUsed: result.data.webSearchUsed || false,
@@ -301,6 +408,8 @@ export async function POST(request: NextRequest) {
       }
     });
 
+    const deductedAmount = isAutoStart ? 0 : requiredCredits;
+
     const modalResult: ModalQueryResult = {
       success: true,
       query,
@@ -312,9 +421,9 @@ export async function POST(request: NextRequest) {
       summary,
       timestamp: new Date().toISOString(),
       userCredits: {
-        before: profile.credits,
-        after: profile.credits - requiredCredits,
-        deducted: requiredCredits
+        before: creditsBefore,
+        after: creditsBefore - deductedAmount,
+        deducted: deductedAmount
       }
     };
 
@@ -325,7 +434,7 @@ export async function POST(request: NextRequest) {
       successfulResults: modalResult.successfulResults,
       totalCost: modalResult.totalCost,
       totalTime: modalResult.totalTime,
-      creditsDeducted: requiredCredits
+      creditsDeducted: deductedAmount
     });
 
     return NextResponse.json(modalResult);

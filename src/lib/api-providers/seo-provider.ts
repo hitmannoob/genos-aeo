@@ -23,7 +23,12 @@ export class SEOProvider extends BaseAPIProvider {
     }
   }
 
-  async execute(request: SEORequest & { type: 'domain-analysis' | 'keyword-research' | 'backlinks' }): Promise<APIResponse> {
+  async execute(
+    request: SEORequest & {
+      type: 'domain-analysis' | 'keyword-research' | 'backlinks';
+      _userId?: string;
+    }
+  ): Promise<APIResponse> {
     const startTime = Date.now();
     const requestId = `seo-${Date.now()}`;
 
@@ -32,7 +37,9 @@ export class SEOProvider extends BaseAPIProvider {
         throw new Error('Invalid SEO request format');
       }
 
-      await this.checkRateLimit();
+      if (!(await this.checkRateLimit(request._userId))) {
+        throw new Error('Rate limit exceeded for seo provider');
+      }
 
       const endpoint = this.getEndpoint(request.type);
       const params = this.buildParams(request);

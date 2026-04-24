@@ -1,8 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useBrandContext } from '@/context/BrandContext';
 import { useAuthContext } from '@/context/AuthContext';
-import { getLatestCompetitorAnalytics } from '@/firebase/firestore/competitorAnalytics';
-import { CompetitorAnalyticsData } from '@/utils/competitor-analytics';
+import { calculateLiveCompetitorAnalytics } from '@/firebase/firestore/competitorAnalytics';
+import {
+  loadBrandWithQueryResults,
+  brandWithResultsQueryKey,
+  type BrandWithResults,
+} from '@/firebase/firestore/brandWithResults';
 
 interface CompetitorData {
   id: string;
@@ -13,10 +18,12 @@ interface CompetitorData {
   queriesAnalyzed: number;
   topProvider: string;
   lastUpdated: string;
+  mentionsChange: number | null; // delta vs previous-session slice of same corpus; null if no prior data
 }
 
 interface UseCompetitorsReturn {
   competitors: CompetitorData[];
+  totalQueriesProcessed: number;
   loading: boolean;
   error: string | null;
   refetch: () => Promise<void>;
@@ -25,7 +32,9 @@ interface UseCompetitorsReturn {
 export function useCompetitors(): UseCompetitorsReturn {
   const { user } = useAuthContext();
   const { selectedBrand, selectedBrandId, loading: brandLoading } = useBrandContext();
+  const queryClient = useQueryClient();
   const [competitors, setCompetitors] = useState<CompetitorData[]>([]);
+  const [totalQueriesProcessed, setTotalQueriesProcessed] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,41 +48,58 @@ export function useCompetitors(): UseCompetitorsReturn {
     setError(null);
 
     try {
-      // Fetch real competitor analytics from Firestore
-      const { result: analyticsData, error: analyticsError } = await getLatestCompetitorAnalytics(selectedBrandId);
-      
+      // Share the brand + queryProcessingResults fetch with brand analytics hooks
+      // so a single Cloud Storage load serves every pipeline on the page.
+      const preloaded = await queryClient.fetchQuery<BrandWithResults>({
+        queryKey: brandWithResultsQueryKey(selectedBrandId),
+        queryFn: () => loadBrandWithQueryResults(selectedBrandId),
+        staleTime: 3 * 60 * 1000,
+      });
+
+      const { result, error: analyticsError } = await calculateLiveCompetitorAnalytics(selectedBrandId, user!.uid, preloaded);
+
       if (analyticsError) {
-        throw new Error(analyticsError as string);
+        throw new Error(typeof analyticsError === 'string' ? analyticsError : 'Failed to compute competitor analytics');
       }
 
-      if (!analyticsData) {
-        // No competitor analytics data yet - show empty state
+      if (!result) {
         setCompetitors([]);
+        setTotalQueriesProcessed(0);
         setLoading(false);
         return;
       }
 
-      // Transform analytics data into competitor display format
-      const competitorData: CompetitorData[] = Object.entries(analyticsData.competitorStats).map(([name, stats], index) => ({
-        id: (index + 1).toString(),
-        name,
-        domain: undefined, // Will be enhanced in future iterations
-        mentions: stats.totalMentions,
-        visibility: Math.round(stats.visibilityScore),
-        queriesAnalyzed: analyticsData.totalQueriesProcessed,
-        topProvider: stats.topProvider,
-        lastUpdated: analyticsData.processingSessionTimestamp
-      }));
+      const { current, previous } = result;
+
+      const competitorData: CompetitorData[] = Object.entries(current.competitorStats).map(([name, stats], index) => {
+        const priorMentions = previous?.competitorStats?.[name]?.totalMentions;
+        const mentionsChange =
+          typeof priorMentions === 'number' ? stats.totalMentions - priorMentions : null;
+
+        return {
+          id: (index + 1).toString(),
+          name,
+          domain: undefined,
+          mentions: stats.totalMentions,
+          visibility: Math.round(stats.visibilityScore),
+          queriesAnalyzed: current.totalQueriesProcessed,
+          topProvider: stats.topProvider,
+          lastUpdated: current.processingSessionTimestamp,
+          mentionsChange,
+        };
+      });
 
       setCompetitors(competitorData);
+      setTotalQueriesProcessed(current.totalQueriesProcessed);
     } catch (err) {
       console.error('Error fetching competitors:', err);
       setError('Failed to load competitor analytics. Please process some queries first.');
       setCompetitors([]);
+      setTotalQueriesProcessed(0);
     } finally {
       setLoading(false);
     }
-  }, [user?.uid, selectedBrandId, brandLoading, selectedBrand]);
+  }, [user?.uid, selectedBrandId, brandLoading, selectedBrand, queryClient]);
 
   useEffect(() => {
     fetchCompetitors();
@@ -81,6 +107,7 @@ export function useCompetitors(): UseCompetitorsReturn {
 
   return {
     competitors,
+    totalQueriesProcessed,
     loading,
     error,
     refetch: fetchCompetitors

@@ -6,6 +6,7 @@ import BrandContextTester from '@/components/test/BrandContextTester';
 import { AlertTriangle, ArrowLeft, Database } from 'lucide-react';
 import Link from 'next/link';
 import { useAuthContext } from '@/context/AuthContext';
+import { toIsoString } from '@/firebase/firestore/timestamps';
 
 // New component to display brandsbasicData
 function BrandsBasicDataViewer(): React.ReactElement {
@@ -136,7 +137,10 @@ function BrandsBasicDataViewer(): React.ReactElement {
                 <div>
                   <label className="text-xs font-medium text-gray-500 uppercase">Created At</label>
                   <p className="text-sm text-gray-900">
-                    {brand.createdAt ? new Date(brand.createdAt).toLocaleString() : 'N/A'}
+                    {(() => {
+                      const iso = toIsoString(brand.createdAt);
+                      return iso ? new Date(iso).toLocaleString() : 'N/A';
+                    })()}
                   </p>
                 </div>
                 <div>
@@ -199,10 +203,10 @@ function BrandsBasicDataViewer(): React.ReactElement {
                     <div className="bg-white p-3 rounded border col-span-1 md:col-span-2">
                       <label className="text-xs font-medium text-gray-500 uppercase">Last Updated</label>
                       <p className="text-sm text-gray-900">
-                        {brand.brandsbasicData.lastUpdated ? 
-                          new Date(brand.brandsbasicData.lastUpdated).toLocaleString() : 
-                          'N/A'
-                        }
+                        {(() => {
+                          const iso = toIsoString(brand.brandsbasicData.lastUpdated);
+                          return iso ? new Date(iso).toLocaleString() : 'N/A';
+                        })()}
                       </p>
                     </div>
                   </div>

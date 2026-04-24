@@ -100,6 +100,16 @@ export function extractChatGPTCitations(text: string): { url: string; text: stri
       return url.trim();
     }
   };
+
+  const isValidHttpUrl = (value: string): boolean => {
+    if (!value || !/^https?:\/\//i.test(value.trim())) return false;
+    try {
+      new URL(value.trim());
+      return true;
+    } catch {
+      return false;
+    }
+  };
   
   // Extract Google search URLs first (before they get cleaned)
   const googleSearchPattern = /https:\/\/www\.google\.com\/search\?[^\s<>"{}|\\^`[\]]+/g;
@@ -141,7 +151,7 @@ export function extractChatGPTCitations(text: string): { url: string; text: stri
   while ((match = numberedCitationPattern.exec(text)) !== null) {
     const citationNumber = match[1];
     const url = match[2];
-    if (url && url.trim()) {
+    if (isValidHttpUrl(url)) {
       const normalizedUrl = normalizeUrl(url);
       if (!seen.has(normalizedUrl)) {
         const isGoogleSearch = url.includes('google.com/search?');
@@ -167,7 +177,7 @@ export function extractChatGPTCitations(text: string): { url: string; text: stri
   const markdownLinks = text.match(/\[([^\]]+)\]\(([^)]+)\)/g) || [];
   markdownLinks.forEach(link => {
     const match = link.match(/\[([^\]]+)\]\(([^)]+)\)/);
-    if (match && match[2] && match[2].trim()) {
+    if (match && isValidHttpUrl(match[2])) {
       const normalizedUrl = normalizeUrl(match[2]);
       if (!seen.has(normalizedUrl)) {
         // Skip if it's a numbered citation (already handled above)

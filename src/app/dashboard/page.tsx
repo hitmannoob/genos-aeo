@@ -1,122 +1,57 @@
 'use client'
-import React, { useEffect, useCallback, useMemo } from "react";
+import React, { useEffect, useMemo } from "react";
 import { useAuthContext } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
-import { Shield, Link as LinkIcon, MessageSquare, Heart, BarChart3, Zap, RefreshCw, AlertCircle, Quote, Globe, ExternalLink } from 'lucide-react';
+import { BarChart3, RefreshCw, AlertCircle, AlertTriangle } from 'lucide-react';
 import Link from 'next/link';
 
 import DashboardLayout from '@/components/layout/DashboardLayout';
-import MetricCard from '@/components/features/MetricCard';
-import LeaderboardTable from '@/components/features/LeaderboardTable';
-import RecommendationSection from '@/components/features/RecommendationSection';
-import TopDomains from '@/components/features/TopDomains';
-import TrendCharts from '@/components/features/TrendCharts';
-import Card from '@/components/shared/Card';
 import BrandTrackingModal from '@/components/shared/BrandTrackingModal';
-import ProcessQueriesButton from '@/components/features/ProcessQueriesButton';
 import QueriesOverview from '@/components/features/QueriesOverview';
-import { useDashboardData } from '@/hooks/useDashboardData';
-import { seedAllData } from '@/firebase/firestore/seedData';
+import RecommendationSection from '@/components/features/RecommendationSection';
 import { useBrandContext } from '@/context/BrandContext';
-import { UserBrand } from '@/firebase/firestore/getUserBrands';
 import { useUserBrands } from '@/hooks/useUserBrands';
-import WebLogo from '@/components/shared/WebLogo';
 import BrandAnalyticsDisplay from '@/components/features/BrandAnalyticsDisplay';
 import { useBrandAnalyticsCombined } from '@/hooks/useBrandAnalytics';
 import LifetimeAnalyticsCharts from '@/components/features/LifetimeAnalyticsCharts';
-import QueriesContent from '@/app/dashboard/queries/queries-content';
 import CompetitorMentionsCard from '@/components/features/CompetitorMentionsCard';
-import { useLifetimeCitations } from '@/hooks/useLifetimeCitations';
-import { useTotalCitations } from '@/hooks/useTotalCitations';
-
-
-// Recommendations Data manually updated on a weekly basis
-const recommendationsData = [
-  {
-    id: "1",
-    title: "Optimize brand mentions in ChatGPT responses",
-    description: "Increase your brand visibility through strategic content optimization and earned media.",
-    priority: "high" as const,
-    category: "Content Strategy",
-    imageUrl: "",
-    readTime: "5 Hours to Implement",
-    rating: 4.8
-  },
-  {
-    id: "2", 
-    title: "Improve sentiment analysis on Perplexity",
-    description: "Address negative sentiment patterns detected in recent brand mentions to improve overall rating.",
-    priority: "medium" as const,
-    category: "Reputation Management",
-    imageUrl: "",
-    readTime: "3 Hours to Implement",
-    rating: 4.2
-  },
-  {
-    id: "3",
-    title: "Expand your AI prompt coverage",
-    description: "Track 12 additional prompts to get more comprehensive market intelligence.",
-    priority: "low" as const,
-    category: "Market Intelligence",
-    imageUrl: "",
-    readTime: "30 Minutes to Implement",
-    rating: 4.5
-  }
-];
+import { useRecommendations } from '@/hooks/useRecommendations';
 
 
 function Page(): React.ReactElement {
   const { user, loading: authLoading } = useAuthContext();
   const router = useRouter();
-  const { 
-    data, 
-    loading: dataLoading, 
-    error, 
-    refetch, 
-    isGeneratingData, 
-    generationStatus 
-  } = useDashboardData();
-  const { selectedBrand, selectedBrandId, brands, loading: brandsLoading, error: brandsError, setSelectedBrandId, clearBrandContext } = useBrandContext();
+  const { selectedBrand, selectedBrandId, brands, loading: brandsLoading, setSelectedBrandId, clearBrandContext } = useBrandContext();
   const { refetch: refetchBrands } = useUserBrands();
-  const { 
-    latestAnalytics, 
-    lifetimeAnalytics, 
-    loading: analyticsLoading, 
-    error: analyticsError,
+  const {
+    latestAnalytics,
+    lifetimeAnalytics,
+    loading: analyticsLoading,
     hasLatestData,
     hasLifetimeData
   } = useBrandAnalyticsCombined(selectedBrand?.id);
-  
-  // Add citations data using same hooks as citations page
-  const { 
-    citations: lifetimeCitations, 
-    loading: citationsLoading, 
-    error: citationsError,
-    stats: lifetimeStats 
-  } = useLifetimeCitations({ 
-    brandId: selectedBrand?.id 
-  });
-  
-  // Get total citations count using the same hook as citations page
-  const { totalCitations: totalCitationsFromHook } = useTotalCitations({ brandId: selectedBrand?.id });
-  
+
+  const { recommendations } = useRecommendations({ brandId: selectedBrand?.id });
+
   // Modal state
   const [showTrackingModal, setShowTrackingModal] = React.useState(false);
   const [newBrandName, setNewBrandName] = React.useState('');
   const [newBrandId, setNewBrandId] = React.useState('');
 
-  // Citations analytics calculations - matches citations page logic
+  // Citation summary for overview cards is derived from the SAME lifetime
+  // analytics computation that powers brand mentions / provider stats below.
+  // This guarantees the citation cards, provider performance, and SOV chart
+  // all agree on one corpus + one matcher + one snapshot in time.
   const citationAnalytics = useMemo(() => {
-    if (!lifetimeCitations || !selectedBrand) return null;
-    
-    // Use all citations with valid domains (consistent with citations page)
-    const analyticsCitations = lifetimeCitations.filter(c => c.domain);
-    
+    const allCitations = lifetimeAnalytics?.allCitations;
+    if (!allCitations || !selectedBrand) return null;
+
+    const analyticsCitations = allCitations.filter(c => c.domain);
     const totalCitations = analyticsCitations.length;
     const domainCitations = analyticsCitations.filter(c => c.isDomainCitation).length;
     const brandMentions = analyticsCitations.filter(c => c.isBrandMention).length;
     const uniqueDomains = new Set(analyticsCitations.map(c => c.domain)).size;
-    
+
     const providerStats = {
       chatgpt: analyticsCitations.filter(c => c.provider === 'chatgpt').length,
       perplexity: analyticsCitations.filter(c => c.provider === 'perplexity').length,
@@ -131,8 +66,8 @@ function Page(): React.ReactElement {
         return acc;
       }, {} as Record<string, number>)
     )
-    .sort(([,a], [,b]) => b - a)
-    .slice(0, 5); // Show top 5 domains on dashboard
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, 5);
 
     return {
       totalCitations,
@@ -144,7 +79,7 @@ function Page(): React.ReactElement {
       domainCitationRate: totalCitations > 0 ? (domainCitations / totalCitations * 100) : 0,
       brandMentionRate: totalCitations > 0 ? (brandMentions / totalCitations * 100) : 0
     };
-  }, [lifetimeCitations, selectedBrand]);
+  }, [lifetimeAnalytics?.allCitations, selectedBrand]);
 
   useEffect(() => {
     // Only redirect if not loading and user is null
@@ -223,55 +158,6 @@ function Page(): React.ReactElement {
     sessionStorage.removeItem('generatedQueries');
   };
 
-  // Function to seed data for development
-  const handleSeedData = useCallback(async () => {
-    if (user?.uid) {
-      const result = await seedAllData(user.uid);
-      if (result.success) {
-        console.log('✅ Sample data seeded successfully!');
-        refetch(); // Refresh the data after seeding
-      } else {
-        console.error('❌ Failed to seed sample data:', result.error);
-      }
-    }
-  }, [user?.uid, refetch]);
-
-  // Developer keyboard shortcut for seeding data (Ctrl+Shift+S)
-  useEffect(() => {
-    if (process.env.NODE_ENV === 'development') {
-      const handleKeyDown = (event: KeyboardEvent) => {
-        if (event.ctrlKey && event.shiftKey && event.key === 'S') {
-          event.preventDefault();
-          handleSeedData();
-        }
-      };
-
-      window.addEventListener('keydown', handleKeyDown);
-      return () => window.removeEventListener('keydown', handleKeyDown);
-    }
-  }, [user?.uid, handleSeedData]);
-
-  // Expose seed function to global scope for development
-  useEffect(() => {
-    if (process.env.NODE_ENV === 'development' && user?.uid) {
-      (window as any).seedSampleData = handleSeedData;
-      (window as any).refreshDashboard = refetch;
-      (window as any).debugDashboard = () => {
-        console.log('🔍 Dashboard Debug Info:', {
-          user: user?.uid,
-          selectedBrand: selectedBrand?.companyName,
-          selectedBrandId,
-          hasBasicData: !!selectedBrand?.brandsbasicData,
-          brandsbasicData: selectedBrand?.brandsbasicData,
-          metricsCount: data.metrics.length,
-          dataLoading,
-          error,
-          data
-        });
-      };
-    }
-  }, [user?.uid, handleSeedData, refetch, selectedBrand, selectedBrandId, data, dataLoading, error, brands]);
-
   // Show loading while auth state is being determined
   if (authLoading) {
     return (
@@ -314,7 +200,7 @@ function Page(): React.ReactElement {
           <p className="text-muted-foreground mb-4">
             Add your first brand to start viewing analytics data.
           </p>
-          <Link href="/dashboard/add-brand/step-1" className="bg-[#000C60] text-white px-4 py-2 rounded-lg hover:bg-[#000C60]/90 transition-colors">
+          <Link href="/dashboard/add-brand/step-1" className="bg-primary text-primary-foreground px-4 py-2 rounded-full hover:bg-primary/90 transition-colors">
             Add Brand
           </Link>
         </div>
@@ -340,6 +226,22 @@ function Page(): React.ReactElement {
   return (
     <DashboardLayout>
       <div className="space-y-6">
+        {/* Cloud Storage retrieval failed and analytics fell back to the
+            Firestore-truncated copy. Surface it so users don't act on wrong numbers. */}
+        {lifetimeAnalytics?.dataTruncated && (
+          <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900">
+            <AlertTriangle className="h-5 w-5 flex-shrink-0 mt-0.5" />
+            <div className="text-sm">
+              <div className="font-semibold">Analytics are running on a partial dataset.</div>
+              <div className="mt-1">
+                We couldn't load the full query history from Cloud Storage, so the
+                numbers below are computed from the most recent ~50 queries only.
+                Reload the page to retry, or contact support if this persists.
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* --- Analytics Section (Full Tabbed Interface) --- */}
         {(hasLatestData || hasLifetimeData) ? (
           <BrandAnalyticsDisplay 
@@ -367,11 +269,13 @@ function Page(): React.ReactElement {
           </div>
         )}
 
-        {/* --- AI Recommendations Section --- */}
-        <RecommendationSection 
-          recommendations={data.recommendations.length > 0 ? data.recommendations : recommendationsData}
-          defaultExpanded={true}
-        />
+        {/* --- Recommendations (real data from user_recommendations; only renders if present) --- */}
+        {recommendations.length > 0 && (
+          <RecommendationSection
+            recommendations={recommendations}
+            defaultExpanded={true}
+          />
+        )}
 
         {/* --- Queries Overview Section --- */}
         <QueriesOverview 

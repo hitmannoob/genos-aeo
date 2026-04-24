@@ -1,5 +1,5 @@
 import firebase_app from "../config";
-import { getFirestore, collection, doc, setDoc, writeBatch } from "firebase/firestore";
+import { getFirestore, collection, doc, setDoc, writeBatch, serverTimestamp } from "firebase/firestore";
 
 const db = getFirestore(firebase_app);
 
@@ -13,7 +13,8 @@ const sampleUserMetrics = {
   brandMentionsChange: 12.5,
   sentimentScore: 8.6,
   sentimentChange: 0.8,
-  lastUpdated: new Date().toISOString()
+  // lastUpdated is filled in at write time with serverTimestamp() — see
+  // seedUserData below.
 };
 
 const sampleLeaderboardData = [
@@ -102,7 +103,7 @@ export async function seedUserData(userId: string): Promise<{ success: boolean; 
 
     // Add user metrics
     const userMetricsRef = doc(db, 'user_metrics', userId);
-    batch.set(userMetricsRef, sampleUserMetrics);
+    batch.set(userMetricsRef, { ...sampleUserMetrics, lastUpdated: serverTimestamp() });
 
     // Add user recommendations
     sampleRecommendations.forEach((rec, index) => {
@@ -110,7 +111,7 @@ export async function seedUserData(userId: string): Promise<{ success: boolean; 
       batch.set(recRef, {
         ...rec,
         userId,
-        createdAt: new Date().toISOString()
+        createdAt: serverTimestamp()
       });
     });
 
@@ -120,7 +121,7 @@ export async function seedUserData(userId: string): Promise<{ success: boolean; 
       batch.set(domainRef, {
         ...domain,
         userId,
-        lastUpdated: new Date().toISOString()
+        lastUpdated: serverTimestamp()
       });
     });
 
@@ -131,7 +132,7 @@ export async function seedUserData(userId: string): Promise<{ success: boolean; 
         ...prompt,
         promptType: prompt.brand, // Keep backward compatibility
         userId,
-        lastUpdated: new Date().toISOString()
+        lastUpdated: serverTimestamp()
       });
     });
 
@@ -142,7 +143,7 @@ export async function seedUserData(userId: string): Promise<{ success: boolean; 
       batch.set(trendRef, {
         ...trend,
         userId,
-        createdAt: new Date().toISOString()
+        createdAt: serverTimestamp()
       });
     });
 
@@ -166,7 +167,7 @@ export async function seedGlobalData(): Promise<{ success: boolean; error?: any 
       const leaderboardRef = doc(collection(db, 'brand_leaderboard'));
       batch.set(leaderboardRef, {
         ...entry,
-        lastUpdated: new Date().toISOString()
+        lastUpdated: serverTimestamp()
       });
     });
 

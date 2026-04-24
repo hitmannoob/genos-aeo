@@ -2,51 +2,34 @@
 import React, { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { useBrandContext } from '@/context/BrandContext';
-import { useBrandQueries } from '@/hooks/useBrandQueries';
+import { useLifetimeCitations } from '@/hooks/useLifetimeCitations';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import Card from '@/components/shared/Card';
-import { extractChatGPTCitations } from '@/components/features/ChatGPTResponseRenderer';
-import { extractGoogleAIOverviewCitations } from '@/components/features/GoogleAIOverviewRenderer';
-import { extractPerplexityCitations } from '@/components/features/PerplexityResponseRenderer';
-import { 
+import type { LifetimeCitation } from '@/firebase/firestore/brandAnalytics';
+import {
   ArrowLeft,
-  ExternalLink, 
-  Search, 
-  Filter,
+  ExternalLink,
+  Search,
   Download,
   RefreshCw,
-  AlertCircle
+  AlertCircle,
 } from 'lucide-react';
 
-// Citation interface
-interface Citation {
-  id: string;
-  url: string;
-  text: string;
-  source: string;
-  provider: 'chatgpt' | 'perplexity' | 'googleAI';
-  query: string;
-  queryId: string;
-  brandName: string;
-  domain?: string;
-  timestamp: string;
-  type?: string;
-  isBrandMention?: boolean;
-  isDomainCitation?: boolean;
-}
+type Citation = LifetimeCitation;
 
 export default function AllSearchesPage(): React.ReactElement {
   const { selectedBrand } = useBrandContext();
-  const { 
-    queries, 
-    loading: queriesLoading, 
-    error: queriesError 
-  } = useBrandQueries({ brandId: selectedBrand?.id });
+  // Same shared pipeline as overview / competitors / main citations — one
+  // Cloud Storage fetch + one matcher across the whole dashboard.
+  const {
+    citations: allCitations,
+    loading: queriesLoading,
+    error: queriesError,
+  } = useLifetimeCitations({ brandId: selectedBrand?.id });
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedProvider, setSelectedProvider] = useState('');
 
-  // Helper function
   const extractSearchQuery = (url: string): string => {
     try {
       const urlObj = new URL(url);
@@ -56,91 +39,6 @@ export default function AllSearchesPage(): React.ReactElement {
       return 'Google Search';
     }
   };
-
-  // Extract all citations from queries
-  const allCitations = useMemo(() => {
-    if (!queries || !Array.isArray(queries)) return [];
-
-    const citations: Citation[] = [];
-    
-    queries.forEach((query: any) => {
-      if (!query.results) return;
-      
-      // Extract ChatGPT citations
-      if (query.results?.chatgpt?.response) {
-        const chatgptCitations = extractChatGPTCitations(query.results.chatgpt.response);
-        chatgptCitations.forEach((citation, index) => {
-          const domain = extractDomainFromUrl(citation.url);
-          if (!domain) return;
-
-          citations.push({
-            id: `${query.id}-chatgpt-${index}`,
-            url: citation.url,
-            text: citation.text,
-            source: citation.source || 'ChatGPT',
-            provider: 'chatgpt' as 'chatgpt' | 'perplexity' | 'googleAI',
-            query: query.query,
-            queryId: query.id,
-            brandName: selectedBrand?.name || '',
-            domain,
-            timestamp: query.timestamp || new Date().toISOString(),
-            isBrandMention: checkBrandMention(citation.text, citation.url, selectedBrand?.name || '', selectedBrand?.domain),
-            isDomainCitation: checkDomainCitation(citation.url, selectedBrand?.domain)
-          });
-        });
-      }
-
-      // Extract Google AI citations
-      if (query.results?.googleAI?.aiOverview) {
-        const googleCitations = extractGoogleAIOverviewCitations(query.results.googleAI.aiOverview, query.results.googleAI);
-        googleCitations.forEach((citation, index) => {
-          const domain = extractDomainFromUrl(citation.url);
-          if (!domain) return;
-
-          citations.push({
-            id: `${query.id}-googleAI-${index}`,
-            url: citation.url,
-            text: citation.text,
-            source: citation.source || 'Google AI',
-            provider: 'googleAI' as 'chatgpt' | 'perplexity' | 'googleAI',
-            query: query.query,
-            queryId: query.id,
-            brandName: selectedBrand?.name || '',
-            domain,
-            timestamp: query.timestamp || new Date().toISOString(),
-            isBrandMention: checkBrandMention(citation.text, citation.url, selectedBrand?.name || '', selectedBrand?.domain),
-            isDomainCitation: checkDomainCitation(citation.url, selectedBrand?.domain)
-          });
-        });
-      }
-
-      // Extract Perplexity citations
-      if (query.results?.perplexity?.response) {
-        const perplexityCitations = extractPerplexityCitations(query.results.perplexity.response);
-        perplexityCitations.forEach((citation, index) => {
-          const domain = extractDomainFromUrl(citation.url);
-          if (!domain) return;
-
-          citations.push({
-            id: `${query.id}-perplexity-${index}`,
-            url: citation.url,
-            text: citation.text,
-            source: citation.source || 'Perplexity',
-            provider: 'perplexity' as 'chatgpt' | 'perplexity' | 'googleAI',
-            query: query.query,
-            queryId: query.id,
-            brandName: selectedBrand?.name || '',
-            domain,
-            timestamp: query.timestamp || new Date().toISOString(),
-            isBrandMention: checkBrandMention(citation.text, citation.url, selectedBrand?.name || '', selectedBrand?.domain),
-            isDomainCitation: checkDomainCitation(citation.url, selectedBrand?.domain)
-          });
-        });
-      }
-    });
-
-    return citations;
-  }, [queries, selectedBrand]);
 
   // Filter for Google searches only
   const googleSearchCitations = useMemo(() => {
@@ -172,31 +70,47 @@ export default function AllSearchesPage(): React.ReactElement {
     });
   }, [googleSearchCitations, searchTerm, selectedProvider]);
 
-  // Group searches by URL/query and calculate stats
+  // Group searches by canonical URL so two rows with identical extracted
+  // display text don't collapse into one entry when their URLs differ.
   const searchStats = useMemo(() => {
-    const stats = new Map();
-    
+    type SearchStat = {
+      searchText: string;
+      url: string;
+      citations: Citation[];
+      queries: Set<string>;
+      providers: Set<'chatgpt' | 'perplexity' | 'googleAI'>;
+    };
+    const stats = new Map<string, SearchStat>();
+
+    const canonicalUrl = (raw: string) => {
+      try {
+        const u = new URL(raw);
+        // Bucket by the search query (?q=...) when present; otherwise full URL
+        const q = u.searchParams.get('q');
+        return q ? `${u.hostname}${u.pathname}?q=${q}` : u.toString();
+      } catch {
+        return raw;
+      }
+    };
+
     filteredCitations.forEach(citation => {
-      const key = citation.text || citation.url;
+      const key = canonicalUrl(citation.url);
       if (!stats.has(key)) {
         stats.set(key, {
           searchText: citation.text,
           url: citation.url,
           citations: [],
-          queries: new Set(),
-          providers: new Set()
+          queries: new Set<string>(),
+          providers: new Set<'chatgpt' | 'perplexity' | 'googleAI'>(),
         });
       }
-      
-      const searchStat = stats.get(key);
+      const searchStat = stats.get(key)!;
       searchStat.citations.push(citation);
       searchStat.queries.add(citation.queryId);
       searchStat.providers.add(citation.provider);
     });
-    
-    // Convert to array and sort by number of queries
-    return Array.from(stats.values())
-      .sort((a, b) => b.queries.size - a.queries.size);
+
+    return Array.from(stats.values()).sort((a, b) => b.queries.size - a.queries.size);
   }, [filteredCitations]);
 
   const handleExport = () => {
@@ -228,7 +142,7 @@ export default function AllSearchesPage(): React.ReactElement {
           <div className="flex items-center space-x-4">
             <Link 
               href="/dashboard/citations"
-              className="flex items-center space-x-2 text-blue-600 hover:text-blue-800 transition-colors"
+              className="flex items-center space-x-2 text-primary hover:text-primary/80 transition-colors"
             >
               <ArrowLeft className="w-5 h-5" />
               <span>Back to Citations</span>
@@ -268,7 +182,7 @@ export default function AllSearchesPage(): React.ReactElement {
                 <button
                   onClick={handleExport}
                   disabled={searchStats.length === 0}
-                  className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="flex items-center space-x-2 px-4 py-2 bg-primary text-primary-foreground rounded-full hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   <Download className="h-4 w-4" />
                   <span>Export</span>
@@ -319,8 +233,6 @@ export default function AllSearchesPage(): React.ReactElement {
               <div className="block lg:hidden">
                 <div className="divide-y divide-gray-200">
                   {searchStats.map((searchStat, index) => {
-                    const providerStats = getProviderStats(searchStat.citations);
-                    
                     return (
                       <div key={index} className="p-4 space-y-3">
                         {/* Search Header */}
@@ -335,8 +247,8 @@ export default function AllSearchesPage(): React.ReactElement {
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center space-x-2">
-                              <span className="font-medium text-blue-600 text-sm truncate">
-                                {extractSearchQuery(searchStat.text)}
+                              <span className="font-medium text-primary text-sm truncate">
+                                {extractSearchQuery(searchStat.searchText || searchStat.url)}
                               </span>
                               <a
                                 href={searchStat.url}
@@ -428,8 +340,8 @@ export default function AllSearchesPage(): React.ReactElement {
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center space-x-2">
-                                <span className="font-medium text-blue-600 truncate">
-                                  {extractSearchQuery(searchStat.text)}
+                                <span className="font-medium text-primary truncate">
+                                  {extractSearchQuery(searchStat.searchText || searchStat.url)}
                                 </span>
                                 <a
                                   href={searchStat.url}
@@ -497,42 +409,3 @@ export default function AllSearchesPage(): React.ReactElement {
     </div>
   );
 }
-
-function extractDomainFromUrl(url: string): string | undefined {
-  try {
-    const urlObj = new URL(url);
-    return urlObj.hostname.replace('www.', '');
-  } catch {
-    return undefined;
-  }
-}
-
-function checkBrandMention(text: string, url: string, brandName: string, brandDomain?: string): boolean {
-  if (!brandName) return false;
-  
-  const lowerText = text.toLowerCase();
-  const lowerBrandName = brandName.toLowerCase();
-  
-  // Check if brand name is mentioned in the citation text
-  if (lowerText.includes(lowerBrandName)) return true;
-  
-  // Check if the URL is from the brand's domain (check for "https://www." + domain specifically)
-  if (brandDomain) {
-    const lowerUrl = url.toLowerCase();
-    const lowerDomain = brandDomain.toLowerCase();
-    const httpsWwwDomain = `https://www.${lowerDomain}`;
-    if (lowerUrl.includes(httpsWwwDomain)) return true;
-  }
-  
-  return false;
-}
-
-function checkDomainCitation(url: string, brandDomain?: string): boolean {
-  if (!brandDomain) return false;
-  const lowerUrl = url.toLowerCase();
-  const lowerDomain = brandDomain.toLowerCase();
-  
-  // Check for "https://www." + domain specifically
-  const httpsWwwDomain = `https://www.${lowerDomain}`;
-  return lowerUrl.includes(httpsWwwDomain);
-} 

@@ -3,41 +3,35 @@ import * as admin from 'firebase-admin';
 // Initialize Firebase Admin SDK if not already initialized
 if (!admin.apps.length) {
   try {
-    // Validate required environment variables
-    const requiredEnvVars = [
-      'NEXT_PUBLIC_FIREBASE_PROJECT_ID',
-      'FIREBASE_CLIENT_EMAIL', 
-      'FIREBASE_PRIVATE_KEY'
-    ];
-    
-    const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
-    
-    if (missingVars.length > 0) {
-      throw new Error(`Missing required environment variables: ${missingVars.join(', ')}`);
+    const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+    if (!projectId) {
+      throw new Error('Missing NEXT_PUBLIC_FIREBASE_PROJECT_ID');
     }
 
-    // Clean and format the private key
-    const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
-    
-    if (!privateKey) {
-      throw new Error('FIREBASE_PRIVATE_KEY is empty or invalid');
+    const usingEmulators = !!(process.env.FIRESTORE_EMULATOR_HOST || process.env.FIREBASE_AUTH_EMULATOR_HOST);
+
+    if (usingEmulators) {
+      // Emulator mode: no real credentials needed. Admin SDK picks up the
+      // *_EMULATOR_HOST env vars automatically.
+      admin.initializeApp({ projectId });
+      console.log('✅ Firebase Admin SDK initialized in EMULATOR mode');
+      console.log('📋 Project ID:', projectId);
+    } else {
+      if (!process.env.FIREBASE_CLIENT_EMAIL || !process.env.FIREBASE_PRIVATE_KEY) {
+        throw new Error('Missing FIREBASE_CLIENT_EMAIL or FIREBASE_PRIVATE_KEY');
+      }
+      const privateKey = process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n');
+      admin.initializeApp({
+        credential: admin.credential.cert({
+          projectId,
+          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+          privateKey,
+        }),
+        databaseURL: process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL,
+      });
+      console.log('✅ Firebase Admin SDK initialized with service account');
+      console.log('📋 Project ID:', projectId);
     }
-
-    const adminConfig = {
-      credential: admin.credential.cert({
-        projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: privateKey,
-      }),
-      databaseURL: process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL,
-    };
-
-    admin.initializeApp(adminConfig);
-    
-    console.log('✅ Firebase Admin SDK initialized successfully');
-    console.log('📋 Project ID:', process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID);
-    console.log('📋 Client Email:', process.env.FIREBASE_CLIENT_EMAIL?.substring(0, 20) + '...');
-    
   } catch (error) {
     console.error('❌ Firebase Admin SDK initialization error:', error);
     throw error;
@@ -48,6 +42,11 @@ if (!admin.apps.length) {
 export const firestore = admin.firestore();
 export const auth = admin.auth();
 export const adminApp = admin.app();
+
+// Re-export FieldValue so server code can use
+// `FieldValue.serverTimestamp()` / `FieldValue.increment()` without a
+// separate `firebase-admin` import. Prefer this over `admin.firestore.FieldValue`.
+export const FieldValue = admin.firestore.FieldValue;
 
 // Helper function to test Firestore connection
 export async function testFirestoreConnection(): Promise<boolean> {

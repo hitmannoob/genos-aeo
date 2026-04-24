@@ -22,7 +22,7 @@ export default function AnalyticsPage(): React.ReactElement {
           <p className="text-muted-foreground mb-4">
             Analytics have been moved to the Overview page for better accessibility.
           </p>
-          <Link href="/dashboard" className="bg-[#000C60] text-white px-4 py-2 rounded-lg hover:bg-[#000C60]/90 transition-colors">
+          <Link href="/dashboard" className="bg-primary text-primary-foreground px-4 py-2 rounded-full hover:bg-primary/90 transition-colors">
             Go to Overview
           </Link>
         </div>

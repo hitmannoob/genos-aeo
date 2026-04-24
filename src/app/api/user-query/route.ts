@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ProviderManager } from '@/lib/api-providers/provider-manager';
-import { auth } from '@/firebase/firebase-admin';
-import { getUserProfileServer, deductCreditsServer } from '@/firebase/firestore/userProfileServer';
+import { auth, firestore, FieldValue } from '@/firebase/firebase-admin';
+import { getUserProfileServer } from '@/firebase/firestore/userProfileServer';
 
 // Type definitions
 interface UserQueryRequest {
@@ -182,9 +182,14 @@ export async function POST(request: NextRequest) {
       timestamp: new Date().toISOString()
     });
 
-    // Skip credit check if this is an auto-started query
+    // Advisory upfront credit check: fail fast if the user is obviously
+    // short on credits. This is NOT a reservation — the transaction below
+    // (after provider execution) is the real atomicity guard against
+    // concurrent requests draining credits simultaneously.
+    //
+    // Auto-start queries are free: skip the check AND skip the later
+    // deduction (preserves prior behaviour).
     if (!isAutoStart) {
-      // Check if user has sufficient credits
       if (profile.credits < requiredCredits) {
         return NextResponse.json(
           {
@@ -196,13 +201,108 @@ export async function POST(request: NextRequest) {
           { status: 402 }
         );
       }
+    } else {
+      console.log('🚀 Auto-start query - skipping credit check and deduction');
+    }
 
-      // Deduct credits BEFORE processing
-      console.log('💰 Deducting credits before processing...');
-      const { result: deductionSuccess, error: deductionError } = await deductCreditsServer(uid, requiredCredits);
-      
-      if (!deductionSuccess) {
-        console.error('❌ Credit deduction failed:', deductionError);
+    // Initialize provider manager
+    const providerManager = new ProviderManager();
+
+    // Use only the 3 selected providers
+    const selectedProviders = ['chatgptsearch', 'google-ai-overview', 'perplexity'];
+
+    // Create API request for the 3 providers
+    const apiRequest = {
+      id: `user-query-${Date.now()}`,
+      prompt: query,
+      providers: selectedProviders,
+      userId: uid,
+      priority: 'high' as const,
+      createdAt: new Date(),
+      metadata: {
+        context,
+        type: 'user-query',
+        creditsDeducted: isAutoStart ? 0 : requiredCredits
+      }
+    };
+
+    console.log('🚀 Executing query with 3 providers:', selectedProviders);
+
+    // Execute the request BEFORE charging credits. This way the user isn't
+    // billed if every provider fails.
+    const jobResult = await providerManager.executeRequest(apiRequest);
+
+    const totalTime = Date.now() - startTime;
+
+    // Determine success: at least one provider returned success.
+    const anySuccess = jobResult.results.some(r => r.status === 'success');
+
+    // If all providers errored, do not deduct credits. Return 502.
+    if (!anySuccess) {
+      console.error('❌ All providers failed for user query — skipping credit deduction', {
+        userId: uid,
+        providerCount: jobResult.results.length,
+        totalTime
+      });
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'All AI providers failed. No credits were deducted.',
+          code: 'ALL_PROVIDERS_FAILED',
+          results: jobResult.results.map(r => ({
+            providerId: r.providerId,
+            status: r.status,
+            error: r.error
+          })),
+          totalTime,
+          timestamp: new Date().toISOString()
+        },
+        { status: 502 }
+      );
+    }
+
+    // Atomic deduct-after-success. Transaction re-reads credits inside the
+    // transaction so concurrent requests cannot both pass the earlier
+    // advisory check and overspend.
+    let creditsBefore = profile.credits;
+    if (!isAutoStart) {
+      try {
+        creditsBefore = await firestore.runTransaction(async (tx) => {
+          const userRef = firestore.collection('users').doc(uid);
+          const snap = await tx.get(userRef);
+          const current = (snap.data()?.credits ?? 0) as number;
+          if (current < requiredCredits) {
+            throw new Error('INSUFFICIENT_CREDITS');
+          }
+          tx.update(userRef, {
+            credits: FieldValue.increment(-requiredCredits)
+          });
+          return current;
+        });
+
+        console.log('✅ Credits deducted successfully:', {
+          userId: uid,
+          deducted: requiredCredits,
+          previousCredits: creditsBefore,
+          newCredits: creditsBefore - requiredCredits
+        });
+      } catch (txError) {
+        const msg = txError instanceof Error ? txError.message : String(txError);
+        if (msg === 'INSUFFICIENT_CREDITS') {
+          // Rare: concurrent requests drained credits while providers ran.
+          // The AI work is already done, but we can't charge them — surface
+          // 402 so the client knows the balance is empty. We do NOT retry.
+          console.warn('⚠️ Credit deduction race: credits drained during provider execution', { userId: uid });
+          return NextResponse.json(
+            {
+              error: `Insufficient credits. Required: ${requiredCredits}.`,
+              code: 'INSUFFICIENT_CREDITS',
+              requiredCredits
+            },
+            { status: 402 }
+          );
+        }
+        console.error('❌ Credit deduction transaction failed:', txError);
         return NextResponse.json(
           {
             error: 'Failed to deduct credits. Please try again.',
@@ -211,44 +311,7 @@ export async function POST(request: NextRequest) {
           { status: 500 }
         );
       }
-
-      console.log('✅ Credits deducted successfully:', {
-        userId: uid,
-        deducted: requiredCredits,
-        previousCredits: profile.credits,
-        newCredits: profile.credits - requiredCredits
-      });
-    } else {
-      console.log('🚀 Auto-start query - skipping credit check and deduction');
     }
-
-    // Initialize provider manager
-    const providerManager = new ProviderManager();
-    
-    // Use only the 3 selected providers
-    const selectedProviders = ['azure-openai-search', 'google-ai-overview', 'perplexity'];
-    
-    // Create API request for the 3 providers
-    const apiRequest = {
-      id: `user-query-${Date.now()}`,
-      prompt: query,
-      providers: selectedProviders,
-      priority: 'high' as const,
-      userId: uid,
-      createdAt: new Date(),
-      metadata: {
-        context,
-        type: 'user-query',
-        creditsDeducted: requiredCredits
-      }
-    };
-
-    console.log('🚀 Executing query with 3 providers:', selectedProviders);
-    
-    // Execute the request
-    const jobResult = await providerManager.executeRequest(apiRequest);
-    
-    const totalTime = Date.now() - startTime;
     
     // Transform results for modal display
     const modalResults: ProviderResult[] = jobResult.results.map(result => ({
@@ -270,7 +333,7 @@ export async function POST(request: NextRequest) {
     jobResult.results.forEach(result => {
       if (result.status === 'success' && result.data) {
         switch (result.providerId) {
-          case 'azure-openai-search':
+          case 'chatgptsearch':
             summary.chatgptSearch = {
               content: result.data.content || '',
               webSearchUsed: result.data.webSearchUsed || false,
@@ -301,6 +364,8 @@ export async function POST(request: NextRequest) {
       }
     });
 
+    const deductedAmount = isAutoStart ? 0 : requiredCredits;
+
     const modalResult: ModalQueryResult = {
       success: true,
       query,
@@ -312,9 +377,9 @@ export async function POST(request: NextRequest) {
       summary,
       timestamp: new Date().toISOString(),
       userCredits: {
-        before: profile.credits,
-        after: profile.credits - requiredCredits,
-        deducted: requiredCredits
+        before: creditsBefore,
+        after: creditsBefore - deductedAmount,
+        deducted: deductedAmount
       }
     };
 
@@ -325,7 +390,7 @@ export async function POST(request: NextRequest) {
       successfulResults: modalResult.successfulResults,
       totalCost: modalResult.totalCost,
       totalTime: modalResult.totalTime,
-      creditsDeducted: requiredCredits
+      creditsDeducted: deductedAmount
     });
 
     return NextResponse.json(modalResult);

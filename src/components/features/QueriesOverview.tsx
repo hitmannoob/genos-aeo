@@ -420,20 +420,28 @@ export default function QueriesOverview({
             )}
             
             {showCategoryFilter && categories.length > 2 && (
-              <div className="flex flex-wrap gap-1">
-                {categories.map((category) => (
-                  <button
-                    key={category}
-                    onClick={() => setSelectedCategory(category)}
-                    className={`px-2 py-1 text-xs rounded-md transition-colors ${
-                      selectedCategory === category
-                        ? 'bg-[#000C60] text-white'
-                        : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                    }`}
-                  >
-                    {category === 'all' ? 'All' : category}
-                  </button>
-                ))}
+              <div className="flex flex-wrap gap-2">
+                {categories.map((category) => {
+                  const active = selectedCategory === category;
+                  const isAll = category === 'all';
+                  const activeStyles = isAll
+                    ? 'bg-primary/10 text-primary border-primary/30'
+                    : getCategoryColor(category);
+                  return (
+                    <button
+                      key={category}
+                      onClick={() => setSelectedCategory(category)}
+                      className={`inline-flex items-center space-x-1 px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                        active
+                          ? activeStyles
+                          : 'bg-background text-muted-foreground border-border hover:bg-muted'
+                      }`}
+                    >
+                      {!isAll && getCategoryIcon(category)}
+                      <span>{isAll ? 'All' : category}</span>
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -643,21 +651,28 @@ export default function QueriesOverview({
                           </div>
                         </td>
                         <td className="px-4 py-4 text-center">
-                          <div className="flex items-center justify-center">
+                          <div className="flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
                             {showEyeIcons && hasResults && (
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation(); // Prevent row click when button is clicked
                                   onQueryClick && onQueryClick(query, queryResult);
                                 }}
-                                className="px-3 py-1.5 text-xs font-medium text-[#000C60] bg-[#000C60]/10 hover:bg-[#000C60]/20 rounded-lg transition-colors duration-200 group-hover:bg-[#000C60] group-hover:text-white"
+                                className="px-3 py-1.5 text-xs font-medium text-primary bg-primary/10 hover:bg-primary/20 rounded-lg transition-colors duration-200 group-hover:bg-primary group-hover:text-primary-foreground"
                                 title="View detailed AI responses"
                               >
                                 More Details
                               </button>
                             )}
-                            {!hasResults && (
-                              <span className="text-xs text-muted-foreground">No data</span>
+                            {!hasResults && brand?.id && (
+                              <ProcessQueriesButton
+                                brandId={brand.id}
+                                queriesFilter={[query.query]}
+                                iconOnly
+                                onComplete={async () => {
+                                  await refetchBrands();
+                                }}
+                              />
                             )}
                           </div>
                         </td>
@@ -735,8 +750,15 @@ export default function QueriesOverview({
                           More Details
                         </button>
                       )} */}
-                      {!hasResults && (
-                        <span className="text-xs text-muted-foreground">No data</span>
+                      {!hasResults && brand?.id && (
+                        <ProcessQueriesButton
+                          brandId={brand.id}
+                          queriesFilter={[query.query]}
+                          iconOnly
+                          onComplete={async () => {
+                            await refetchBrands();
+                          }}
+                        />
                       )}
                     </div>
                   </div>

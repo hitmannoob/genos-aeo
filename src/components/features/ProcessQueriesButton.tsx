@@ -3,13 +3,10 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useAuthContext } from '@/context/AuthContext';
 import { useBrandContext } from '@/context/BrandContext';
 import { useToast } from '@/context/ToastContext';
-import { RefreshCw, Zap, AlertCircle, CheckCircle, RotateCcw, StopCircle, CreditCard } from 'lucide-react';
+import { RefreshCw, Zap, AlertCircle, CheckCircle, RotateCcw, StopCircle, CreditCard, Play } from 'lucide-react';
 import { updateBrandWithQueryResults } from '@/firebase/firestore/getUserBrands';
 import { saveDetailedQueryResults } from '@/firebase/firestore/detailedQueryResults';
 import { calculateCumulativeAnalytics, saveBrandAnalytics, calculateLifetimeBrandAnalytics, saveLifetimeAnalytics } from '@/firebase/firestore/brandAnalytics';
-import { calculateCumulativeCompetitorAnalytics } from '@/utils/competitor-analytics';
-import { saveCompetitorAnalytics } from '@/firebase/firestore/competitorAnalytics';
-import { Competitor } from '@/lib/competitor-matching';
 import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
 
 interface ProcessQueriesButtonProps {
@@ -22,10 +19,12 @@ interface ProcessQueriesButtonProps {
   variant?: 'primary' | 'secondary' | 'ghost';
   size?: 'sm' | 'md' | 'lg';
   autoStart?: boolean; // NEW PROP
+  queriesFilter?: string[]; // When set, only process queries whose text matches one of these
+  iconOnly?: boolean; // Render as a compact circular icon button (for per-row actions)
 }
 
-export default function ProcessQueriesButton({ 
-  brandId, 
+export default function ProcessQueriesButton({
+  brandId,
   onComplete,
   onProgress,
   onStart,
@@ -33,7 +32,9 @@ export default function ProcessQueriesButton({
   className = '',
   variant = 'primary',
   size = 'md',
-  autoStart = false // NEW PROP
+  autoStart = false, // NEW PROP
+  queriesFilter,
+  iconOnly = false,
 }: ProcessQueriesButtonProps): React.ReactElement {
   const { user, userProfile, refreshUserProfile } = useAuthContext();
   const { selectedBrand, brands, refetchBrands } = useBrandContext();
@@ -75,7 +76,10 @@ export default function ProcessQueriesButton({
     }
 
     const brandName = targetBrand.companyName;
-    const queries = targetBrand.queries || [];
+    const allBrandQueries = targetBrand.queries || [];
+    const queries = queriesFilter
+      ? allBrandQueries.filter(q => queriesFilter.includes(q.query))
+      : allBrandQueries;
 
     if (queries.length === 0) {
       setStatus('error');
@@ -222,7 +226,7 @@ export default function ProcessQueriesButton({
           // Process the enhanced results from the new API
           if (queryData.success && queryData.results && Array.isArray(queryData.results)) {
             queryData.results.forEach((result: any) => {
-              if (result.providerId === 'azure-openai-search') {
+              if (result.providerId === 'chatgptsearch') {
                 queryResult.results.chatgpt = {
                   response: result.data?.content || '',
                   ...(result.error && { error: result.error }),
@@ -347,39 +351,9 @@ export default function ProcessQueriesButton({
             // Don't fail the entire process for analytics errors
           }
 
-          // Calculate and save competitor analytics after each query
-          try {
-            setMessage(`Updating competitor analytics for ${brandName}...`);
-            
-            // Convert brand competitors to Competitor format
-            const competitors: Competitor[] = (targetBrand.competitors || []).map(comp => ({
-              name: comp,
-              domain: undefined, // Will be enhanced later to include competitor domains
-              aliases: undefined
-            }));
-            
-            if (competitors.length > 0) {
-              const competitorAnalyticsData = calculateCumulativeCompetitorAnalytics(
-                targetBrand.userId,
-                targetBrandId!,
-                targetBrand.companyName,
-                targetBrand.domain,
-                processingSessionId,
-                processingSessionTimestamp,
-                competitors,
-                allResults // Use all results processed so far
-              );
-              
-              const { result: competitorSaveResult, error: competitorSaveError } = await saveCompetitorAnalytics(competitorAnalyticsData);
-              
-              if (!competitorSaveResult?.success) {
-                console.error('❌ Error saving incremental competitor analytics:', competitorSaveError);
-              }
-            }
-          } catch (competitorAnalyticsError) {
-            console.error('❌ Error calculating/saving competitor analytics:', competitorAnalyticsError);
-            // Don't fail the entire process for competitor analytics errors
-          }
+          // Competitor analytics are now live-computed at view time from
+          // brand.queryProcessingResults (see calculateLiveCompetitorAnalytics),
+          // so no separate snapshot write is needed here.
 
           // Small delay between queries
           await new Promise(resolve => setTimeout(resolve, 1000));
@@ -444,7 +418,7 @@ export default function ProcessQueriesButton({
         try {
           setMessage(`Updating lifetime analytics for ${brandName}...`);
           
-          const { result: lifetimeAnalytics, error: lifetimeError } = await calculateLifetimeBrandAnalytics(targetBrandId!);
+          const { result: lifetimeAnalytics, error: lifetimeError } = await calculateLifetimeBrandAnalytics(targetBrandId!, user!.uid);
           
           if (lifetimeError) {
             console.error('❌ Error calculating lifetime analytics:', lifetimeError);
@@ -544,8 +518,11 @@ export default function ProcessQueriesButton({
   const getRequiredCredits = () => {
     const targetBrandId = brandId || selectedBrand?.id;
     const targetBrand = brands.find(b => b.id === targetBrandId);
-    const queryCount = targetBrand?.queries?.length || 0;
-    return queryCount * 10;
+    const allQueries = targetBrand?.queries || [];
+    const scoped = queriesFilter
+      ? allQueries.filter(q => queriesFilter.includes(q.query))
+      : allQueries;
+    return scoped.length * 10;
   };
 
   const requiredCredits = getRequiredCredits();
@@ -641,6 +618,41 @@ export default function ProcessQueriesButton({
     return `Process Queries (${requiredCredits} Credits)`;
   };
 
+  // Compact circular icon button — used inline in table rows for single-query processing.
+  if (iconOnly) {
+    const isDisabled = processing || !user || !hasEnoughCredits;
+    const tooltip = !user
+      ? 'Sign in to process'
+      : !hasEnoughCredits
+      ? `Needs ${requiredCredits} credits (you have ${availableCredits})`
+      : status === 'error'
+      ? message || 'Failed — click to retry'
+      : 'Process this query';
+    return (
+      <button
+        onClick={handleProcessQueries}
+        disabled={isDisabled}
+        title={tooltip}
+        className={`inline-flex items-center justify-center w-8 h-8 rounded-full transition-colors
+          ${status === 'error'
+            ? 'bg-destructive/10 text-destructive hover:bg-destructive/20'
+            : !hasEnoughCredits && requiredCredits > 0
+            ? 'bg-muted text-muted-foreground cursor-not-allowed'
+            : 'bg-primary/10 text-primary hover:bg-primary/20'}
+          ${processing ? 'opacity-70 cursor-not-allowed' : ''}
+          ${className}`}
+      >
+        {processing ? (
+          <RefreshCw className="h-4 w-4 animate-spin" />
+        ) : status === 'error' ? (
+          <AlertCircle className="h-4 w-4" />
+        ) : (
+          <Play className="h-4 w-4" />
+        )}
+      </button>
+    );
+  }
+
   return (
     <div className="flex flex-col items-center">
       <div className="flex items-center space-x-2">
@@ -648,9 +660,9 @@ export default function ProcessQueriesButton({
           onClick={handleProcessQueries}
           disabled={processing || !user || !hasEnoughCredits}
           className={`
-            ${baseStyles} 
-            ${variantStyles[variant]} 
-            ${sizeStyles[size]} 
+            ${baseStyles}
+            ${variantStyles[variant]}
+            ${sizeStyles[size]}
             ${statusStyles[status]}
             ${className}
           `}

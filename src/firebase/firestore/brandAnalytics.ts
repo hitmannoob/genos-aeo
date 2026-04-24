@@ -7,6 +7,8 @@ import { extractPerplexityCitations } from '@/components/features/PerplexityResp
 import { getQueriesByBrand } from './userQueries';
 import { getBrandInfo } from './brandDataService';
 import { retrieveDocumentWithLargeData } from '../storage/cloudStorage';
+import { matchesWord } from '@/lib/competitor-matching';
+import { toIsoString } from './timestamps';
 
 // Get the Firestore instance
 const db = getFirestore(firebase_app);
@@ -60,7 +62,24 @@ export interface BrandAnalyticsData {
     topPerformingProvider: string; // Provider(s) with best performance (brand mentions -> domain citations ratio -> total citations)
     topProviders: string[]; // Array of top performing providers (useful for ties)
     brandVisibilityTrend: 'improving' | 'declining' | 'stable';
+    /**
+     * Average brand mentions per AI response (i.e. totalBrandMentions / totalProviders).
+     * Matches the "response" unit used by brandVisibilityScore: if N providers each return a
+     * response and the brand is mentioned in M responses, the brand mention density across
+     * responses is M/N. Prefer this field over averageBrandMentionsPerQuery.
+     */
+    averageBrandMentionsPerResponse: number;
+    /** Average citations per AI response (totalCitations / totalProviders). */
+    averageCitationsPerResponse: number;
+    /**
+     * @deprecated Use averageBrandMentionsPerResponse. This field is the per-query
+     * aggregate summed across providers and mixes provider and query units, which
+     * is confusing. Retained for backwards compatibility with persisted documents.
+     */
     averageBrandMentionsPerQuery: number;
+    /**
+     * @deprecated Use averageCitationsPerResponse. See averageBrandMentionsPerQuery.
+     */
     averageCitationsPerQuery: number;
     competitorMentionsDetected: number; // Future feature
     providerRankingDetails?: {
@@ -72,7 +91,7 @@ export interface BrandAnalyticsData {
       };
     };
   };
-  
+
   // Timestamps
   lastUpdated: any;
   createdAt: any;
@@ -143,7 +162,13 @@ export interface LifetimeBrandAnalytics {
   insights: {
     topPerformingProvider: string;
     topProviders: string[];
+    /** Average brand mentions per AI response. See BrandAnalyticsData for details. */
+    averageBrandMentionsPerResponse: number;
+    /** Average citations per AI response. */
+    averageCitationsPerResponse: number;
+    /** @deprecated Use averageBrandMentionsPerResponse. */
     averageBrandMentionsPerQuery: number;
+    /** @deprecated Use averageCitationsPerResponse. */
     averageCitationsPerQuery: number;
     firstQueryProcessed?: string;
     lastQueryProcessed?: string;
@@ -159,6 +184,11 @@ export interface LifetimeBrandAnalytics {
   
   // Timestamps
   calculatedAt: any;
+
+  // Set when Cloud Storage retrieval failed and analytics fell back to the
+  // truncated Firestore copy (~50 queries). Callers should surface a warning
+  // so users don't act on silently-incomplete numbers.
+  dataTruncated?: boolean;
 }
 
 // Interface for historical analytics summary
@@ -250,6 +280,13 @@ export function calculateCumulativeAnalytics(
 
   // Calculate averages and insights
   const brandVisibilityScore = totalProviders > 0 ? (totalProvidersWithBrandMentions / totalProviders) * 100 : 0;
+  // Per-response averages: totalBrandMentions and totalCitations are summed
+  // across all returning provider responses, so dividing by totalProviders gives
+  // a per-response figure that matches the "response" unit in brandVisibilityScore.
+  const averageBrandMentionsPerResponse = totalProviders > 0 ? totalBrandMentions / totalProviders : 0;
+  const averageCitationsPerResponse = totalProviders > 0 ? totalCitations / totalProviders : 0;
+  // Legacy per-query aggregate (summed across providers for each query); retained
+  // for backwards compatibility only — new readers should use the per-response fields.
   const averageBrandMentionsPerQuery = queryResults.length > 0 ? totalBrandMentions / queryResults.length : 0;
   const averageCitationsPerQuery = queryResults.length > 0 ? totalCitations / queryResults.length : 0;
 
@@ -395,6 +432,8 @@ export function calculateCumulativeAnalytics(
       topPerformingProvider,
       topProviders,
       brandVisibilityTrend: 'stable', // Will be calculated by comparing with previous data
+      averageBrandMentionsPerResponse: Math.round(averageBrandMentionsPerResponse * 100) / 100,
+      averageCitationsPerResponse: Math.round(averageCitationsPerResponse * 100) / 100,
       averageBrandMentionsPerQuery: Math.round(averageBrandMentionsPerQuery * 100) / 100,
       averageCitationsPerQuery: Math.round(averageCitationsPerQuery * 100) / 100,
       competitorMentionsDetected: 0, // Future feature
@@ -405,42 +444,38 @@ export function calculateCumulativeAnalytics(
   };
 }
 
-// Calculate latest session analytics from brand document (unified data source)
+// Calculate latest session analytics from brand document (unified data source).
+// Accepts pre-loaded BrandWithResults to avoid redundant Cloud Storage fetches.
+// userId is the authenticated caller's uid — required to verify brand ownership
+// so a signed-in user can't read another user's analytics by passing any brandId.
 export async function calculateLatestSessionFromBrandDocument(
-  brandId: string
+  brandId: string,
+  userId: string,
+  preloaded?: { brand: any; dataTruncated: boolean }
 ): Promise<{ result?: BrandAnalyticsData; error?: any }> {
   try {
     console.log('🔄 Calculating latest session analytics from brand document:', brandId);
-    
-    // Get brand information (same source as lifetime analytics)
-    let brand = await getBrandInfo(brandId);
-    if (!brand) {
-      return { error: 'Brand not found' };
-    }
-    
-    // If the brand document has storage references, retrieve full data from Cloud Storage
-    if ((brand as any).storageReferences?.queryProcessingResults) {
-      console.log('📥 Brand has Cloud Storage references, retrieving full query results for session analytics...');
+
+    let brand: any;
+    if (preloaded) {
+      brand = preloaded.brand;
+    } else {
+      const { loadBrandWithQueryResults } = await import('./brandWithResults');
       try {
-        const { document: fullBrandData } = await retrieveDocumentWithLargeData(
-          'v8userbrands', 
-          brandId, 
-          ['queryProcessingResults']
-        );
-        
-        if (fullBrandData?.queryProcessingResults) {
-          brand.queryProcessingResults = fullBrandData.queryProcessingResults;
-          console.log(`✅ Retrieved ${fullBrandData.queryProcessingResults.length} query results from Cloud Storage for session analytics`);
-        }
-      } catch (storageError) {
-        console.warn('⚠️ Failed to retrieve query results from Cloud Storage for session analytics:', storageError);
-        // Continue with truncated data from Firestore
+        const loaded = await loadBrandWithQueryResults(brandId);
+        brand = loaded.brand;
+      } catch (e: any) {
+        return { error: e?.message || 'Brand not found' };
       }
     }
-    
+
+    // Ownership guard: brand.userId must match the authenticated caller.
+    if (brand.userId !== userId) {
+      throw new Error('Unauthorized: brand does not belong to user');
+    }
+
     const brandName = brand.companyName;
     const brandDomain = brand.domain;
-    const userId = brand.userId;
     
     // Collect all query results from brand document
     let allQueryResults: any[] = [];
@@ -458,9 +493,9 @@ export async function calculateLatestSessionFromBrandDocument(
         const convertedResults = historicalQueriesResult.result
           .filter((q: any) => q.status === 'completed' && q.aiResponses && q.aiResponses.length > 0)
           .map((query: any) => ({
-            date: query.updatedAt || query.createdAt || new Date().toISOString(),
+            date: toIsoString(query.updatedAt) || toIsoString(query.createdAt) || new Date().toISOString(),
             processingSessionId: query.sessionId || 'legacy_session',
-            processingSessionTimestamp: query.updatedAt || query.createdAt || new Date().toISOString(),
+            processingSessionTimestamp: toIsoString(query.updatedAt) || toIsoString(query.createdAt) || new Date().toISOString(),
             query: query.userQuery || query.queryText || 'Unknown query',
             keyword: query.keyword || 'unknown',
             category: query.category || 'unknown',
@@ -494,22 +529,26 @@ export async function calculateLatestSessionFromBrandDocument(
       return { result: undefined };
     }
     
-    // Group queries by processing session and find the latest session
+    // Group queries by processing session and find the latest session.
+    // Parse timestamps as Date to handle mixed ISO / legacy string formats;
+    // string compare alone would mis-order non-ISO timestamps.
     const sessionGroups: { [sessionId: string]: any[] } = {};
     let latestSessionId = '';
+    let latestSessionMs = -Infinity;
     let latestSessionTimestamp = '';
-    
+
     allQueryResults.forEach(query => {
       const sessionId = query.processingSessionId || 'unknown_session';
       const sessionTimestamp = query.processingSessionTimestamp || query.date || '';
-      
+
       if (!sessionGroups[sessionId]) {
         sessionGroups[sessionId] = [];
       }
       sessionGroups[sessionId].push(query);
-      
-      // Track the latest session
-      if (sessionTimestamp > latestSessionTimestamp) {
+
+      const ms = sessionTimestamp ? new Date(sessionTimestamp).getTime() : NaN;
+      if (!Number.isNaN(ms) && ms > latestSessionMs) {
+        latestSessionMs = ms;
         latestSessionTimestamp = sessionTimestamp;
         latestSessionId = sessionId;
       }
@@ -550,72 +589,43 @@ export async function calculateLatestSessionFromBrandDocument(
   }
 }
 
-// Calculate lifetime analytics across ALL historical queries for a brand
+// Calculate lifetime analytics across ALL historical queries for a brand.
+// Accepts a pre-loaded BrandWithResults to avoid re-fetching Cloud Storage when
+// multiple hooks on one page need the same data.
+// userId is the authenticated caller's uid — required to verify brand ownership
+// so a signed-in user can't read another user's analytics by passing any brandId.
 export async function calculateLifetimeBrandAnalytics(
-  brandId: string
+  brandId: string,
+  userId: string,
+  preloaded?: { brand: any; dataTruncated: boolean }
 ): Promise<{ result?: LifetimeBrandAnalytics; error?: any }> {
   try {
     console.log('🔄 Calculating lifetime analytics for brand:', brandId);
-    
-    // Get brand information
-    let brand = await getBrandInfo(brandId);
-    if (!brand) {
-      return { error: 'Brand not found' };
-    }
-    
-    // If the brand document has storage references, retrieve full data from Cloud Storage
-    if ((brand as any).storageReferences?.queryProcessingResults) {
-      console.log('📥 Brand has Cloud Storage references, retrieving full query results for analytics...');
-      
-      let retryCount = 0;
-      const maxRetries = 3;
-      
-      while (retryCount < maxRetries) {
-        try {
-          const { document: fullBrandData } = await retrieveDocumentWithLargeData(
-            'v8userbrands', 
-            brandId, 
-            ['queryProcessingResults']
-          );
-          
-          if (fullBrandData?.queryProcessingResults) {
-            brand.queryProcessingResults = fullBrandData.queryProcessingResults;
-            console.log(`✅ Retrieved ${fullBrandData.queryProcessingResults.length} query results from Cloud Storage for analytics (attempt ${retryCount + 1})`);
-            break; // Success, exit retry loop
-          } else {
-            console.warn(`⚠️ No query results found in Cloud Storage (attempt ${retryCount + 1})`);
-          }
-        } catch (storageError) {
-          retryCount++;
-          console.warn(`⚠️ Failed to retrieve query results from Cloud Storage (attempt ${retryCount}/${maxRetries}):`, storageError);
-          
-          if (retryCount < maxRetries) {
-            // Wait before retrying (exponential backoff)
-            const delay = Math.pow(2, retryCount) * 1000; // 2s, 4s, 8s
-            console.log(`🔄 Retrying Cloud Storage retrieval in ${delay}ms...`);
-            await new Promise(resolve => setTimeout(resolve, delay));
-          } else {
-            console.error(`❌ All ${maxRetries} Cloud Storage retrieval attempts failed. Continuing with truncated Firestore data.`);
-            console.error('❌ This may cause analytics to be limited to ~50 queries instead of full dataset');
-            
-            // Log diagnostic information
-            console.log('🔍 Diagnostic info:', {
-              brandId,
-              fireBrandQueryCount: brand.queryProcessingResults?.length || 0,
-              hasStorageRefs: !!(brand as any).storageReferences?.queryProcessingResults,
-              storageRefPath: (brand as any).storageReferences?.queryProcessingResults?.path || 'undefined'
-            });
-          }
-        }
-      }
+
+    let brand: any;
+    let dataTruncated = false;
+
+    if (preloaded) {
+      brand = preloaded.brand;
+      dataTruncated = preloaded.dataTruncated;
     } else {
-      console.log('ℹ️ No Cloud Storage references found, using Firestore data only');
-      console.log('🔍 Query count from Firestore:', brand.queryProcessingResults?.length || 0);
+      const { loadBrandWithQueryResults } = await import('./brandWithResults');
+      try {
+        const loaded = await loadBrandWithQueryResults(brandId);
+        brand = loaded.brand;
+        dataTruncated = loaded.dataTruncated;
+      } catch (e: any) {
+        return { error: e?.message || 'Brand not found' };
+      }
     }
-    
+
+    // Ownership guard: brand.userId must match the authenticated caller.
+    if (brand.userId !== userId) {
+      throw new Error('Unauthorized: brand does not belong to user');
+    }
+
     const brandName = brand.companyName;
     const brandDomain = brand.domain;
-    const userId = brand.userId;
     
     // Collect all historical query results from multiple sources
     const allQueryResults: any[] = [];
@@ -629,7 +639,7 @@ export async function calculateLifetimeBrandAnalytics(
     // 1. Get current session results from brand document
     if (brand.queryProcessingResults && brand.queryProcessingResults.length > 0) {
       allQueryResults.push(...brand.queryProcessingResults);
-      brand.queryProcessingResults.forEach(result => {
+      brand.queryProcessingResults.forEach((result: any) => {
         if (result.processingSessionId) {
           processingSessions.add(result.processingSessionId);
         }
@@ -655,9 +665,9 @@ export async function calculateLifetimeBrandAnalytics(
           .filter(q => q.status === 'completed' && q.aiResponses && q.aiResponses.length > 0)
           .map(query => {
             const result: any = {
-              date: query.processedAt ? query.processedAt.toDate?.()?.toISOString() || query.processedAt : query.createdAt.toDate?.()?.toISOString() || query.createdAt,
+              date: toIsoString(query.processedAt) || toIsoString(query.createdAt) || new Date().toISOString(),
               processingSessionId: `legacy_${query.id}`,
-              processingSessionTimestamp: query.createdAt.toDate?.()?.toISOString() || query.createdAt,
+              processingSessionTimestamp: toIsoString(query.createdAt) || new Date().toISOString(),
               query: query.originalQuery,
               keyword: query.keyword,
               category: query.category,
@@ -767,10 +777,13 @@ export async function calculateLifetimeBrandAnalytics(
           insights: {
             topPerformingProvider: 'none',
             topProviders: [],
+            averageBrandMentionsPerResponse: 0,
+            averageCitationsPerResponse: 0,
             averageBrandMentionsPerQuery: 0,
             averageCitationsPerQuery: 0
           },
-          calculatedAt: serverTimestamp()
+          calculatedAt: serverTimestamp(),
+          dataTruncated
         }
       };
     }
@@ -797,40 +810,35 @@ export async function calculateLifetimeBrandAnalytics(
     
     // Helper functions for citation extraction
     const extractDomainFromUrl = (url: string): string | undefined => {
+      if (!url || !/^https?:\/\//i.test(url)) return undefined;
       try {
-        const urlObj = new URL(url);
-        return urlObj.hostname.replace(/^www\./, '');
-      } catch (e) {
-        console.error('Invalid URL for domain extraction:', url, e);
+        return new URL(url).hostname.replace(/^www\./, '');
+      } catch {
         return undefined;
       }
     };
     
+    // Use non-alphanumeric boundary matching so "Apple" doesn't match inside
+    // "pineapple"; matchesWord handles regex escaping for us.
     const checkBrandMention = (text: string, url: string, brandName: string, brandDomain?: string): boolean => {
-      if (!brandName) return false;
-      const lowerText = text.toLowerCase();
-      const lowerBrandName = brandName.toLowerCase();
-      return lowerText.includes(lowerBrandName);
+      if (!brandName || !text) return false;
+      return matchesWord(text, brandName);
     };
-    
+
+    // Compare hostnames exactly (after stripping www. and lowercasing) so
+    // "apple.com" doesn't get credited for "pineapple.com" or a phishing
+    // subdomain like "apple.com.evil.net".
     const checkDomainCitation = (url: string, brandDomain?: string): boolean => {
-      if (!brandDomain) return false;
-      const lowerUrl = url.toLowerCase();
-      const lowerDomain = brandDomain.toLowerCase();
-      
-      // First check for exact match "https://www." + domain + "/"
-      const httpsWwwDomain = `https://www.${lowerDomain}/`;
-      if (lowerUrl.startsWith(httpsWwwDomain)) {
-        return true;
+      if (!brandDomain || !url) return false;
+      try {
+        const parsed = new URL(url);
+        const urlHost = parsed.hostname.toLowerCase().replace(/^www\./, '');
+        const brandHost = brandDomain.toLowerCase().replace(/^www\./, '').trim();
+        if (!urlHost || !brandHost) return false;
+        return urlHost === brandHost;
+      } catch {
+        return false;
       }
-      
-      // If first condition fails, check for exact match "https://" + domain + "/" (without www)
-      const httpsDomain = `https://${lowerDomain}/`;
-      if (lowerUrl.startsWith(httpsDomain)) {
-        return true;
-      }
-      
-      return false;
     };
     
     // Extract all individual citations from historical queries
@@ -839,14 +847,18 @@ export async function calculateLifetimeBrandAnalytics(
     let citationId = 1;
     
     allQueryResults.forEach(query => {
-      const queryTimestamp = query.date || new Date().toISOString();
+      const queryTimestamp = toIsoString(query.date) || new Date().toISOString();
       
       // Extract ChatGPT citations
+      // (extractChatGPTCitations lives in the UI layer because it handles the
+      // markdown/HTML cleanup needed for display — moving it into the provider
+      // layer would require factoring out that coupling. TODO: migrate to the
+      // provider-side `ChatGPTSearchProvider.extractNormalizedCitations` once
+      // upstream data flows store the raw response.)
       if (query.results?.chatgpt?.response) {
         try {
-          const { extractChatGPTCitations } = require('@/components/features/ChatGPTResponseRenderer');
           const chatgptCitations = extractChatGPTCitations(query.results.chatgpt.response);
-          
+
           chatgptCitations.forEach((citation: any) => {
             const domain = extractDomainFromUrl(citation.url);
             if (!domain) return; // Skip invalid domains only
@@ -876,7 +888,6 @@ export async function calculateLifetimeBrandAnalytics(
       // Extract Google AI citations
       if (query.results?.googleAI?.aiOverview) {
         try {
-          const { extractGoogleAIOverviewCitations } = require('@/components/features/GoogleAIOverviewRenderer');
           const googleCitations = extractGoogleAIOverviewCitations(query.results.googleAI.aiOverview, query.results.googleAI);
           
           googleCitations.forEach((citation: any) => {
@@ -908,7 +919,6 @@ export async function calculateLifetimeBrandAnalytics(
       // Extract Perplexity citations
       if (query.results?.perplexity?.response) {
         try {
-          const { extractPerplexityCitations } = require('@/components/features/PerplexityResponseRenderer');
           const perplexityCitations = extractPerplexityCitations(query.results.perplexity.response, query.results.perplexity);
           
           perplexityCitations.forEach((citation: any) => {
@@ -957,13 +967,16 @@ export async function calculateLifetimeBrandAnalytics(
       insights: {
         topPerformingProvider: sessionAnalytics.insights.topPerformingProvider,
         topProviders: sessionAnalytics.insights.topProviders,
+        averageBrandMentionsPerResponse: sessionAnalytics.insights.averageBrandMentionsPerResponse,
+        averageCitationsPerResponse: sessionAnalytics.insights.averageCitationsPerResponse,
         averageBrandMentionsPerQuery: sessionAnalytics.insights.averageBrandMentionsPerQuery,
         averageCitationsPerQuery: sessionAnalytics.insights.averageCitationsPerQuery,
         firstQueryProcessed,
         lastQueryProcessed,
         providerRankingDetails: sessionAnalytics.insights.providerRankingDetails
       },
-      calculatedAt: serverTimestamp()
+      calculatedAt: serverTimestamp(),
+      dataTruncated
     };
     
     console.log('✅ Lifetime analytics calculated:', {

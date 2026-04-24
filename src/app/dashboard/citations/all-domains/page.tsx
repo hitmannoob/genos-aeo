@@ -5,7 +5,6 @@ import { useBrandContext } from '@/context/BrandContext';
 import { useLifetimeCitations } from '@/hooks/useLifetimeCitations';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import Card from '@/components/shared/Card';
-// Citation extraction functions no longer needed - using lifetime data
 import WebLogo from '@/components/shared/WebLogo';
 import { 
   ArrowLeft,
@@ -47,20 +46,25 @@ export default function AllDomainsPage(): React.ReactElement {
   const [selectedProvider, setSelectedProvider] = useState('');
   const [selectedSource, setSelectedSource] = useState('');
 
-  // Helper functions
-  const getSourceType = (domain: string, isBrandDomain: boolean, isCompetitor: boolean) => {
+  // Classify each cited domain against the user's brand / configured competitors.
+  // "Competitor" was previously hardcoded to false; now it matches the brand's
+  // competitors list by name-in-domain, which mirrors how the matcher works.
+  const competitorNames: string[] = ((selectedBrand as any)?.competitors || []).filter(Boolean);
+
+  const normalizeCompetitorForDomain = (name: string) =>
+    name.toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+  const competitorTokens = competitorNames.map(normalizeCompetitorForDomain).filter(t => t.length >= 3);
+
+  const isCompetitorDomain = (domain?: string) => {
+    if (!domain) return false;
+    const flat = domain.toLowerCase().replace(/[^a-z0-9]+/g, '');
+    return competitorTokens.some(tok => flat.includes(tok));
+  };
+
+  const getSourceType = (domain: string, isBrandDomain: boolean) => {
     if (isBrandDomain) return 'Own Brand';
-    if (isCompetitor) return 'Competitor';
-    
-    // Common third-party domains
-    if (domain.includes('wikipedia')) return 'Third Party';
-    if (domain.includes('reddit')) return 'Third Party';
-    if (domain.includes('stackoverflow')) return 'Third Party';
-    if (domain.includes('github')) return 'Third Party';
-    if (domain.includes('medium')) return 'Third Party';
-    if (domain.includes('forbes')) return 'Third Party';
-    if (domain.includes('techcrunch')) return 'Third Party';
-    
+    if (isCompetitorDomain(domain)) return 'Competitor';
     return 'Third Party';
   };
 
@@ -99,7 +103,7 @@ export default function AllDomainsPage(): React.ReactElement {
 
       // Source filter
       if (selectedSource) {
-        const sourceType = getSourceType(citation.domain || '', citation.isDomainCitation || false, false);
+        const sourceType = getSourceType(citation.domain || '', citation.isDomainCitation || false);
         if (selectedSource === 'own' && sourceType !== 'Own Brand') return false;
         if (selectedSource === 'competitor' && sourceType !== 'Competitor') return false;
         if (selectedSource === 'third-party' && sourceType !== 'Third Party') return false;
@@ -120,10 +124,9 @@ export default function AllDomainsPage(): React.ReactElement {
           citations: [],
           queries: new Set(),
           isBrandDomain: citation.isDomainCitation,
-          isCompetitor: false // You can enhance this logic
         });
       }
-      
+
       const domainStat = stats.get(citation.domain);
       domainStat.citations.push(citation);
       domainStat.queries.add(citation.queryId);
@@ -146,9 +149,9 @@ export default function AllDomainsPage(): React.ReactElement {
               ['Domain', 'Source Type', 'Total Citations', 'Providers'].join(','),
       ...domainStats.map(stat => [
         stat.domain,
-        getSourceType(stat.domain, stat.isBrandDomain, stat.isCompetitor),
+        getSourceType(stat.domain, stat.isBrandDomain),
         stat.citations.length,
-        [...new Set(stat.citations.map(c => c.provider))].join(';')
+        Array.from(new Set((stat.citations as Citation[]).map((c: Citation) => c.provider))).join(';')
       ].join(','))
     ].join('\n');
 
@@ -169,7 +172,7 @@ export default function AllDomainsPage(): React.ReactElement {
           <div className="flex items-center space-x-4">
             <Link 
               href="/dashboard/citations"
-              className="flex items-center space-x-2 text-blue-600 hover:text-blue-800 transition-colors"
+              className="flex items-center space-x-2 text-primary hover:text-primary/80 transition-colors"
             >
               <ArrowLeft className="w-5 h-5" />
               <span>Back to Citations</span>
@@ -219,7 +222,7 @@ export default function AllDomainsPage(): React.ReactElement {
                 <button
                   onClick={handleExport}
                   disabled={domainStats.length === 0}
-                  className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="flex items-center space-x-2 px-4 py-2 bg-primary text-primary-foreground rounded-full hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   <Download className="h-4 w-4" />
                   <span>Export</span>
@@ -270,7 +273,7 @@ export default function AllDomainsPage(): React.ReactElement {
               <div className="block lg:hidden">
                 <div className="divide-y divide-gray-200">
                   {domainStats.map((domainStat, index) => {
-                    const sourceType = getSourceType(domainStat.domain, domainStat.isBrandDomain, domainStat.isCompetitor);
+                    const sourceType = getSourceType(domainStat.domain, domainStat.isBrandDomain);
                     const providerStats = getProviderStats(domainStat.citations);
                     
                     return (
@@ -370,7 +373,7 @@ export default function AllDomainsPage(): React.ReactElement {
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
                     {domainStats.map((domainStat, index) => {
-                      const sourceType = getSourceType(domainStat.domain, domainStat.isBrandDomain, domainStat.isCompetitor);
+                      const sourceType = getSourceType(domainStat.domain, domainStat.isBrandDomain);
                       const providerStats = getProviderStats(domainStat.citations);
                       
                       return (
@@ -460,4 +463,3 @@ export default function AllDomainsPage(): React.ReactElement {
   );
 }
 
-// Helper functions no longer needed - using pre-processed lifetime citation data 

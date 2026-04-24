@@ -86,21 +86,6 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
     }));
   }, [latestAnalytics?.providerStats, lifetimeAnalytics?.providerStats, getProviderIcon]);
 
-  // Memoize analytics metrics to prevent unnecessary re-renders
-  const analyticsMetrics = useMemo(() => {
-    const analytics = activeTab === 'latest' ? latestAnalytics : lifetimeAnalytics;
-    if (!analytics) return null;
-
-    return {
-      visibilityScore: analytics.brandVisibilityScore,
-      brandMentions: analytics.totalBrandMentions,
-      domainCitations: analytics.totalDomainCitations,
-      totalCitations: analytics.totalCitations,
-      queriesProcessed: analytics.totalQueriesProcessed,
-      insights: analytics.insights
-    };
-  }, [activeTab, latestAnalytics, lifetimeAnalytics]);
-
   const renderAnalyticsSection = useCallback((
     analytics: BrandAnalyticsData | LifetimeBrandAnalytics,
     title: string,
@@ -219,12 +204,12 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
                         </div>
 
                   <div className="flex justify-between">
-                    <span className="text-xs text-gray-500">Avg Mentions/Query:</span>
-                    <span className="text-xs font-medium">{analytics.insights.averageBrandMentionsPerQuery}</span>
+                    <span className="text-xs text-gray-500">Avg Mentions/Response:</span>
+                    <span className="text-xs font-medium">{analytics.insights.averageBrandMentionsPerResponse}</span>
                   </div>
                           <div className="flex justify-between">
-                    <span className="text-xs text-gray-500">Avg Citations/Query:</span>
-                    <span className="text-xs font-medium">{analytics.insights.averageCitationsPerQuery}</span>
+                    <span className="text-xs text-gray-500">Avg Citations/Response:</span>
+                    <span className="text-xs font-medium">{analytics.insights.averageCitationsPerResponse}</span>
                   </div>
                           </div>
                 <div className="space-y-2">

@@ -3,24 +3,24 @@
 @tailwind utilities;
 
 :root {
-  /* Light theme colors */
+  /* Light theme — white bg, teal primary */
   --background: 255 255 255;
   --foreground: 15 23 42;
   --card: 255 255 255;
   --card-foreground: 15 23 42;
-  --primary: 13 118 255;
+  --primary: 13 148 136;            /* teal-600 #0D9488 */
   --primary-foreground: 255 255 255;
-  --secondary: 241 245 249;
+  --secondary: 240 253 250;         /* teal-50 #F0FDFA — very light teal tint */
   --secondary-foreground: 15 23 42;
   --muted: 248 250 252;
   --muted-foreground: 100 116 139;
-  --accent: 241 245 249;
-  --accent-foreground: 15 23 42;
+  --accent: 204 251 241;            /* teal-100 #CCFBF1 */
+  --accent-foreground: 17 94 89;    /* teal-800 #115E59 */
   --destructive: 255 77 77;
   --destructive-foreground: 255 255 255;
   --border: 226 232 240;
   --input: 226 232 240;
-  --ring: 13 118 255;
+  --ring: 13 148 136;               /* teal-600 */
   --success: 0 176 135;
   --warning: 255 193 7;
 }

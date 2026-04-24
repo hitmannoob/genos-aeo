@@ -148,11 +148,10 @@ export async function POST(request: NextRequest) {
     // Initialize provider manager
     const providerManager = new ProviderManager();
     
-    // Create API request with Azure AD as primary, Gemini as fallback
     const apiRequest: APIRequest = {
       id: `company-info-${Date.now()}`,
       prompt: prompt,
-      providers: ['azure-openai', 'google-gemini'], // Azure AD first, then Gemini fallback
+      providers: ['chatgptsearch', 'google-gemini'],
       priority: 'medium',
       userId: 'system', // Using system for non-authenticated requests
       createdAt: new Date(),

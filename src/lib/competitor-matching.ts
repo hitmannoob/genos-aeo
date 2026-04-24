@@ -22,6 +22,43 @@ function normalize(str: string): string {
 }
 
 /**
+ * Escape all regex metacharacters in a string so it can be safely embedded in a RegExp.
+ */
+export function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Case-insensitive whole-word-ish match with custom boundaries (non-alphanumeric).
+ *
+ * Using a custom boundary `[^a-z0-9]` (rather than `\b`) avoids inconsistencies in
+ * JS regex word-boundary behaviour around names containing non-word characters
+ * like "3M", ".NET", "C++", "O'Reilly", or "AT&T". This keeps "Apple" from
+ * matching inside "pineapple" while still allowing "Apple" to match in
+ * "Apple is great." or "The Apple," etc.
+ */
+export function matchesWord(text: string, needle: string): boolean {
+  if (!text || !needle) return false;
+  const pattern = new RegExp(
+    `(^|[^a-z0-9])${escapeRegex(needle.toLowerCase())}($|[^a-z0-9])`,
+    'i'
+  );
+  return pattern.test(text);
+}
+
+/**
+ * Strip protocol / www / trailing path from a domain-ish string and lowercase it.
+ */
+function normalizeDomain(domain: string): string {
+  return domain
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .split('/')[0]
+    .trim();
+}
+
+/**
  * Attempt to match competitors in a given text (query)
  * @param text The text to search for competitor mentions
  * @param competitors List of competitors
@@ -36,74 +73,69 @@ export function matchCompetitorsInText(
   const normalizedText = normalize(text);
 
   for (const competitor of competitors) {
-    // Direct name match
-    if (normalizedText.includes(normalize(competitor.name))) {
+    let matched = false;
+
+    // Direct name match (case-insensitive, with non-alphanumeric boundaries so
+    // "Apple" does not match inside "pineapple").
+    if (matchesWord(normalizedText, normalize(competitor.name))) {
       results.push({
         competitor,
         matchType: 'name',
         matchedValue: competitor.name,
       });
+      matched = true;
       continue;
     }
-    // Domain match
-    if (competitor.domain && normalizedText.includes(normalize(competitor.domain))) {
-      results.push({
-        competitor,
-        matchType: 'domain',
-        matchedValue: competitor.domain,
-      });
-      continue;
+    // Domain match — strip protocol/www/path first, then use matchesWord.
+    // matchesWord's non-alphanumeric boundaries correctly allow a bare domain
+    // like "example.com" to match inside a URL like "https://example.com/path"
+    // (the surrounding `/` and `:` are non-alphanumeric), while preventing
+    // "apple.com" from matching inside "pineapple.com" or
+    // "apple.com.phishing.net".
+    if (competitor.domain) {
+      const normalizedDomain = normalizeDomain(competitor.domain);
+      if (normalizedDomain && matchesWord(normalizedText, normalizedDomain)) {
+        results.push({
+          competitor,
+          matchType: 'domain',
+          matchedValue: competitor.domain,
+        });
+        matched = true;
+        continue;
+      }
     }
-    // Alias match
+    // Alias match (same word-boundary semantics as name match).
     if (competitor.aliases) {
       for (const alias of competitor.aliases) {
-        if (normalizedText.includes(normalize(alias))) {
+        if (matchesWord(normalizedText, normalize(alias))) {
           results.push({
             competitor,
             matchType: 'alias',
             matchedValue: alias,
           });
+          matched = true;
           break;
         }
       }
     }
-    // Fuzzy match (name and aliases)
-    const candidates = [competitor.name, ...(competitor.aliases || [])];
-    const fuzzy = fuzzysort.go(normalizedText, candidates, { threshold: fuzzyThreshold });
-    if (fuzzy.total > 0) {
-      for (const res of fuzzy) {
-        results.push({
-          competitor,
-          matchType: 'fuzzy',
-          matchedValue: res.target,
-          score: res.score,
-        });
+    // Only run fuzzy matching if no earlier match type hit — otherwise an
+    // alias match would be double-counted as a fuzzy hit against the same
+    // alias string.
+    // TODO: threshold is very permissive; tune or remove fuzzy entirely
+    if (!matched) {
+      const candidates = [competitor.name, ...(competitor.aliases || [])];
+      const fuzzy = fuzzysort.go(normalizedText, candidates, { threshold: fuzzyThreshold });
+      if (fuzzy.total > 0) {
+        for (const res of fuzzy) {
+          results.push({
+            competitor,
+            matchType: 'fuzzy',
+            matchedValue: res.target,
+            score: res.score,
+          });
+        }
       }
     }
   }
   return results;
 }
-
-// --- Example usage/test cases ---
-if (require.main === module) {
-  const competitors: Competitor[] = [
-    { name: 'OpenAI', domain: 'openai.com', aliases: ['Open AI', 'OpenAI Inc.'] },
-    { name: 'Anthropic', domain: 'anthropic.com', aliases: ['Claude', 'Anthropic AI'] },
-    { name: 'Google', domain: 'google.com', aliases: ['Google AI', 'Alphabet'] },
-  ];
-  const queries = [
-    'I prefer OpenAI for LLMs',
-    'Claude is a great product by Anthropic',
-    'I use openai.com and google.com for research',
-    'Alphabet is the parent of Google',
-    'I like Open AI and Anthropic AI',
-    'OpeanAI is cool', // typo for fuzzy
-  ];
-  for (const q of queries) {
-    const matches = matchCompetitorsInText(q, competitors);
-    console.log(`Query: ${q}`);
-    for (const m of matches) {
-      console.log(`  Matched: ${m.competitor.name} via ${m.matchType} (${m.matchedValue})${m.score !== undefined ? ' [score: ' + m.score + ']' : ''}`);
-    }
-  }
-} 

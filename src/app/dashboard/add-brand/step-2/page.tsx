@@ -114,7 +114,7 @@ export default function AddBrandStep2(): React.ReactElement {
 
     await executeQuery(
       prompts[type],
-      ['azure-openai', 'google-gemini'],
+      ['chatgptsearch', 'google-gemini'],
       'high',
       'brand-analysis-user'
     );
@@ -255,7 +255,7 @@ export default function AddBrandStep2(): React.ReactElement {
       return (
         <div className="bg-card border border-border rounded-xl p-8">
           <div className="flex items-center justify-center space-x-3">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#000C60]"></div>
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
             <p className="text-lg text-muted-foreground">Generating AI insights...</p>
           </div>
         </div>
@@ -269,7 +269,7 @@ export default function AddBrandStep2(): React.ReactElement {
             <p className="text-red-500 mb-4">Error generating insights: {queryState.error}</p>
             <button
               onClick={() => generateInsights('insights')}
-              className="bg-[#000C60] text-white px-4 py-2 rounded-lg hover:bg-[#000C60]/90 transition-colors"
+              className="bg-primary text-foreground px-4 py-2 rounded-lg hover:bg-primary/90 transition-colors"
             >
               Retry
             </button>
@@ -290,21 +290,21 @@ export default function AddBrandStep2(): React.ReactElement {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
               <button
                 onClick={() => generateInsights('insights')}
-                className="bg-[#000C60] text-white p-4 rounded-lg hover:bg-[#000C60]/90 transition-colors flex flex-col items-center space-y-2"
+                className="bg-primary text-foreground p-4 rounded-lg hover:bg-primary/90 transition-colors flex flex-col items-center space-y-2"
               >
                 <TrendingUp className="h-6 w-6" />
                 <span>Business Insights</span>
               </button>
               <button
                 onClick={() => generateInsights('competitive')}
-                className="bg-[#93E85F] text-black p-4 rounded-lg hover:bg-[#93E85F]/90 transition-colors flex flex-col items-center space-y-2"
+                className="bg-primary text-primary-foreground p-4 rounded-lg hover:bg-primary/90 transition-colors flex flex-col items-center space-y-2"
               >
                 <BarChart3 className="h-6 w-6" />
                 <span>Competitive Analysis</span>
               </button>
               <button
                 onClick={() => generateInsights('marketing')}
-                className="bg-[#00B087] text-white p-4 rounded-lg hover:bg-[#00B087]/90 transition-colors flex flex-col items-center space-y-2"
+                className="bg-success text-foreground p-4 rounded-lg hover:bg-success/90 transition-colors flex flex-col items-center space-y-2"
               >
                 <Target className="h-6 w-6" />
                 <span>Marketing Strategy</span>
@@ -328,7 +328,7 @@ export default function AddBrandStep2(): React.ReactElement {
           <div className="bg-accent/30 border border-border rounded-xl p-6">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center space-x-3">
-                <Brain className="h-6 w-6 text-[#000C60]" />
+                <Brain className="h-6 w-6 text-primary" />
                 <h3 className="text-lg font-semibold text-foreground">AI Analysis Results</h3>
               </div>
               <div className="flex items-center space-x-2 text-sm text-muted-foreground">
@@ -352,7 +352,7 @@ export default function AddBrandStep2(): React.ReactElement {
                 <div className="text-sm text-muted-foreground">Response Time</div>
               </div>
               <div className="text-center">
-                <div className="text-lg font-semibold text-[#00B087]">✓</div>
+                <div className="text-lg font-semibold text-success">✓</div>
                 <div className="text-sm text-muted-foreground">Analysis Complete</div>
               </div>
             </div>
@@ -409,33 +409,25 @@ export default function AddBrandStep2(): React.ReactElement {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0E353C] flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#93E85F]"></div>
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#0E353C] flex flex-col">
+    <div className="min-h-screen bg-background flex flex-col">
       {/* Header with Logo */}
       <div className="flex justify-center pt-8 pb-6">
         <div className="flex flex-col items-center space-y-2">
-          {/* AI Monitor Logo */}
+          {/* Genos Logo */}
           <div className="relative w-48 h-12">
             <Image
-              src="/getcito-logo-dark.webp"
-              alt="AI Monitor Logo"
+              src="/logo_no_background.png"
+              alt="Genos Logo"
               width={192}
               height={48}
-              className="block dark:hidden w-full h-auto"
-              priority
-            />
-            <Image
-              src="/AI-Monitor-Logo-V3-long-dark-themel.png"
-              alt="AI Monitor Logo"
-              width={192}
-              height={48}
-              className="hidden dark:block w-full h-auto"
+              className="w-full h-auto"
               priority
             />
           </div>
@@ -450,47 +442,47 @@ export default function AddBrandStep2(): React.ReactElement {
             <div className="flex items-center space-x-8">
               {/* Step 1 - Completed */}
               <div className="flex flex-col items-center">
-                <div className="w-12 h-12 bg-[#93E85F] text-black rounded-full flex items-center justify-center text-lg font-semibold mb-2">
+                <div className="w-12 h-12 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-lg font-semibold mb-2">
                   ✓
                 </div>
-                <span className="text-gray-300 text-sm">Domain</span>
+                <span className="text-muted-foreground text-sm">Domain</span>
               </div>
 
               {/* Connector */}
-              <div className="w-16 h-px bg-[#93E85F]"></div>
+              <div className="w-16 h-px bg-primary"></div>
 
               {/* Step 2 - Active */}
               <div className="flex flex-col items-center">
-                <div className="w-12 h-12 bg-[#93E85F] text-black rounded-full flex items-center justify-center text-lg font-semibold mb-2">
+                <div className="w-12 h-12 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-lg font-semibold mb-2">
                   2
                 </div>
-                <span className="text-white text-sm font-medium">Brand</span>
+                <span className="text-foreground text-sm font-medium">Brand</span>
               </div>
 
               {/* Connector */}
-              <div className="w-16 h-px bg-[#1a4a54]"></div>
+              <div className="w-16 h-px bg-border"></div>
 
               {/* Step 3 - Inactive */}
               <div className="flex flex-col items-center">
-                <div className="w-12 h-12 bg-[#164a54] text-gray-400 rounded-full flex items-center justify-center text-lg font-semibold mb-2">
+                <div className="w-12 h-12 bg-muted text-muted-foreground rounded-full flex items-center justify-center text-lg font-semibold mb-2">
                   3
                 </div>
-                <span className="text-gray-400 text-sm">Queries</span>
+                <span className="text-muted-foreground text-sm">Queries</span>
               </div>
             </div>
           </div>
 
           {/* Main Card */}
-          <div className="bg-[#0a2a30] border border-[#1a4a54] rounded-2xl p-8 shadow-lg">
+          <div className="bg-card border border-border rounded-2xl p-8 shadow-2xl">
             {companyData ? (
               <div className="space-y-8">
                 {/* Brand Header with Logo */}
-                <div className="bg-[#0E353C] border border-[#1a4a54] rounded-xl p-6">
+                <div className="p-6">
                   <div className="flex items-center justify-between mb-6">
-                    <h1 className="text-3xl font-bold text-white">Brand Analysis</h1>
+                    <h1 className="text-3xl font-bold text-foreground">Brand Analysis</h1>
                     <button
                       onClick={handleReanalyze}
-                      className="text-[#93E85F] hover:text-[#93E85F]/80 flex items-center space-x-1 text-sm"
+                      className="text-primary hover:text-primary/80 flex items-center space-x-1 text-sm"
                     >
                       <RefreshCw className="h-4 w-4" />
                       <span>Re-analyze</span>
@@ -506,15 +498,15 @@ export default function AddBrandStep2(): React.ReactElement {
                     {/* Company Info */}
                     <div className="flex-1">
                       <div className="flex items-center space-x-3 mb-3">
-                        <h2 className="text-2xl font-bold text-white">{companyData.companyName || 'Unknown Company'}</h2>
-                        <span className="text-gray-300">({domain})</span>
+                        <h2 className="text-2xl font-bold text-foreground">{companyData.companyName || 'Unknown Company'}</h2>
+                        <span className="text-muted-foreground">({domain})</span>
                       </div>
                       <div className="mb-4">
                         <div className="flex items-center justify-between mb-2">
-                          <h3 className="text-lg font-semibold text-white">Short Description</h3>
+                          <h3 className="text-lg font-semibold text-foreground">Short Description</h3>
                           <button
                             onClick={startEditingDescription}
-                            className="p-1 text-gray-400 hover:text-white transition-colors"
+                            className="p-1 text-muted-foreground hover:text-foreground transition-colors"
                           >
                             <Edit3 className="h-4 w-4" />
                           </button>
@@ -524,27 +516,27 @@ export default function AddBrandStep2(): React.ReactElement {
                             <textarea
                               value={tempDescription}
                               onChange={(e) => setTempDescription(e.target.value)}
-                              className="w-full p-3 border border-[#1a4a54] rounded-lg bg-[#0E353C] text-white resize-none"
+                              className="w-full p-3 border border-border rounded-lg bg-background text-foreground resize-none"
                               rows={3}
                               placeholder="Enter company description..."
                             />
                             <div className="flex space-x-2">
                               <button
                                 onClick={saveDescription}
-                                className="px-3 py-1 bg-[#93E85F] text-black text-sm rounded-lg hover:bg-[#93E85F]/90 transition-colors"
+                                className="px-3 py-1 bg-primary text-primary-foreground text-sm rounded-lg hover:bg-primary/90 transition-colors"
                               >
                                 Save
                               </button>
                               <button
                                 onClick={cancelEditingDescription}
-                                className="px-3 py-1 bg-[#164a54] text-gray-300 text-sm rounded-lg hover:bg-[#1a4a54] transition-colors"
+                                className="px-3 py-1 bg-muted text-muted-foreground text-sm rounded-lg hover:bg-border transition-colors"
                               >
                                 Cancel
                               </button>
                             </div>
                           </div>
                         ) : (
-                          <p className="text-gray-300 text-lg">
+                          <p className="text-muted-foreground text-lg">
                             {companyData.shortDescription || 'No description available'}
                           </p>
                         )}
@@ -552,19 +544,19 @@ export default function AddBrandStep2(): React.ReactElement {
                       
                       <div className="flex flex-wrap gap-4">
                         <div className="flex items-center space-x-2">
-                          <Globe className="h-4 w-4 text-gray-400" />
+                          <Globe className="h-4 w-4 text-muted-foreground" />
                           <a
                             href={companyData.website}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-sm text-[#93E85F] hover:underline"
+                            className="text-sm text-primary hover:underline"
                           >
                             {companyData.website}
                           </a>
                         </div>
                         <div className="flex items-center space-x-2">
-                          <Sparkles className="h-4 w-4 text-gray-400" />
-                          <span className="text-sm text-gray-300">AI-Powered Analysis</span>
+                          <Sparkles className="h-4 w-4 text-muted-foreground" />
+                          <span className="text-sm text-muted-foreground">AI-Powered Analysis</span>
                         </div>
                       </div>
                     </div>
@@ -576,17 +568,17 @@ export default function AddBrandStep2(): React.ReactElement {
                     {/* Key Information Grid */}
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                       {/* Products & Services */}
-                      <div className="bg-[#0E353C] border border-[#1a4a54] rounded-xl p-6">
+                      <div className="bg-background border border-border rounded-xl p-6">
                         <div className="flex items-center justify-between mb-4">
                           <div className="flex items-center space-x-3">
-                            <div className="p-2 bg-[#93E85F] rounded-lg">
-                              <Building2 className="h-5 w-5 text-black" />
+                            <div className="p-2 bg-primary rounded-lg">
+                              <Building2 className="h-5 w-5 text-primary-foreground" />
                             </div>
-                            <h4 className="text-white font-semibold">Products & Services</h4>
+                            <h4 className="text-foreground font-semibold">Products & Services</h4>
                           </div>
                           <button
                             onClick={startEditingProducts}
-                            className="p-1 text-gray-400 hover:text-white transition-colors"
+                            className="p-1 text-muted-foreground hover:text-foreground transition-colors"
                           >
                             <Edit3 className="h-4 w-4" />
                           </button>
@@ -600,7 +592,7 @@ export default function AddBrandStep2(): React.ReactElement {
                                   type="text"
                                   value={product}
                                   onChange={(e) => updateProduct(index, e.target.value)}
-                                  className="flex-1 p-2 border border-[#1a4a54] rounded-lg bg-[#0E353C] text-white text-sm"
+                                  className="flex-1 p-2 border border-border rounded-lg bg-background text-foreground text-sm"
                                   placeholder="Enter product or service..."
                                 />
                                 <button
@@ -613,7 +605,7 @@ export default function AddBrandStep2(): React.ReactElement {
                             ))}
                             <button
                               onClick={addProduct}
-                              className="flex items-center space-x-1 text-[#93E85F] hover:text-[#93E85F]/80 transition-colors text-sm"
+                              className="flex items-center space-x-1 text-primary hover:text-primary/80 transition-colors text-sm"
                             >
                               <Plus className="h-4 w-4" />
                               <span>Add product/service</span>
@@ -621,13 +613,13 @@ export default function AddBrandStep2(): React.ReactElement {
                             <div className="flex space-x-2 pt-2">
                               <button
                                 onClick={saveProducts}
-                                className="px-3 py-1 bg-[#93E85F] text-black text-sm rounded-lg hover:bg-[#93E85F]/90 transition-colors"
+                                className="px-3 py-1 bg-primary text-primary-foreground text-sm rounded-lg hover:bg-primary/90 transition-colors"
                               >
                                 Save
                               </button>
                               <button
                                 onClick={cancelEditingProducts}
-                                className="px-3 py-1 bg-[#164a54] text-gray-300 text-sm rounded-lg hover:bg-[#1a4a54] transition-colors"
+                                className="px-3 py-1 bg-muted text-muted-foreground text-sm rounded-lg hover:bg-border transition-colors"
                               >
                                 Cancel
                               </button>
@@ -638,18 +630,18 @@ export default function AddBrandStep2(): React.ReactElement {
                             {(companyData.productsAndServices && companyData.productsAndServices.length > 0) ? (
                               <>
                                 {companyData.productsAndServices.slice(0, 6).map((item: string, index: number) => (
-                                  <div key={index} className="text-sm text-gray-300">
+                                  <div key={index} className="text-sm text-muted-foreground">
                                     • {item}
                                   </div>
                                 ))}
                                 {companyData.productsAndServices.length > 6 && (
-                                  <div className="text-sm text-gray-300 font-medium">
+                                  <div className="text-sm text-muted-foreground font-medium">
                                     + {companyData.productsAndServices.length - 6} more offerings
                                   </div>
                                 )}
                               </>
                             ) : (
-                              <div className="text-sm text-gray-300">
+                              <div className="text-sm text-muted-foreground">
                                 No products or services listed
                               </div>
                             )}
@@ -658,17 +650,17 @@ export default function AddBrandStep2(): React.ReactElement {
                       </div>
 
                       {/* Keywords */}
-                      <div className="bg-[#0E353C] border border-[#1a4a54] rounded-xl p-6">
+                      <div className="bg-background border border-border rounded-xl p-6">
                         <div className="flex items-center justify-between mb-4">
                           <div className="flex items-center space-x-3">
-                            <div className="p-2 bg-[#93E85F] rounded-lg">
-                              <Tag className="h-5 w-5 text-black" />
+                            <div className="p-2 bg-primary rounded-lg">
+                              <Tag className="h-5 w-5 text-primary-foreground" />
                             </div>
-                            <h4 className="text-white font-semibold">Topics & Semantic Clusters</h4>
+                            <h4 className="text-foreground font-semibold">Topics & Semantic Clusters</h4>
                           </div>
                           <button
                             onClick={startEditingKeywords}
-                            className="p-1 text-gray-400 hover:text-white transition-colors"
+                            className="p-1 text-muted-foreground hover:text-foreground transition-colors"
                           >
                             <Edit3 className="h-4 w-4" />
                           </button>
@@ -680,7 +672,7 @@ export default function AddBrandStep2(): React.ReactElement {
                               {tempKeywords.map((keyword, index) => (
                                 <span
                                   key={index}
-                                  className="inline-flex items-center gap-1 px-3 py-1 bg-[#0a2a30] border border-[#1a4a54] text-white text-sm rounded-md"
+                                  className="inline-flex items-center gap-1 px-3 py-1 bg-card border border-border text-foreground text-sm rounded-md"
                                 >
                                   {keyword}
                                   <button
@@ -705,24 +697,24 @@ export default function AddBrandStep2(): React.ReactElement {
                               <button
                                 onClick={addKeyword}
                                 disabled={tempKeywords.length >= 10 || !newKeyword.trim()}
-                                className="p-2 bg-[#93E85F] text-black rounded-lg hover:bg-[#93E85F]/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                className="p-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                               >
                                 <Plus className="h-4 w-4" />
                               </button>
                             </div>
-                            <div className="text-xs text-gray-300">
+                            <div className="text-xs text-muted-foreground">
                               {tempKeywords.length}/10 keywords added
                             </div>
                             <div className="flex space-x-2">
                               <button
                                 onClick={saveKeywords}
-                                className="px-3 py-1 bg-[#93E85F] text-black text-sm rounded-lg hover:bg-[#93E85F]/90 transition-colors"
+                                className="px-3 py-1 bg-primary text-primary-foreground text-sm rounded-lg hover:bg-primary/90 transition-colors"
                               >
                                 Save
                               </button>
                               <button
                                 onClick={cancelEditingKeywords}
-                                className="px-3 py-1 bg-[#164a54] text-gray-300 text-sm rounded-lg hover:bg-[#1a4a54] transition-colors"
+                                className="px-3 py-1 bg-muted text-muted-foreground text-sm rounded-lg hover:bg-border transition-colors"
                               >
                                 Cancel
                               </button>
@@ -734,13 +726,13 @@ export default function AddBrandStep2(): React.ReactElement {
                               companyData.keywords.map((keyword: string, index: number) => (
                                 <span
                                   key={index}
-                                  className="px-3 py-1 bg-[#0a2a30] border border-[#1a4a54] text-white text-sm rounded-md"
+                                  className="px-3 py-1 bg-card border border-border text-foreground text-sm rounded-md"
                                 >
                                   {keyword}
                                 </span>
                               ))
                             ) : (
-                              <div className="text-sm text-gray-300">
+                              <div className="text-sm text-muted-foreground">
                                 No keywords listed
                               </div>
                             )}
@@ -749,17 +741,17 @@ export default function AddBrandStep2(): React.ReactElement {
                       </div>
 
                       {/* Competitors */}
-                      <div className="bg-[#0E353C] border border-[#1a4a54] rounded-xl p-6">
+                      <div className="bg-background border border-border rounded-xl p-6">
                         <div className="flex items-center justify-between mb-4">
                           <div className="flex items-center space-x-3">
-                            <div className="p-2 bg-[#93E85F] rounded-lg">
-                              <Target className="h-5 w-5 text-black" />
+                            <div className="p-2 bg-primary rounded-lg">
+                              <Target className="h-5 w-5 text-primary-foreground" />
                             </div>
-                            <h4 className="text-white font-semibold">Competitors</h4>
+                            <h4 className="text-foreground font-semibold">Competitors</h4>
                           </div>
                           <button
                             onClick={startEditingCompetitors}
-                            className="p-1 text-gray-400 hover:text-white transition-colors"
+                            className="p-1 text-muted-foreground hover:text-foreground transition-colors"
                           >
                             <Edit3 className="h-4 w-4" />
                           </button>
@@ -771,7 +763,7 @@ export default function AddBrandStep2(): React.ReactElement {
                               {tempCompetitors.map((competitor, index) => (
                                 <span
                                   key={index}
-                                  className="inline-flex items-center gap-1 px-3 py-1 bg-[#0a2a30] border border-[#1a4a54] text-white text-sm rounded-md"
+                                  className="inline-flex items-center gap-1 px-3 py-1 bg-card border border-border text-foreground text-sm rounded-md"
                                 >
                                   {competitor}
                                   <button
@@ -796,24 +788,24 @@ export default function AddBrandStep2(): React.ReactElement {
                               <button
                                 onClick={addCompetitor}
                                 disabled={tempCompetitors.length >= 10 || !newCompetitor.trim()}
-                                className="p-2 bg-[#93E85F] text-black rounded-lg hover:bg-[#93E85F]/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                className="p-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                               >
                                 <Plus className="h-4 w-4" />
                               </button>
                             </div>
-                            <div className="text-xs text-gray-300">
+                            <div className="text-xs text-muted-foreground">
                               {tempCompetitors.length}/10 competitors added
                             </div>
                             <div className="flex space-x-2">
                               <button
                                 onClick={saveCompetitors}
-                                className="px-3 py-1 bg-[#93E85F] text-black text-sm rounded-lg hover:bg-[#93E85F]/90 transition-colors"
+                                className="px-3 py-1 bg-primary text-primary-foreground text-sm rounded-lg hover:bg-primary/90 transition-colors"
                               >
                                 Save
                               </button>
                               <button
                                 onClick={cancelEditingCompetitors}
-                                className="px-3 py-1 bg-[#164a54] text-gray-300 text-sm rounded-lg hover:bg-[#1a4a54] transition-colors"
+                                className="px-3 py-1 bg-muted text-muted-foreground text-sm rounded-lg hover:bg-border transition-colors"
                               >
                                 Cancel
                               </button>
@@ -825,13 +817,13 @@ export default function AddBrandStep2(): React.ReactElement {
                               companyData.competitors.map((competitor: string, index: number) => (
                                 <span
                                   key={index}
-                                  className="px-3 py-1 bg-[#0a2a30] border border-[#1a4a54] text-white text-sm rounded-md"
+                                  className="px-3 py-1 bg-card border border-border text-foreground text-sm rounded-md"
                                 >
                                   {competitor}
                                 </span>
                               ))
                             ) : (
-                              <div className="text-sm text-gray-300">
+                              <div className="text-sm text-muted-foreground">
                                 No competitors listed
                               </div>
                             )}
@@ -848,7 +840,7 @@ export default function AddBrandStep2(): React.ReactElement {
                 <div className="flex justify-between pt-6">
                   <button
                     onClick={() => router.push('/dashboard/add-brand/step-1')}
-                    className="flex items-center space-x-2 bg-[#164a54] text-white px-6 py-3 rounded-xl hover:bg-[#1a4a54] transition-colors"
+                    className="flex items-center space-x-2 bg-muted text-foreground px-6 py-3 rounded-xl hover:bg-border transition-colors"
                   >
                     <ArrowLeft className="h-5 w-5" />
                     <span>Back to Domain</span>
@@ -856,7 +848,7 @@ export default function AddBrandStep2(): React.ReactElement {
 
                   <button
                     onClick={handleContinue}
-                    className="flex items-center space-x-2 bg-[#93E85F] text-black px-6 py-3 rounded-xl hover:bg-[#93E85F]/90 transition-colors"
+                    className="flex items-center space-x-2 bg-primary text-primary-foreground px-6 py-3 rounded-xl hover:bg-primary/90 transition-colors"
                   >
                     <span>Continue to Queries</span>
                     <ArrowRight className="h-5 w-5" />
@@ -867,18 +859,18 @@ export default function AddBrandStep2(): React.ReactElement {
               /* Fallback if no company data */
               <div className="text-center">
                 <div className="mb-6">
-                  <Globe className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-                  <h1 className="text-3xl font-bold text-white mb-4">
+                  <Globe className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
+                  <h1 className="text-3xl font-bold text-foreground mb-4">
                     No Company Information Found
                   </h1>
-                  <p className="text-gray-300 text-lg mb-8">
+                  <p className="text-muted-foreground text-lg mb-8">
                     Please go back to Step 1 to get company information first.
                   </p>
                 </div>
 
                 <button
                   onClick={() => router.push('/dashboard/add-brand/step-1')}
-                  className="flex items-center space-x-2 bg-[#93E85F] text-black px-6 py-3 rounded-xl hover:bg-[#93E85F]/90 transition-colors mx-auto"
+                  className="flex items-center space-x-2 bg-primary text-primary-foreground px-6 py-3 rounded-xl hover:bg-primary/90 transition-colors mx-auto"
                 >
                   <ArrowLeft className="h-5 w-5" />
                   <span>Back to Step 1</span>

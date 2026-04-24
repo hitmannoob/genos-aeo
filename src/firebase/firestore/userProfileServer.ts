@@ -1,6 +1,5 @@
-import { firestore } from '../firebase-admin';
+import { firestore, FieldValue } from '../firebase-admin';
 import { UserProfile } from './userProfile';
-import * as admin from 'firebase-admin';
 
 // Server-side user profile functions using Firebase Admin SDK
 
@@ -33,49 +32,30 @@ export async function getUserProfileServer(uid: string): Promise<{ result: UserP
 }
 
 // Update user credits using Admin SDK
+//
+// Uses FieldValue.increment for atomicity. The previous read-modify-write
+// fallback was intentionally removed because it defeated the atomicity
+// guarantee (two concurrent writers could both read the same base value and
+// clobber each other). If the increment write fails, the error is propagated
+// to the caller — callers must handle it (typically by returning a 5xx).
 export async function updateUserCreditsServer(uid: string, creditsChange: number): Promise<{ result: boolean; error: any }> {
   let result = false;
   let error = null;
 
   try {
     console.log(`💰 Updating user credits (Admin SDK): ${creditsChange > 0 ? '+' : ''}${creditsChange} for user ${uid}`);
-    
+
     const userRef = firestore.collection('users').doc(uid);
-    
-    try {
-      // Use Admin SDK's FieldValue.increment - correct syntax
-      await userRef.update({
-        credits: admin.firestore.FieldValue.increment(creditsChange)
-      });
-      
-      result = true;
-      console.log(`✅ User credits updated successfully using increment: ${creditsChange > 0 ? '+' : ''}${creditsChange}`);
-    } catch (incrementError) {
-      console.log('⚠️ FieldValue.increment failed, using manual update method...');
-      
-      // Fallback: Get current credits and update manually
-      const userDoc = await userRef.get();
-      
-      if (!userDoc.exists) {
-        throw new Error('User document does not exist');
-      }
-      
-      const currentData = userDoc.data() as UserProfile;
-      const currentCredits = currentData.credits || 0;
-      const newCredits = currentCredits + creditsChange;
-      
-      // Prevent negative credits
-      if (newCredits < 0) {
-        throw new Error(`Insufficient credits: ${currentCredits} available, ${Math.abs(creditsChange)} required`);
-      }
-      
-      await userRef.update({
-        credits: newCredits
-      });
-      
-      result = true;
-      console.log(`✅ User credits updated successfully using manual method: ${currentCredits} → ${newCredits}`);
-    }
+
+    // Use Admin SDK's FieldValue.increment for atomic update. No fallback:
+    // a non-atomic read-modify-write would reintroduce the race we are
+    // trying to prevent.
+    await userRef.update({
+      credits: FieldValue.increment(creditsChange)
+    });
+
+    result = true;
+    console.log(`✅ User credits updated successfully using increment: ${creditsChange > 0 ? '+' : ''}${creditsChange}`);
   } catch (e) {
     error = e;
     console.error('❌ Error updating user credits (Admin SDK):', e);
@@ -112,9 +92,7 @@ export async function createUserProfileServer(userData: any, isNewUser: boolean 
   try {
     const userRef = firestore.collection('users').doc(userData.uid);
     const userDoc = await userRef.get();
-    
-    const now = new Date().toISOString();
-    
+
     if (!userDoc.exists || isNewUser) {
       // Create new user profile with 500 credits
       const userProfile: Partial<UserProfile> = {
@@ -122,16 +100,16 @@ export async function createUserProfileServer(userData: any, isNewUser: boolean 
         email: userData.email || '',
         displayName: userData.displayName || userData.email?.split('@')[0] || 'User',
         credits: 500, // Give 500 credits to new users
-        createdAt: now,
-        lastLoginAt: now,
+        createdAt: FieldValue.serverTimestamp(),
+        lastLoginAt: FieldValue.serverTimestamp(),
         isNewUser: true
       };
-      
+
       // Only add photoURL if it exists
       if (userData.photoURL) {
         userProfile.photoURL = userData.photoURL;
       }
-      
+
       await userRef.set(userProfile);
       result = userProfile as UserProfile;
       console.log('🎉 New user created with 500 credits (Admin SDK):', userData.email);
@@ -141,7 +119,7 @@ export async function createUserProfileServer(userData: any, isNewUser: boolean 
       const updateData: Partial<UserProfile> = {
         email: userData.email || existingData.email,
         displayName: userData.displayName || existingData.displayName,
-        lastLoginAt: now,
+        lastLoginAt: FieldValue.serverTimestamp(),
         isNewUser: false
       };
       

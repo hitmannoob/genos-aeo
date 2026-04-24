@@ -7,45 +7,69 @@ import { useBrandAnalyticsCombined } from '@/hooks/useBrandAnalytics';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import Card from '@/components/shared/Card';
 import WebLogo from '@/components/shared/WebLogo';
-import CompetitorProcessor from '@/components/CompetitorProcessor';
-import { 
-  Users, 
+import {
+  Users,
   TrendingUp,
   RefreshCw,
   AlertCircle,
+  AlertTriangle,
   Eye,
   MessageSquare
 } from 'lucide-react';
 
 export default function CompetitorsPage(): React.ReactElement {
   const { selectedBrand, brands, loading: brandLoading } = useBrandContext();
-  const { competitors, loading: competitorsLoading, error, refetch } = useCompetitors();
-  
-  // Get real brand analytics data for SOV calculation
-  const { 
-    latestAnalytics, 
-    lifetimeAnalytics 
+  const {
+    competitors,
+    totalQueriesProcessed,
+    loading: competitorsLoading,
+    error,
+    refetch: refetchCompetitors
+  } = useCompetitors();
+
+  // Brand analytics for SOV denominator
+  const {
+    latestAnalytics,
+    lifetimeAnalytics,
+    loading: brandAnalyticsLoading,
+    refetchLatest,
+    refetchLifetime
   } = useBrandAnalyticsCombined(selectedBrand?.id);
-  
-  // Use the most recent analytics data available
+
   const brandAnalytics = latestAnalytics || lifetimeAnalytics;
-  
-  // Calculate SOV metrics
+
+  // SOV metrics — only meaningful once brand analytics has loaded, otherwise
+  // realBrandMentions=0 flashes "100% you / 0% competitors" for a beat.
+  const sovReady = !brandAnalyticsLoading && !!brandAnalytics;
   const totalCompetitorMentions = competitors.reduce((sum, comp) => sum + comp.mentions, 0);
   const realBrandMentions = brandAnalytics?.totalBrandMentions || 0;
   const totalMarketMentions = realBrandMentions + totalCompetitorMentions;
-  
-  // Calculate accurate Share of Voice
-  const brandShareOfVoice = totalMarketMentions > 0 ? Math.round((realBrandMentions / totalMarketMentions) * 100) : 100;
-  const competitorShareOfVoice = totalMarketMentions > 0 ? Math.round((totalCompetitorMentions / totalMarketMentions) * 100) : 0;
-  
-  // Calculate user's brand market ranking
+
+  // Use null for the "no data" case so we don't mislead the user with "0%"
+  // percentages. When data exists, derive the competitor share as the complement
+  // of the brand share so the two numbers always sum to exactly 100 (avoids
+  // 99/101 rounding artifacts from two independent Math.round calls).
+  const hasMarketData = totalMarketMentions > 0;
+  const brandShareOfVoice: number | null = hasMarketData
+    ? Math.round((realBrandMentions / totalMarketMentions) * 100)
+    : null;
+  const competitorShareOfVoice: number | null = brandShareOfVoice === null
+    ? null
+    : 100 - brandShareOfVoice;
+
   const sortedMarketData = [
     { name: selectedBrand?.companyName || 'Your Brand', value: realBrandMentions, isUserBrand: true },
     ...competitors.map(comp => ({ name: comp.name, value: comp.mentions, isUserBrand: false }))
   ].filter(item => item.value > 0).sort((a, b) => b.value - a.value);
-  
+
   const userBrandRank = sortedMarketData.findIndex(item => item.isUserBrand) + 1;
+
+  // Refresh pulls both pipelines so competitor numbers + brand mentions stay in sync.
+  const handleRefresh = async () => {
+    await Promise.all([refetchCompetitors(), refetchLatest(), refetchLifetime()]);
+  };
+
+  const isRefreshing = competitorsLoading || brandAnalyticsLoading;
 
   // Show loading while brands are being fetched
   if (brandLoading) {
@@ -104,41 +128,46 @@ export default function CompetitorsPage(): React.ReactElement {
             <div>
               <h1 className="text-2xl font-bold text-foreground">Competitor Analysis</h1>
               <p className="text-muted-foreground">for {selectedBrand.companyName}</p>
-              <div className="flex items-center space-x-2 mt-2">
-                <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                <span className="text-sm text-blue-600 font-medium">Based on Latest Performance Data</span>
-              </div>
             </div>
           </div>
           <button
-            onClick={refetch}
-            disabled={competitorsLoading}
-            className="flex items-center space-x-2 bg-[#000C60] text-white px-4 py-2 rounded-lg hover:bg-[#000C60]/90 disabled:opacity-50 transition-colors"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="flex items-center space-x-2 bg-primary/10 text-primary px-4 py-2 rounded-full hover:bg-primary/20 disabled:opacity-50 transition-colors"
           >
-            <RefreshCw className={`h-4 w-4 ${competitorsLoading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
             <span>Refresh</span>
           </button>
         </div>
 
+        {/* Surface Cloud Storage truncation so users don't act on silently-incomplete numbers. */}
+        {lifetimeAnalytics?.dataTruncated && (
+          <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900">
+            <AlertTriangle className="h-5 w-5 flex-shrink-0 mt-0.5" />
+            <div className="text-sm">
+              <div className="font-semibold">Competitor analytics are running on a partial dataset.</div>
+              <div className="mt-1">
+                We couldn't load the full query history from Cloud Storage, so the
+                numbers below are computed from the most recent ~50 queries only.
+                Reload the page to retry, or contact support if this persists.
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Data Source Info Banner */}
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <div className="bg-primary/5 border border-primary/20 rounded-lg p-4">
           <div className="flex items-center space-x-3">
-            <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+            <div className="w-3 h-3 bg-primary rounded-full"></div>
             <div>
-              <h3 className="font-semibold text-blue-900">Latest Performance Data</h3>
-              <p className="text-sm text-blue-700">
-                Competitor data is sourced from your most recent processing session, providing up-to-date insights into competitive landscape analysis.
+              <h3 className="font-semibold text-foreground">Lifetime Competitor Analytics</h3>
+              <p className="text-sm text-muted-foreground">
+                Numbers are computed live from every processed query for this brand,
+                using the same matcher applied to your brand mentions.
               </p>
             </div>
           </div>
         </div>
-
-        {/* Competitor Analytics Processor */}
-        <CompetitorProcessor 
-          brandId={selectedBrand.id}
-          brandName={selectedBrand.companyName}
-          className="mb-6"
-        />
 
         {/* Error State */}
         {error && (
@@ -202,7 +231,7 @@ export default function CompetitorsPage(): React.ReactElement {
                 <div className="text-center">
                   <TrendingUp className="h-8 w-8 text-[#E74C3C] mx-auto mb-2" />
                   <p className="text-2xl font-bold text-foreground">
-                    {competitors[0]?.queriesAnalyzed || 0}
+                    {totalQueriesProcessed}
                   </p>
                   <p className="text-muted-foreground text-sm">Queries Analyzed</p>
                 </div>
@@ -252,7 +281,9 @@ export default function CompetitorsPage(): React.ReactElement {
 
                         {/* Top Provider */}
                         <div className="text-center">
-                          <p className="text-sm font-medium text-foreground capitalize">{competitor.topProvider}</p>
+                          <p className="text-sm font-medium text-foreground capitalize">
+                            {competitor.topProvider && competitor.topProvider !== 'none' ? competitor.topProvider : '—'}
+                          </p>
                           <p className="text-xs text-muted-foreground">Top Provider</p>
                         </div>
                       </div>
@@ -262,31 +293,48 @@ export default function CompetitorsPage(): React.ReactElement {
               </div>
             </Card>
 
-            {/* Share of Voice Summary */}
+            {/* Share of Voice Summary — gated on brand analytics ready so we
+                don't flash "100% you / 0% competitors" while lifetime data loads. */}
             <Card>
               <h3 className="text-lg font-semibold text-foreground mb-4">Share of Voice Summary</h3>
-              <div className="p-4 bg-gray-50 rounded-lg">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="text-center">
-                    <div className="text-2xl font-bold text-green-600">{brandShareOfVoice}%</div>
-                    <div className="text-sm text-muted-foreground">Your Brand (#{userBrandRank > 0 ? userBrandRank : 'N/A'})</div>
-                    <div className="text-xs text-muted-foreground mt-1">{realBrandMentions} mentions</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-2xl font-bold text-red-600">{competitorShareOfVoice}%</div>
-                    <div className="text-sm text-muted-foreground">All Competitors</div>
-                    <div className="text-xs text-muted-foreground mt-1">{totalCompetitorMentions} mentions</div>
-                  </div>
+              {!sovReady ? (
+                <div className="p-4 bg-gray-50 rounded-lg flex items-center justify-center text-sm text-muted-foreground">
+                  <RefreshCw className="h-4 w-4 animate-spin mr-2" />
+                  Loading brand mentions…
                 </div>
-                <div className="mt-4 pt-4 border-t border-gray-200">
-                  <div className="text-center">
-                    <div className="text-sm text-muted-foreground">
-                      Total Market: <strong>{totalMarketMentions}</strong> mentions
-                      {brandAnalytics ? ' (Real Analytics)' : ' (Estimated)'}
+              ) : (
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-green-600">
+                        {brandShareOfVoice === null ? '—' : `${brandShareOfVoice}%`}
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        {brandShareOfVoice === null
+                          ? 'Your Brand (no data yet)'
+                          : `Your Brand (#${userBrandRank > 0 ? userBrandRank : 'N/A'})`}
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-1">{realBrandMentions} mentions</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-red-600">
+                        {competitorShareOfVoice === null ? '—' : `${competitorShareOfVoice}%`}
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        {competitorShareOfVoice === null ? 'All Competitors (no data yet)' : 'All Competitors'}
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-1">{totalCompetitorMentions} mentions</div>
+                    </div>
+                  </div>
+                  <div className="mt-4 pt-4 border-t border-gray-200">
+                    <div className="text-center">
+                      <div className="text-sm text-muted-foreground">
+                        Total Market: <strong>{totalMarketMentions}</strong> mentions
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
+              )}
             </Card>
 
             {/* Real Analytics Summary */}
@@ -296,7 +344,7 @@ export default function CompetitorsPage(): React.ReactElement {
                 <div>
                   <h4 className="font-medium text-foreground mb-3">Most Mentioned Competitors</h4>
                   <div className="space-y-2">
-                    {competitors
+                    {[...competitors]
                       .sort((a, b) => b.mentions - a.mentions)
                       .slice(0, 3)
                       .map((competitor, index) => (
@@ -310,11 +358,11 @@ export default function CompetitorsPage(): React.ReactElement {
                       ))}
                   </div>
                 </div>
-                
+
                 <div>
                   <h4 className="font-medium text-foreground mb-3">Highest Visibility</h4>
                   <div className="space-y-2">
-                    {competitors
+                    {[...competitors]
                       .sort((a, b) => b.visibility - a.visibility)
                       .slice(0, 3)
                       .map((competitor, index) => (

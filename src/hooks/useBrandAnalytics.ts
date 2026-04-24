@@ -1,28 +1,44 @@
 'use client'
 import { useState, useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { 
-  getLatestBrandAnalytics, 
-  getBrandAnalyticsHistory, 
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAuthContext } from '@/context/AuthContext';
+import {
+  getBrandAnalyticsHistory,
   getUserBrandAnalytics,
   calculateLifetimeBrandAnalytics,
   calculateLatestSessionFromBrandDocument,
-  saveLifetimeAnalytics,
-  type BrandAnalyticsData, 
+  type BrandAnalyticsData,
   type BrandAnalyticsHistory,
-  type LifetimeBrandAnalytics
 } from '@/firebase/firestore/brandAnalytics';
+import {
+  loadBrandWithQueryResults,
+  brandWithResultsQueryKey,
+  type BrandWithResults,
+} from '@/firebase/firestore/brandWithResults';
+
+// Shared across all analytics hooks: matches useCompetitors to avoid duplicate fetches.
+const BRAND_WITH_RESULTS_STALE_MS = 3 * 60 * 1000;
 
 // Hook for getting latest brand analytics (session-based) - optimized with React Query
 export function useLatestBrandAnalytics(brandId: string | undefined) {
+  const queryClient = useQueryClient();
+  const { user } = useAuthContext();
+  const userId = user?.uid;
   return useQuery({
-    queryKey: ['latestBrandAnalytics', brandId],
+    queryKey: ['latestBrandAnalytics', brandId, userId],
     queryFn: async () => {
-      if (!brandId) return null;
+      if (!brandId || !userId) return null;
 
-      // Use the same data source as lifetime analytics for consistency and speed
-      const { result: lifetimeResult, error: lifetimeError } = await calculateLifetimeBrandAnalytics(brandId);
-      
+      // Share the brand + queryProcessingResults fetch across sibling hooks via
+      // queryClient. Only one Cloud Storage load happens per brand per stale window.
+      const preloaded = await queryClient.fetchQuery<BrandWithResults>({
+        queryKey: brandWithResultsQueryKey(brandId),
+        queryFn: () => loadBrandWithQueryResults(brandId),
+        staleTime: BRAND_WITH_RESULTS_STALE_MS,
+      });
+
+      const { result: lifetimeResult, error: lifetimeError } = await calculateLifetimeBrandAnalytics(brandId, userId, preloaded);
+
       if (lifetimeError) {
         throw new Error('Failed to fetch analytics');
       }
@@ -31,18 +47,10 @@ export function useLatestBrandAnalytics(brandId: string | undefined) {
         return null;
       }
 
-      // Extract latest session data from the lifetime calculation
-      const { result: latestSessionAnalytics } = await calculateLatestSessionFromBrandDocument(brandId);
-      
+      // Extract latest session data from the already-loaded brand.
+      const { result: latestSessionAnalytics } = await calculateLatestSessionFromBrandDocument(brandId, userId, preloaded);
+
       if (latestSessionAnalytics) {
-        // Save the calculated analytics to Firestore for persistence (fire and forget)
-        try {
-          const { saveBrandAnalytics } = await import('@/firebase/firestore/brandAnalytics');
-          saveBrandAnalytics(latestSessionAnalytics).catch(console.warn);
-        } catch {
-          // Ignore save errors, we have the data
-        }
-        
         return latestSessionAnalytics;
       } else {
         // Fallback: convert lifetime to session format if no distinct session found
@@ -71,7 +79,7 @@ export function useLatestBrandAnalytics(brandId: string | undefined) {
         return sessionAnalytics;
       }
     },
-    enabled: !!brandId,
+    enabled: !!brandId && !!userId,
     staleTime: 3 * 60 * 1000, // Consider data fresh for 3 minutes
     gcTime: 5 * 60 * 1000, // Keep in cache for 5 minutes
     refetchOnWindowFocus: false,
@@ -80,44 +88,29 @@ export function useLatestBrandAnalytics(brandId: string | undefined) {
 
 // Hook for getting lifetime brand analytics (all historical data) - optimized with React Query
 export function useLifetimeBrandAnalytics(brandId: string | undefined) {
+  const queryClient = useQueryClient();
+  const { user } = useAuthContext();
+  const userId = user?.uid;
   return useQuery({
-    queryKey: ['lifetimeBrandAnalytics', brandId],
+    queryKey: ['lifetimeBrandAnalytics', brandId, userId],
     queryFn: async () => {
-      if (!brandId) return null;
+      if (!brandId || !userId) return null;
 
-      const { result, error: fetchError } = await calculateLifetimeBrandAnalytics(brandId);
-      
+      const preloaded = await queryClient.fetchQuery<BrandWithResults>({
+        queryKey: brandWithResultsQueryKey(brandId),
+        queryFn: () => loadBrandWithQueryResults(brandId),
+        staleTime: BRAND_WITH_RESULTS_STALE_MS,
+      });
+
+      const { result, error: fetchError } = await calculateLifetimeBrandAnalytics(brandId, userId, preloaded);
+
       if (fetchError) {
         throw new Error('Failed to calculate lifetime analytics');
       }
 
-      if (result) {
-        // Only save analytics periodically to avoid write stream exhaustion
-        // Check if we need to save (save every 5 minutes max)
-        const now = Date.now();
-        const lastSave = localStorage.getItem(`lastAnalyticsSave_${brandId}`);
-        const shouldSave = !lastSave || (now - parseInt(lastSave)) > 5 * 60 * 1000; // 5 minutes
-        
-        if (shouldSave) {
-          // Save the calculated lifetime analytics to Firestore for persistence (fire and forget)
-          try {
-            const { saveLifetimeAnalytics } = await import('@/firebase/firestore/brandAnalytics');
-            saveLifetimeAnalytics(result).then(() => {
-              localStorage.setItem(`lastAnalyticsSave_${brandId}`, now.toString());
-            }).catch(error => {
-              console.warn('⚠️ Failed to save lifetime analytics:', error);
-            });
-          } catch {
-            // Ignore save errors, we have the data
-          }
-        } else {
-          console.log('⏭️ Skipping analytics save (last saved recently)');
-        }
-      }
-      
       return result || null;
     },
-    enabled: !!brandId,
+    enabled: !!brandId && !!userId,
     staleTime: 5 * 60 * 1000, // Consider data fresh for 5 minutes (lifetime data changes less frequently)
     gcTime: 10 * 60 * 1000, // Keep in cache for 10 minutes
     refetchOnWindowFocus: false,

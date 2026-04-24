@@ -141,12 +141,6 @@ The debug endpoint will show which providers are configured:
 }
 ```
 
-### 3. Test Authentication
-Use the test script to verify authentication and credit deduction:
-```bash
-node test-user-query-with-auth.js
-```
-
 ## 🚨 Security Notes
 
 1. **Never commit your `.env.local` file** to version control

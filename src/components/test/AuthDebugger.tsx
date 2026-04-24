@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { useAuthContext } from '@/context/AuthContext';
 import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
+import { toIsoString } from '@/firebase/firestore/timestamps';
 
 export default function AuthDebugger() {
   const { user, userProfile } = useAuthContext();
@@ -111,8 +112,8 @@ export default function AuthDebugger() {
             {userProfile && (
               <>
                 <p><strong>Credits:</strong> {userProfile.credits}</p>
-                <p><strong>Created:</strong> {userProfile.createdAt}</p>
-                <p><strong>Last Login:</strong> {userProfile.lastLoginAt}</p>
+                <p><strong>Created:</strong> {toIsoString(userProfile.createdAt) || 'N/A'}</p>
+                <p><strong>Last Login:</strong> {toIsoString(userProfile.lastLoginAt) || 'N/A'}</p>
               </>
             )}
           </div>

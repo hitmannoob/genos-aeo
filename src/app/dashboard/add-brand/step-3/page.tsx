@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { ArrowLeft, Check, Search, Sparkles, RefreshCw, Eye, Tag, TrendingUp, ShoppingCart, Lightbulb, Target, X, Plus, AlertCircle } from 'lucide-react';
+import { serverTimestamp } from 'firebase/firestore';
 import WebLogo from '@/components/shared/WebLogo';
 import { CompanyInfo } from '@/lib/get-company-info';
 import { useAIQuery } from '@/hooks/useAIQuery';
@@ -119,7 +120,7 @@ Output format (return ONLY valid JSON array):
     try {
       await executeQuery(
         prompt,
-        ['azure-openai'], // Only use OpenAI for now, Gemini available for future use
+        ['chatgptsearch', 'google-gemini'],
         'high',
         'query-generation'
       );
@@ -349,21 +350,25 @@ Output format (return ONLY valid JSON array):
         // Generated brand analytics
         brandsbasicData,
         
-        // Metadata
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        // Metadata — server-authoritative audit timestamps.
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        // `timestamp` (ms-since-epoch) is kept for legacy sort fallbacks in
+        // useUserBrands; new readers should prefer createdAt.
         timestamp: Date.now(),
         totalQueries: selectedQueries.size,
         setupComplete: true,
         currentStep: 3,
-        
-        // Credit usage tracking
+
+        // Credit usage tracking. creditTransaction.timestamp lives inside a
+        // nested map (not an array), so serverTimestamp() is allowed and
+        // matches the audit-timestamp policy for the rest of this doc.
         creditsUsed: 100,
         creditTransaction: {
           amount: 100,
           type: 'deduction',
           reason: 'Brand setup completion',
-          timestamp: new Date().toISOString()
+          timestamp: serverTimestamp()
         }
       };
 
@@ -460,7 +465,7 @@ Output format (return ONLY valid JSON array):
       case 'Interest': return 'bg-yellow-100 text-yellow-700 border-yellow-200';
       case 'Consideration': return 'bg-purple-100 text-purple-700 border-purple-200';
       case 'Purchase': return 'bg-green-100 text-green-700 border-green-200';
-      default: return 'bg-gray-100 text-gray-700 border-gray-200';
+      default: return 'bg-gray-100 text-foreground border-gray-200';
     }
   };
 
@@ -616,33 +621,25 @@ Output format (return ONLY valid JSON array):
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0E353C] flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#93E85F]"></div>
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#0E353C] flex flex-col">
+    <div className="min-h-screen bg-background flex flex-col">
       {/* Header with Logo and Step Indicators */}
       <div className="flex flex-col items-center pt-8 pb-6">
         <div className="flex flex-col items-center space-y-2 mb-8">
-          {/* AI Monitor Logo */}
+          {/* Genos Logo */}
           <div className="relative w-48 h-12">
             <Image
-              src="/getcito-logo-dark.webp"
-              alt="AI Monitor Logo"
+              src="/logo_no_background.png"
+              alt="Genos Logo"
               width={192}
               height={48}
-              className="block dark:hidden w-full h-auto"
-              priority
-            />
-            <Image
-              src="/AI-Monitor-Logo-V3-long-dark-themel.png"
-              alt="AI Monitor Logo"
-              width={192}
-              height={48}
-              className="hidden dark:block w-full h-auto"
+              className="w-full h-auto"
               priority
             />
           </div>
@@ -652,54 +649,54 @@ Output format (return ONLY valid JSON array):
         <div className="flex items-center space-x-8">
           {/* Step 1 - Completed */}
           <div className="flex flex-col items-center">
-            <div className="w-12 h-12 bg-[#93E85F] text-black rounded-full flex items-center justify-center text-lg font-semibold mb-2">
+            <div className="w-12 h-12 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-lg font-semibold mb-2">
               ✓
             </div>
-            <span className="text-gray-300 text-sm">Domain</span>
+            <span className="text-muted-foreground text-sm">Domain</span>
           </div>
 
           {/* Connector */}
-          <div className="w-16 h-px bg-[#93E85F]"></div>
+          <div className="w-16 h-px bg-primary"></div>
 
           {/* Step 2 - Completed */}
           <div className="flex flex-col items-center">
-            <div className="w-12 h-12 bg-[#93E85F] text-black rounded-full flex items-center justify-center text-lg font-semibold mb-2">
+            <div className="w-12 h-12 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-lg font-semibold mb-2">
               ✓
             </div>
-            <span className="text-gray-300 text-sm">Brand</span>
+            <span className="text-muted-foreground text-sm">Brand</span>
           </div>
 
           {/* Connector */}
-          <div className="w-16 h-px bg-[#93E85F]"></div>
+          <div className="w-16 h-px bg-primary"></div>
 
           {/* Step 3 - Active */}
           <div className="flex flex-col items-center">
-            <div className="w-12 h-12 bg-[#93E85F] text-black rounded-full flex items-center justify-center text-lg font-semibold mb-2">
+            <div className="w-12 h-12 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-lg font-semibold mb-2">
               3
             </div>
-            <span className="text-white text-sm font-medium">Queries</span>
+            <span className="text-foreground text-sm font-medium">Queries</span>
           </div>
         </div>
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex px-4 max-w-7xl mx-auto">
+      <div className="flex-1 flex px-8 w-full">
         {/* Sidebar - Topics */}
         <div className="w-80 flex-shrink-0 mr-8">
-          <div className="bg-[#0a2a30] border border-[#1a4a54] rounded-2xl p-6 shadow-sm sticky top-8">
+          <div className="bg-card border border-border rounded-2xl p-6 shadow-sm sticky top-8">
             {/* Brand Display */}
             {companyData && (
               <div className="mb-6 pb-4 border-b border-border">
                 <div className="flex items-center space-x-3 p-3">
                   <WebLogo domain={domain} size={24} />
-                  <span className="text-white font-medium truncate">
+                  <span className="text-foreground font-medium truncate">
                     {companyData.companyName}
                   </span>
                 </div>
               </div>
             )}
 
-            <h2 className="text-lg font-semibold text-white mb-4">Topics</h2>
+            <h2 className="text-lg font-semibold text-foreground mb-4">Topics</h2>
             
             {/* Add Topic Button */}
             <button 
@@ -707,8 +704,8 @@ Output format (return ONLY valid JSON array):
               disabled={!canAddMoreTopics}
               className={`w-full flex items-center justify-center space-x-2 rounded-lg px-4 py-2 mb-6 transition-colors ${
                 canAddMoreTopics
-                  ? 'text-[#93E85F] border border-[#93E85F] hover:bg-[#93E85F]/5'
-                  : 'text-gray-400 border border-gray-600 cursor-not-allowed'
+                  ? 'text-primary border border-primary hover:bg-primary/5'
+                  : 'text-muted-foreground border border-gray-600 cursor-not-allowed'
               }`}
             >
               <Plus className="h-4 w-4" />
@@ -722,8 +719,8 @@ Output format (return ONLY valid JSON array):
                 onClick={() => setSelectedTopic('all')}
                 className={`flex items-center justify-between p-3 rounded-lg cursor-pointer transition-colors ${
                   selectedTopic === 'all'
-                    ? 'bg-[#93E85F] text-black'
-                    : 'bg-[#0E353C] border border-[#1a4a54] text-gray-300 hover:bg-[#164a54]'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-background border border-border text-muted-foreground hover:bg-muted'
                 }`}
               >
                 <span className="font-medium">All Topics</span>
@@ -741,8 +738,8 @@ Output format (return ONLY valid JSON array):
                     onClick={() => setSelectedTopic(topic)}
                     className={`flex items-center justify-between p-3 rounded-lg cursor-pointer transition-colors ${
                       selectedTopic === topic
-                        ? 'bg-[#93E85F] text-black'
-                        : 'text-gray-300 hover:bg-[#164a54]'
+                        ? 'bg-primary text-primary-foreground'
+                        : 'text-muted-foreground hover:bg-muted'
                     }`}
                   >
                     <span className="capitalize">{topic}</span>
@@ -754,8 +751,8 @@ Output format (return ONLY valid JSON array):
               })}
               
               {/* Topic Count */}
-              <div className="mt-4 pt-4 border-t border-[#1a4a54]">
-                <div className="text-xs text-gray-300">
+              <div className="mt-4 pt-4 border-t border-border">
+                <div className="text-xs text-muted-foreground">
                   {totalTopics}/10 topics added
                 </div>
               </div>
@@ -766,11 +763,11 @@ Output format (return ONLY valid JSON array):
         {/* Main Content Area */}
         <div className="flex-1">
           {/* Main Card */}
-          <div className="bg-[#0a2a30] border border-[#1a4a54] rounded-2xl p-8 shadow-lg">
+          <div className="bg-card border border-border rounded-2xl p-8 shadow-2xl">
             {/* Header */}
             <div className="flex items-center justify-between mb-8">
               <div>
-                <h1 className="text-3xl font-bold text-white mb-2">
+                <h1 className="text-3xl font-bold text-foreground mb-2">
                   {selectedTopic === 'all' ? 'All Topics' : selectedTopic.charAt(0).toUpperCase() + selectedTopic.slice(1)}
                 </h1>
                 <div className="flex items-center space-x-4 text-sm text-muted-foreground">
@@ -779,14 +776,14 @@ Output format (return ONLY valid JSON array):
               </div>
               <div className="flex items-center space-x-4">
                 <div className="flex items-center space-x-2">
-                  <span className="text-sm text-gray-300">
+                  <span className="text-sm text-muted-foreground">
                     {filteredQueries.length}/{generatedQueries.length} queries shown
                   </span>
                 </div>
                 {generatedQueries.length > 0 && (
                   <button
                     onClick={handleAddQuery}
-                    className="inline-flex items-center space-x-2 bg-[#93E85F] text-black px-4 py-2 rounded-lg hover:bg-[#93E85F]/90 transition-colors"
+                    className="inline-flex items-center space-x-2 bg-primary text-primary-foreground px-4 py-2 rounded-lg hover:bg-primary/90 transition-colors"
                   >
                     <Plus className="h-4 w-4" />
                     <span>Add a prompt</span>
@@ -801,7 +798,7 @@ Output format (return ONLY valid JSON array):
                 <button
                   onClick={generateQueries}
                   disabled={isGenerating || !companyData}
-                  className="inline-flex items-center space-x-2 bg-[#93E85F] text-black px-8 py-4 rounded-xl hover:bg-[#93E85F]/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="inline-flex items-center space-x-2 bg-primary text-primary-foreground px-8 py-4 rounded-xl hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {isGenerating ? (
                     <>
@@ -825,8 +822,8 @@ Output format (return ONLY valid JSON array):
              {generatedQueries.length > 0 && (
                <div className="space-y-8">
                 <div>
-                  <h2 className="text-xl font-semibold text-white mb-4">Query Intent Distribution</h2>
-                  <p className="text-white text-sm mb-6">
+                  <h2 className="text-xl font-semibold text-foreground mb-4">Query Intent Distribution</h2>
+                  <p className="text-foreground text-sm mb-6">
                     Shows the percentage breakdown of different intents based on the queries sent to the AI.
                   </p>
                   
@@ -857,7 +854,7 @@ Output format (return ONLY valid JSON array):
                   </div>
                   
                   {/* Intent Legend */}
-                  <div className="flex flex-wrap gap-6 text-sm text-white">
+                  <div className="flex flex-wrap gap-6 text-sm text-foreground">
                     {['Awareness', 'Interest', 'Consideration', 'Purchase'].map((category, index) => {
                       const count = filteredQueries.filter(q => q.category === category).length;
                       const percentage = filteredQueries.length > 0 ? Math.round((count / filteredQueries.length) * 100) : 0;
@@ -878,15 +875,15 @@ Output format (return ONLY valid JSON array):
                                                  {/* Prompts Table */}
                 <div>
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-semibold text-white">
-                      Prompts <span className="text-white">({filteredQueries.length})</span>
+                    <h3 className="text-lg font-semibold text-foreground">
+                      Prompts <span className="text-foreground">({filteredQueries.length})</span>
                     </h3>
                     <div className="flex items-center space-x-2">
-                      <button className="flex items-center space-x-2 text-white hover:text-primary transition-colors">
+                      <button className="flex items-center space-x-2 text-foreground hover:text-primary transition-colors">
                         <span>🎯 Intents</span>
                         <span className="text-xs">▼</span>
                       </button>
-                      <button className="flex items-center space-x-2 text-white hover:text-primary transition-colors">
+                      <button className="flex items-center space-x-2 text-foreground hover:text-primary transition-colors">
                         <span># Topics</span>
                         <span className="text-xs">▼</span>
                       </button>
@@ -894,9 +891,9 @@ Output format (return ONLY valid JSON array):
                   </div>
                   
                   {/* Table */}
-                  <div className="bg-[#1a2a2e] border border-gray-700 rounded-lg overflow-hidden shadow-sm">
+                  <div className="bg-card border border-border rounded-lg overflow-hidden shadow-sm">
                     {/* Table Header */}
-                    <div className="grid grid-cols-10 gap-4 p-4 bg-[#0f1c1f] border-b border-gray-700 text-sm font-semibold text-white">
+                    <div className="grid grid-cols-10 gap-4 p-4 bg-card border-b border-gray-700 text-sm font-semibold text-foreground">
                       <div className="col-span-1">
                         <input 
                           type="checkbox" 
@@ -906,7 +903,7 @@ Output format (return ONLY valid JSON array):
                           title={areAllFilteredSelected ? "Deselect all" : "Select all"}
                         />
                       </div>
-                      <div className="col-span-6">Prompts <span className="text-white">({selectedFilteredCount}/{filteredQueries.length} selected)</span></div>
+                      <div className="col-span-6">Prompts <span className="text-foreground">({selectedFilteredCount}/{filteredQueries.length} selected)</span></div>
                       <div className="col-span-2">Topic</div>
                       <div className="col-span-1">Intent</div>
                     </div>
@@ -918,7 +915,7 @@ Output format (return ONLY valid JSON array):
                         const isSelected = selectedQueries.has(actualIndex);
                         
                         return (
-                        <div key={index} className="grid grid-cols-10 gap-4 p-4 hover:bg-[#0f1c1f] transition-colors">
+                        <div key={index} className="grid grid-cols-10 gap-4 p-4 hover:bg-card transition-colors">
                           <div className="col-span-1">
                             <input 
                               type="checkbox" 
@@ -928,12 +925,12 @@ Output format (return ONLY valid JSON array):
                             />
                           </div>
                           <div className="col-span-6">
-                            <p className="text-white">
+                            <p className="text-foreground">
                               {query.query}
                             </p>
                           </div>
                           <div className="col-span-2">
-                            <span className="text-gray-300 capitalize text-sm">
+                            <span className="text-muted-foreground capitalize text-sm">
                               {query.keyword}
                             </span>
                           </div>
@@ -971,7 +968,7 @@ Output format (return ONLY valid JSON array):
                 </div>
                 <button
                   onClick={generateQueries}
-                  className="inline-flex items-center space-x-2 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors"
+                  className="inline-flex items-center space-x-2 bg-red-600 text-foreground px-4 py-2 rounded-lg hover:bg-red-700 transition-colors"
                 >
                   <RefreshCw className="h-4 w-4" />
                   <span>Try Again</span>
@@ -986,7 +983,7 @@ Output format (return ONLY valid JSON array):
           <div className="flex justify-between mt-8">
             <button
               onClick={() => router.push('/dashboard/add-brand/step-2')}
-              className="flex items-center space-x-2 bg-[#164a54] text-white px-6 py-3 rounded-xl hover:bg-[#1a4a54] transition-colors"
+              className="flex items-center space-x-2 bg-muted text-foreground px-6 py-3 rounded-xl hover:bg-border transition-colors"
             >
               <ArrowLeft className="h-5 w-5" />
               <span>Back</span>
@@ -995,7 +992,7 @@ Output format (return ONLY valid JSON array):
                           <button
                 onClick={handleComplete}
                 disabled={!queryState.result || queryState.loading || selectedQueries.size < 4 || isCompleting || credits < 100}
-                className="flex items-center space-x-2 bg-[#93E85F] text-black px-6 py-3 rounded-xl hover:bg-[#93E85F]/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="flex items-center space-x-2 bg-primary text-primary-foreground px-6 py-3 rounded-xl hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {isCompleting ? (
                   <>
@@ -1052,7 +1049,7 @@ Output format (return ONLY valid JSON array):
                   onChange={(e) => setNewTopicName(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder="e.g. Vegan products, Eco-friendly bags"
-                  className="w-full px-4 py-3 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#000C60] focus:border-transparent bg-background text-foreground"
+                  className="w-full px-4 py-3 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent bg-background text-foreground"
                   autoFocus
                 />
               </div>
@@ -1082,7 +1079,7 @@ Output format (return ONLY valid JSON array):
               <button
                 onClick={handleSaveTopic}
                 disabled={!newTopicName.trim() || !canAddMoreTopics}
-                className="px-6 py-2 bg-[#8B5CF6] text-white rounded-lg hover:bg-[#8B5CF6]/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="px-6 py-2 bg-primary text-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 Save Topic
               </button>
@@ -1122,8 +1119,8 @@ Output format (return ONLY valid JSON array):
                   value={newQuery}
                   onChange={(e) => setNewQuery(e.target.value)}
                   onKeyDown={handleQueryKeyDown}
-                  placeholder="e.g. what is the best tool for GEO? FYI it's AI Monitor 😊"
-                  className="w-full px-4 py-3 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#000C60] focus:border-transparent bg-background text-foreground"
+                  placeholder="e.g. what is the best tool for GEO? FYI it's Genos 😊"
+                  className="w-full px-4 py-3 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent bg-background text-foreground"
                   autoFocus
                 />
               </div>
@@ -1149,7 +1146,7 @@ Output format (return ONLY valid JSON array):
                           <div className="w-3 h-3 rounded bg-blue-500"></div>
                           <span className="font-medium text-foreground">Awareness</span>
                           {selectedCategory === 'Awareness' && (
-                            <span className="bg-blue-600 text-white text-xs px-2 py-1 rounded-full">
+                            <span className="bg-blue-600 text-foreground text-xs px-2 py-1 rounded-full">
                               AI Suggestion
                             </span>
                           )}
@@ -1241,7 +1238,7 @@ Output format (return ONLY valid JSON array):
               <button
                 onClick={handleSaveQuery}
                 disabled={!newQuery.trim()}
-                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="px-6 py-2 bg-blue-600 text-foreground rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 Add Query
               </button>

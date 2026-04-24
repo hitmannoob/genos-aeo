@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { serverTimestamp } from 'firebase/firestore';
 import addData from '@/firebase/firestore/addData';
 
 interface BrandBasicData {
@@ -6,7 +7,9 @@ interface BrandBasicData {
   brandMentionsChange: number;
   brandValidity: number;
   brandValidityChange: number;
-  lastUpdated: string;
+  // server-authoritative — written as FieldValue.serverTimestamp(), read as
+  // Firestore Timestamp. Normalise via toIsoString for display.
+  lastUpdated: any;
   linkValidity: number;
   linkValidityChange: number;
   sentimentChange: number;
@@ -22,8 +25,9 @@ interface CompleteBrandData {
   keywords: string[];
   website: string;
   userId: string;
-  createdAt: string;
-  
+  // server-authoritative — see BrandBasicData.lastUpdated note.
+  createdAt: any;
+
   // New analytics data
   brandsbasicData: BrandBasicData;
 }
@@ -71,7 +75,7 @@ function generateRealisticAnalytics(companyName: string, domain: string, keyword
     brandMentionsChange,
     brandValidity,
     brandValidityChange,
-    lastUpdated: new Date().toISOString(),
+    lastUpdated: serverTimestamp(),
     linkValidity,
     linkValidityChange,
     sentimentChange,
@@ -172,7 +176,7 @@ export async function POST(request: NextRequest) {
       keywords,
       website: website || `https://www.${domain}`,
       userId,
-      createdAt: new Date().toISOString(),
+      createdAt: serverTimestamp(),
       brandsbasicData
     };
 

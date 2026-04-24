@@ -6,5 +6,8 @@
       "Bash(npm install:*)"
     ],
     "deny": []
+  },
+  "enabledPlugins": {
+    "frontend-design@claude-plugins-official": true
   }
 }

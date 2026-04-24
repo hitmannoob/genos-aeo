@@ -170,27 +170,36 @@ export async function saveDetailedQueryResults(
   }
 }
 
-// Get detailed query results for a brand
+// Get detailed query results for a brand.
+//
+// By default, this fetches ALL matching documents — there is no implicit cap.
+// Previously this silently applied a `.limit(100)` which caused callers that
+// `reduce(...)` the results (treating the array as a total) to under-count
+// once a brand had more than 100 queries. Callers that truly want "the most
+// recent N" must now pass an explicit `{ limit: N }` so the intent is visible
+// at the call site.
 export async function getDetailedQueryResults(
   brandId: string,
-  limitCount: number = 100
+  options?: { limit?: number }
 ): Promise<{ results: DetailedQueryResult[]; error?: any }> {
   try {
-    const q = query(
-      collection(db, 'v8detailed_query_results'),
+    const constraints = [
       where('brandId', '==', brandId),
       orderBy('date', 'desc'),
-      limit(limitCount)
-    );
-    
+    ];
+    if (options?.limit !== undefined) {
+      constraints.push(limit(options.limit));
+    }
+    const q = query(collection(db, 'v8detailed_query_results'), ...constraints);
+
     const querySnapshot = await getDocs(q);
     const results = querySnapshot.docs.map(doc => ({
       id: doc.id,
       ...doc.data()
     } as DetailedQueryResult));
-    
+
     return { results };
-    
+
   } catch (error) {
     console.error('❌ Error fetching detailed query results:', error);
     return { results: [], error };

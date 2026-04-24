@@ -1,6 +1,6 @@
 'use client'
 import React from 'react';
-import { Users, TrendingUp, BarChart3, Award, AlertTriangle, Zap, Eye, Target, Shield, ArrowUp, ArrowDown, Minus } from 'lucide-react';
+import { Users, BarChart3, Award, AlertTriangle, Eye, Target, Shield, ArrowUp, ArrowDown, Minus } from 'lucide-react';
 import Card from '@/components/shared/Card';
 import { useCompetitors } from '@/hooks/useCompetitors';
 import { useBrandContext } from '@/context/BrandContext';
@@ -147,10 +147,18 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
   // ✅ PROPER SOV CALCULATION using real brand analytics data
   const realBrandMentions = brandAnalytics?.totalBrandMentions || 0;
   const totalMarketMentions = realBrandMentions + totalCompetitorMentions;
-  
-  // Calculate accurate Share of Voice (should total 100%)
-  const brandShareOfVoice = totalMarketMentions > 0 ? Math.round((realBrandMentions / totalMarketMentions) * 100) : 100;
-  const competitorShareOfVoice = totalMarketMentions > 0 ? Math.round((totalCompetitorMentions / totalMarketMentions) * 100) : 0;
+
+  // Calculate accurate Share of Voice. Use null for the "no data" case so we
+  // don't mislead the user with "100%" or "0%". When data exists, derive the
+  // competitor share as the complement of the brand share to guarantee the two
+  // numbers always sum to exactly 100 (avoids 99/101 rounding artifacts).
+  const hasMarketData = totalMarketMentions > 0;
+  const brandShareOfVoice: number | null = hasMarketData
+    ? Math.round((realBrandMentions / totalMarketMentions) * 100)
+    : null;
+  const competitorShareOfVoice: number | null = brandShareOfVoice === null
+    ? null
+    : 100 - brandShareOfVoice;
 
   // Generate colors for competitors using brand palette
       const competitorColors = [
@@ -165,7 +173,10 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
       name: selectedBrand?.companyName || 'Your Brand',
       value: realBrandMentions,
       color: '#000C60',
-      percentage: brandShareOfVoice,
+      // brandShareOfVoice is null when totalMarketMentions === 0, but in that
+      // case realBrandMentions is also 0 so this entry is stripped by the
+      // `filter(item => item.value > 0)` below before rendering.
+      percentage: brandShareOfVoice ?? 0,
       isUserBrand: true
     },
     ...competitors.slice(0, 8).map((competitor, index) => ({
@@ -185,14 +196,6 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
     if (competitor.visibility >= 70) return { level: 'High', color: 'text-red-600', bg: 'bg-red-50', icon: AlertTriangle };
     if (competitor.visibility >= 40) return { level: 'Medium', color: 'text-orange-600', bg: 'bg-orange-50', icon: Shield };
     return { level: 'Low', color: 'text-green-600', bg: 'bg-green-50', icon: Shield };
-  };
-
-  // Mock trend data (in real implementation, this would come from historical data)
-  const getTrendIndicator = (competitor: any) => {
-    const trend = Math.random() > 0.5 ? 'up' : Math.random() > 0.5 ? 'down' : 'stable';
-    if (trend === 'up') return { icon: ArrowUp, color: 'text-red-500', label: '+15%' };
-    if (trend === 'down') return { icon: ArrowDown, color: 'text-green-500', label: '-8%' };
-    return { icon: Minus, color: 'text-gray-500', label: '±0%' };
   };
 
   const loading = competitorsLoading || analyticsLoading;
@@ -259,16 +262,22 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
   const userBrandRank = donutData.findIndex(item => item.isUserBrand) + 1;
   const totalMarketPlayers = donutData.length;
 
-  // Calculate competitive positioning based on accurate SOV
-  const marketPosition = competitorShareOfVoice <= 20 ? 'Market Leader' : 
-                        competitorShareOfVoice <= 40 ? 'Strong Position' : 
-                        competitorShareOfVoice <= 60 ? 'Competitive' : 
-                        'Challenged';
+  // Calculate competitive positioning based on accurate SOV.
+  // When we have no market data, skip labelling the position at all rather
+  // than implying the user is a "Market Leader" by default.
+  const marketPosition = competitorShareOfVoice === null
+    ? null
+    : competitorShareOfVoice <= 20 ? 'Market Leader'
+    : competitorShareOfVoice <= 40 ? 'Strong Position'
+    : competitorShareOfVoice <= 60 ? 'Competitive'
+    : 'Challenged';
 
-  const positionColor = competitorShareOfVoice <= 20 ? 'text-green-600' : 
-                       competitorShareOfVoice <= 40 ? 'text-blue-600' : 
-                       competitorShareOfVoice <= 60 ? 'text-orange-600' : 
-                       'text-red-600';
+  const positionColor = competitorShareOfVoice === null
+    ? 'text-muted-foreground'
+    : competitorShareOfVoice <= 20 ? 'text-green-600'
+    : competitorShareOfVoice <= 40 ? 'text-blue-600'
+    : competitorShareOfVoice <= 60 ? 'text-orange-600'
+    : 'text-red-600';
 
   return (
     <Card className={className}>
@@ -282,7 +291,10 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
             <div>
               <h3 className="text-lg font-semibold text-foreground">Competitors' Mentions</h3>
               <p className="text-sm text-muted-foreground">
-                {totalQueries} queries analyzed • <span className={positionColor}>{marketPosition}</span>
+                {totalQueries} queries analyzed
+                {marketPosition && (
+                  <> • <span className={positionColor}>{marketPosition}</span></>
+                )}
                 {userBrandRank > 0 && ` • Ranked #${userBrandRank} of ${totalMarketPlayers}`}
               </p>
             </div>
@@ -352,8 +364,12 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
             <div className="text-xs text-muted-foreground">Highest Mentions</div>
           </div>
           <div className="text-center p-3 bg-blue-50 rounded-lg border border-blue-100">
-            <div className="text-lg font-bold text-blue-600">{totalMarketMentions > 0 ? Math.round((totalCompetitorMentions / totalMarketMentions) * 100) : 0}%</div>
-            <div className="text-xs text-muted-foreground">Competitor SOV</div>
+            <div className="text-lg font-bold text-blue-600">
+              {competitorShareOfVoice === null ? '—' : `${competitorShareOfVoice}%`}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {competitorShareOfVoice === null ? 'Competitor SOV (no data yet)' : 'Competitor SOV'}
+            </div>
           </div>
         </div>
 
@@ -375,9 +391,25 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
             {topThreeCompetitors.map((competitor, index) => {
               const threatLevel = getCompetitorThreatLevel(competitor);
               const ThreatIcon = threatLevel.icon;
-              const trend = getTrendIndicator(competitor);
-              const TrendIcon = trend.icon;
               const competitorColor = donutData.find(d => d.name === competitor.name)?.color || '#6B7280';
+              const change = competitor.mentionsChange;
+              const hasTrend = typeof change === 'number';
+              const trendIcon = !hasTrend ? null : change > 0 ? ArrowUp : change < 0 ? ArrowDown : Minus;
+              // Competitor mentions up = bad for user; down = good
+              const trendColor = !hasTrend
+                ? 'text-gray-400'
+                : change > 0
+                  ? 'text-red-500'
+                  : change < 0
+                    ? 'text-green-500'
+                    : 'text-gray-500';
+              const trendLabel = !hasTrend
+                ? 'New'
+                : change > 0
+                  ? `+${change}`
+                  : change < 0
+                    ? `${change}`
+                    : '±0';
               
               return (
                 <div key={competitor.id} className="flex items-center justify-between p-4 bg-[#F8F8F8] rounded-lg border border-gray-100 hover:shadow-md transition-shadow">
@@ -413,10 +445,15 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
                       <div className="font-semibold text-foreground">{competitor.mentions}</div>
                       <div className="text-xs text-muted-foreground">mentions</div>
                     </div>
-                    <div className="flex items-center space-x-1">
-                      <TrendIcon className={`h-4 w-4 ${trend.color}`} />
-                      <span className={`text-xs ${trend.color}`}>{trend.label}</span>
-                    </div>
+                    {trendIcon && (
+                      <div className="flex items-center space-x-1">
+                        {React.createElement(trendIcon, { className: `h-4 w-4 ${trendColor}` })}
+                        <span className={`text-xs ${trendColor}`}>{trendLabel}</span>
+                      </div>
+                    )}
+                    {!hasTrend && (
+                      <span className="text-xs text-gray-400">New</span>
+                    )}
                   </div>
                 </div>
               );

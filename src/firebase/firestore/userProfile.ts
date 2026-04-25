@@ -57,14 +57,23 @@ export async function createUserProfile(user: User, isNewUser: boolean = false):
         lastLoginAt: serverTimestamp(),
         isNewUser: false
       };
-      
+
+      // Backfill credits for legacy profiles that predate the credit system.
+      // Without this, a user whose Firestore doc was written before `credits`
+      // was introduced reads back as `credits: undefined` and trips the
+      // "Insufficient Credits" gate on brand setup despite never having spent
+      // anything.
+      if (typeof existingData.credits !== 'number') {
+        updateData.credits = 1000;
+      }
+
       // Only update photoURL if it exists
       if (user.photoURL) {
         updateData.photoURL = user.photoURL;
       }
-      
+
       await updateDoc(userRef, updateData);
-      
+
       result = {
         ...existingData,
         ...updateData

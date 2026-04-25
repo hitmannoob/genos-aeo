@@ -25,7 +25,7 @@ export default function AddBrandStep3(): React.ReactElement {
   const router = useRouter();
   const { user } = useAuthContext();
   const { refetchBrands, setSelectedBrandId, clearBrandContext } = useBrandContext();
-  const { deduct: deductCredits, credits } = useUserCredits();
+  const { deduct: deductCredits, credits, loading: creditsLoading } = useUserCredits();
   const { showSuccess, showError, showInfo } = useToast();
   const [domain, setDomain] = useState<string>('');
   const [companyData, setCompanyData] = useState<CompanyInfo | null>(null);
@@ -267,6 +267,14 @@ Output format (return ONLY valid JSON array):
         minimumRequired: 4,
         hasUser: !!user?.uid
       });
+      return;
+    }
+
+    // Wait for the credit balance to load before deciding — without this guard
+    // a freshly signed-up user can hit Complete while the profile is still
+    // being created and see a spurious "Insufficient Credits" error.
+    if (creditsLoading) {
+      showInfo('Loading account', 'Just a moment while we load your credit balance.');
       return;
     }
 
@@ -1115,13 +1123,18 @@ Output format (return ONLY valid JSON array):
 
                           <button
                 onClick={handleComplete}
-                disabled={!queryState.result || queryState.loading || selectedQueries.size < 4 || isCompleting || credits < 100}
+                disabled={!queryState.result || queryState.loading || selectedQueries.size < 4 || isCompleting || creditsLoading || credits < 100}
                 className="flex items-center space-x-2 bg-primary text-primary-foreground px-6 py-3 rounded-xl hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {isCompleting ? (
                   <>
                     <RefreshCw className="h-5 w-5 animate-spin" />
                     <span>Completing Setup...</span>
+                  </>
+                ) : creditsLoading ? (
+                  <>
+                    <RefreshCw className="h-5 w-5 animate-spin" />
+                    <span>Loading account...</span>
                   </>
                 ) : credits < 100 ? (
                   <>

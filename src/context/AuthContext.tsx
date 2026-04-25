@@ -49,13 +49,18 @@ export function AuthContextProvider( { children }: AuthContextProviderProps ): R
   // Function to handle user authentication state changes
   const handleAuthStateChange = async (user: User | null) => {
     if (user) {
-      // User is signed in - load/create their profile
+      // User is signed in - load/create their profile.
+      // Hold loading=true through the profile fetch/create so consumers like
+      // useUserCredits don't briefly see user-without-profile (which would
+      // surface as credits=0 and trigger spurious "Insufficient Credits"
+      // states on freshly signed-up accounts).
+      setLoading(true);
       setUser(user);
-      
+
       try {
         // Check if user profile exists, create if new user
         const { result: existingProfile } = await getUserProfile(user.uid);
-        
+
         if (!existingProfile) {
           // New user - create profile with 1000 credits
           const { result: newProfile, error } = await createUserProfile(user, true);
@@ -79,7 +84,7 @@ export function AuthContextProvider( { children }: AuthContextProviderProps ): R
       setUser(null);
       setUserProfile(null);
     }
-    
+
     // Set loading to false once authentication state is determined
     setLoading(false);
   };

@@ -69,6 +69,24 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
     }
   }, []);
 
+  const formatProviderName = useCallback((provider: string) => {
+    switch (provider) {
+      case 'chatgpt':
+        return 'ChatGPT';
+      case 'google':
+        return 'Google AI';
+      case 'perplexity':
+        return 'Perplexity';
+      default:
+        return provider;
+    }
+  }, []);
+
+  const formatCountLabel = useCallback((count: number, singular: string, plural?: string) => {
+    const label = count === 1 ? singular : (plural || `${singular}s`);
+    return `${count} ${label}`;
+  }, []);
+
   const renderAnalyticsSection = useCallback((
     analytics: BrandAnalyticsData | LifetimeBrandAnalytics,
     title: string,
@@ -76,6 +94,8 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
     isLifetime: boolean,
     citationData?: any
   ) => {
+    const latestAnalytics = !isLifetime ? analytics as BrandAnalyticsData : null;
+    const lifetimeAnalytics = isLifetime ? analytics as LifetimeBrandAnalytics : null;
     const processedProviderStats = Object.entries(analytics.providerStats || {}).map(
       ([provider, providerStats]) => ({
         provider,
@@ -84,19 +104,39 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
       })
     );
 
+    const sectionSummary = isLifetime && lifetimeAnalytics
+      ? `${formatCountLabel(lifetimeAnalytics.totalQueriesProcessed, 'tracked query')} across ${formatCountLabel(lifetimeAnalytics.totalProcessingSessions, 'processing session')}`
+      : `${formatCountLabel(analytics.totalQueriesProcessed, 'query')} in the latest processing session`;
+
+    const headerMeta = latestAnalytics?.processingSessionTimestamp
+      ? formatDate(latestAnalytics.processingSessionTimestamp)
+      : null;
+
     return (
       <div className="space-y-6">
         {/* Header with title and indicator */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            {indicator}
-            <span className="text-sm font-semibold text-gray-700">{title}</span>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <div className="flex items-center space-x-2">
+              {indicator}
+              <span className="text-sm font-semibold text-gray-700">{title}</span>
+            </div>
+            <p className="mt-1 text-xs text-gray-500">{sectionSummary}</p>
           </div>
-          <div className="flex items-center space-x-2 text-sm text-gray-500">
-            <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
-            <span>Monitoring Enabled</span>
+          <div className="flex items-center space-x-2 text-xs text-gray-500">
+            {isLifetime ? (
+              <>
+                <Calendar className="h-4 w-4" />
+                <span>{formatCountLabel(lifetimeAnalytics?.totalProcessingSessions || 0, 'session')}</span>
+              </>
+            ) : (
+              <>
+                <Clock className="h-4 w-4" />
+                <span>{headerMeta || 'Unknown session time'}</span>
+              </>
+            )}
           </div>
-      </div>
+        </div>
 
         {/* Citation Cards for Lifetime Analytics Only */}
         {isLifetime && citationData && (
@@ -162,7 +202,10 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
                 {processedProviderStats.map((providerData) => (
                   <div key={providerData.provider} className="bg-white p-3 rounded-lg border border-gray-200">
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-medium text-gray-600 capitalize">{providerData.provider}</span>
+                      <div className="flex items-center gap-2">
+                        {providerData.icon}
+                        <span className="text-xs font-medium text-gray-600">{formatProviderName(providerData.provider)}</span>
+                      </div>
                       <span className="text-xs text-gray-500">{providerData.queriesProcessed} queries</span>
                     </div>
                     <div className="space-y-1">
@@ -175,7 +218,7 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
                         <span className="text-xs font-medium">{providerData.citations}</span>
                         </div>
                         <div className="flex justify-between">
-                        <span className="text-xs text-gray-500">Domain:</span>
+                        <span className="text-xs text-gray-500">Domain Citations:</span>
                         <span className="text-xs font-medium">{providerData.domainCitations}</span>
                       </div>
                     </div>
@@ -190,7 +233,7 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                         <div className="flex justify-between">
-                    <span className="text-xs text-gray-500">Queries Processed:</span>
+                    <span className="text-xs text-gray-500">{isLifetime ? 'Tracked Queries:' : 'Session Queries:'}</span>
                     <span className="text-xs font-medium">{analytics.totalQueriesProcessed}</span>
                         </div>
 
@@ -206,12 +249,12 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
                 <div className="space-y-2">
                   <div className="flex justify-between">
                     <span className="text-xs text-gray-500">Top Provider:</span>
-                    <span className="text-xs font-medium capitalize">{analytics.insights.topPerformingProvider}</span>
+                    <span className="text-xs font-medium">{formatProviderName(analytics.insights.topPerformingProvider)}</span>
                       </div>
                   {analytics.insights.topProviders && analytics.insights.topProviders.length > 1 && (
                     <div className="flex justify-between">
                       <span className="text-xs text-gray-500">All Top Providers:</span>
-                      <span className="text-xs font-medium capitalize">{analytics.insights.topProviders.join(', ')}</span>
+                      <span className="text-xs font-medium">{analytics.insights.topProviders.map(formatProviderName).join(', ')}</span>
                     </div>
                   )}
                 </div>
@@ -235,7 +278,7 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
         )}
     </div>
   );
-  }, [formatDate, getProviderIcon, showDetails]);
+  }, [formatCountLabel, formatDate, formatProviderName, getProviderIcon, showDetails]);
 
   // If no data available
   if (!latestAnalytics && !lifetimeAnalytics) {
@@ -270,7 +313,7 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
             >
               <div className="flex items-center justify-center space-x-2">
                 <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                <span>*Lifetime Analytics (Based on Queries: {lifetimeAnalytics.totalQueriesProcessed})</span>
+                <span>Lifetime</span>
               </div>
             </button>
           )}
@@ -285,7 +328,7 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
             >
               <div className="flex items-center justify-center space-x-2">
                 <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                <span>Latest Performance (Based on Queries: {latestAnalytics.totalQueriesProcessed})</span>
+                <span>Latest Session</span>
               </div>
             </button>
           )}
@@ -295,7 +338,7 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
         <div className="min-h-0">
           {activeTab === 'latest' && latestAnalytics && renderAnalyticsSection(
             latestAnalytics,
-            `Latest Performance (Based on Queries: ${latestAnalytics.totalQueriesProcessed})`,
+            'Latest Session',
             <div className="w-2 h-2 bg-blue-500 rounded-full"></div>,
             false
           )}
@@ -303,14 +346,11 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
             <>
               {renderAnalyticsSection(
                 lifetimeAnalytics,
-                `*Lifetime Analytics (Based on Queries: ${lifetimeAnalytics.totalQueriesProcessed})`,
+                'Lifetime Performance',
                 <div className="w-2 h-2 bg-green-500 rounded-full"></div>,
                 true,
                 citationAnalytics
               )}
-              <div className="mt-2 text-xs text-gray-500">
-        
-              </div>
             </>
           )}
         </div>

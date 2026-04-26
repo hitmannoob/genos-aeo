@@ -211,37 +211,43 @@ export default function ProcessQueriesButton({
           if (!response.ok) {
             const errorText = await response.text();
             console.error('❌ API error response:', errorText);
-            
-            // Parse error response if possible
+
+            let errorData: any = null;
             try {
-              const errorData = JSON.parse(errorText);
-              if (errorData.code === 'INSUFFICIENT_CREDITS') {
-                // Show detailed credit error notification
-                showError(
-                  'Insufficient Credits',
-                  `You need ${errorData.requiredCredits} credits but only have ${errorData.availableCredits} available.`,
-                );
-                throw new Error(`Insufficient credits: Need ${errorData.requiredCredits}, have ${errorData.availableCredits}`);
-              } else if (errorData.code === 'AUTHENTICATION_REQUIRED') {
-                showError(
-                  'Authentication Failed',
-                  'Please sign in again to continue processing queries.',
-                );
-                throw new Error('Authentication failed. Please sign in again.');
-              } else {
-                showError(
-                  'Query Processing Failed',
-                  errorData.error || 'An unexpected error occurred while processing your query.',
-                );
-                throw new Error(errorData.error || `Failed to process query (${response.status})`);
-              }
-            } catch (parseError) {
+              errorData = JSON.parse(errorText);
+            } catch {
+              // Body wasn't JSON — fall through to the generic network-error branch.
+            }
+
+            if (!errorData) {
               showError(
                 'Network Error',
                 'Failed to communicate with the server. Please check your connection and try again.',
               );
               throw new Error(`Failed to process query (${response.status}): ${query.query.substring(0, 30)}...`);
             }
+
+            if (errorData.code === 'INSUFFICIENT_CREDITS') {
+              showError(
+                'Insufficient Credits',
+                `You need ${errorData.requiredCredits} credits but only have ${errorData.availableCredits} available.`,
+              );
+              throw new Error(`Insufficient credits: Need ${errorData.requiredCredits}, have ${errorData.availableCredits}`);
+            }
+
+            if (errorData.code === 'AUTHENTICATION_REQUIRED') {
+              showError(
+                'Authentication Failed',
+                'Please sign in again to continue processing queries.',
+              );
+              throw new Error('Authentication failed. Please sign in again.');
+            }
+
+            showError(
+              'Query Processing Failed',
+              errorData.error || 'An unexpected error occurred while processing your query.',
+            );
+            throw new Error(errorData.error || `Failed to process query (${response.status})`);
           }
 
           const queryData = await response.json();

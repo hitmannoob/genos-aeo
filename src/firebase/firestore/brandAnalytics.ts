@@ -1,9 +1,9 @@
 import firebase_app from "../config";
 import { getFirestore, collection, doc, setDoc, getDoc, serverTimestamp, query, where, getDocs, orderBy, limit } from "firebase/firestore";
-import { analyzeBrandMentions } from '@/components/features/BrandMentionCounter';
-import { extractChatGPTCitations } from '@/components/features/ChatGPTResponseRenderer';
-import { extractGoogleAIOverviewCitations } from '@/components/features/GoogleAIOverviewRenderer';
-import { extractPerplexityCitations } from '@/components/features/PerplexityResponseRenderer';
+import { analyzeBrandMentions } from '@/lib/brand-mentions';
+import { extractChatGPTCitations } from '@/lib/citations/chatgpt';
+import { extractGoogleAIOverviewCitations } from '@/lib/citations/googleAIOverview';
+import { extractPerplexityCitations } from '@/lib/citations/perplexity';
 import { loadBrandQueryCorpus } from './brandQueryCorpus';
 import { matchesWord } from '@/lib/competitor-matching';
 import { toIsoString } from './timestamps';

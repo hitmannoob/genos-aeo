@@ -4,11 +4,15 @@ import { analyzeBrandMentions } from '@/components/features/BrandMentionCounter'
 import { extractChatGPTCitations } from '@/components/features/ChatGPTResponseRenderer';
 import { extractGoogleAIOverviewCitations } from '@/components/features/GoogleAIOverviewRenderer';
 import { extractPerplexityCitations } from '@/components/features/PerplexityResponseRenderer';
-import { getQueriesByBrand } from './userQueries';
-import { getBrandInfo } from './brandDataService';
-import { retrieveDocumentWithLargeData } from '../storage/cloudStorage';
+import { loadBrandQueryCorpus } from './brandQueryCorpus';
 import { matchesWord } from '@/lib/competitor-matching';
 import { toIsoString } from './timestamps';
+import {
+  buildTrackedQueryIdentity,
+  getCanonicalGoogleResult,
+  getGoogleResultText,
+  type QueryProcessingResult,
+} from './queryResultUtils';
 
 // Get the Firestore instance
 const db = getFirestore(firebase_app);
@@ -132,6 +136,14 @@ export interface LifetimeBrandAnalytics {
   
   // Individual citation data for detailed analysis
   allCitations: LifetimeCitation[];
+
+  // Daily trend series derived from the same lifetime query corpus used for
+  // the aggregate metrics above.
+  trendData?: Array<{
+    date: string;
+    brandMentions: number;
+    citations: number;
+  }>;
   
   // Provider-specific lifetime data
   providerStats: {
@@ -204,6 +216,100 @@ export interface BrandAnalyticsHistory {
   };
 }
 
+const ANALYTICS_SESSION_READ_LIMIT = 25;
+
+function dedupeAnalyticsSessions(
+  analytics: BrandAnalyticsData[],
+  maxSessions?: number
+): BrandAnalyticsData[] {
+  const deduped: BrandAnalyticsData[] = [];
+  const seen = new Set<string>();
+
+  for (const item of analytics) {
+    const key = `${item.brandId}::${item.processingSessionId || item.id || 'unknown'}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(item);
+
+    if (maxSessions !== undefined && deduped.length >= maxSessions) {
+      break;
+    }
+  }
+
+  return deduped;
+}
+
+function buildLifetimeTrendData(
+  queryResults: QueryProcessingResult[],
+  brandName: string,
+  brandDomain: string
+): Array<{ date: string; brandMentions: number; citations: number }> {
+  const byDay: Record<string, { date: string; brandMentions: number; citations: number }> = {};
+
+  queryResults.forEach((queryResult) => {
+    const day = queryResult.date
+      ? new Date(queryResult.date).toISOString().slice(0, 10)
+      : 'Unknown';
+
+    const chatgptCitations = queryResult.results?.chatgpt
+      ? extractChatGPTCitations(queryResult.results.chatgpt.response || '')
+      : [];
+
+    const canonicalGoogleResult = getCanonicalGoogleResult(queryResult.results);
+    const googleResult = canonicalGoogleResult
+      ? {
+          ...canonicalGoogleResult,
+          aiOverview: getGoogleResultText(canonicalGoogleResult),
+        }
+      : undefined;
+    const googleCitations = googleResult
+      ? extractGoogleAIOverviewCitations(googleResult.aiOverview || '', googleResult)
+      : [];
+
+    const perplexityCitations = queryResult.results?.perplexity
+      ? extractPerplexityCitations(
+          queryResult.results.perplexity.response || '',
+          queryResult.results.perplexity
+        )
+      : [];
+
+    const analysis = analyzeBrandMentions(
+      brandName,
+      brandDomain,
+      {
+        chatgpt: queryResult.results?.chatgpt
+          ? {
+              response: queryResult.results.chatgpt.response || '',
+              citations: chatgptCitations,
+            }
+          : undefined,
+        googleAI: googleResult
+          ? {
+              aiOverview: googleResult.aiOverview || '',
+              citations: googleCitations,
+            }
+          : undefined,
+        perplexity: queryResult.results?.perplexity
+          ? {
+              response: queryResult.results.perplexity.response || '',
+              citations: perplexityCitations,
+            }
+          : undefined,
+      },
+      []
+    );
+
+    if (!byDay[day]) {
+      byDay[day] = { date: day, brandMentions: 0, citations: 0 };
+    }
+
+    byDay[day].brandMentions += analysis.totals.totalBrandMentions;
+    byDay[day].citations += analysis.totals.totalCitations;
+  });
+
+  return Object.values(byDay).sort((left, right) => left.date.localeCompare(right.date));
+}
+
 // Calculate cumulative analytics from query processing results
 export function calculateCumulativeAnalytics(
   userId: string,
@@ -229,11 +335,18 @@ export function calculateCumulativeAnalytics(
 
   // Process each query result
   queryResults.forEach(queryResult => {
+    const canonicalGoogleResult = getCanonicalGoogleResult(queryResult.results);
+    const googleOverview = getGoogleResultText(canonicalGoogleResult);
+
     // Extract citations for each provider
     const chatgptCitations = queryResult.results?.chatgpt ? 
       extractChatGPTCitations(queryResult.results.chatgpt.response || '') : [];
-    const googleCitations = queryResult.results?.googleAI ? 
-      extractGoogleAIOverviewCitations(queryResult.results.googleAI.aiOverview || '', queryResult.results.googleAI) : [];
+    const googleCitations = canonicalGoogleResult
+      ? extractGoogleAIOverviewCitations(googleOverview, {
+          ...canonicalGoogleResult,
+          aiOverview: googleOverview,
+        })
+      : [];
     const perplexityCitations = queryResult.results?.perplexity ? 
       extractPerplexityCitations(queryResult.results.perplexity.response || '', queryResult.results.perplexity) : [];
 
@@ -243,8 +356,8 @@ export function calculateCumulativeAnalytics(
         response: queryResult.results.chatgpt.response || '',
         citations: chatgptCitations
       } : undefined,
-      googleAI: queryResult.results?.googleAI ? {
-        aiOverview: queryResult.results.googleAI.aiOverview || '',
+      googleAI: canonicalGoogleResult ? {
+        aiOverview: googleOverview,
         citations: googleCitations
       } : undefined,
       perplexity: queryResult.results?.perplexity ? {
@@ -270,7 +383,9 @@ export function calculateCumulativeAnalytics(
         providerStats[provider].domainCitations += result.domainCitationCount;
         
         // Add response time if available
-        const responseTime = queryResult.results?.[provider === 'google' ? 'googleAI' : provider]?.responseTime;
+        const responseTime = provider === 'google'
+          ? canonicalGoogleResult?.responseTime
+          : queryResult.results?.[provider]?.responseTime;
         if (responseTime) {
           providerStats[provider].totalResponseTime += responseTime;
         }
@@ -456,76 +571,21 @@ export async function calculateLatestSessionFromBrandDocument(
   try {
     console.log('🔄 Calculating latest session analytics from brand document:', brandId);
 
-    let brand: any;
-    if (preloaded) {
-      brand = preloaded.brand;
-    } else {
-      const { loadBrandWithQueryResults } = await import('./brandWithResults');
-      try {
-        const loaded = await loadBrandWithQueryResults(brandId);
-        brand = loaded.brand;
-      } catch (e: any) {
-        return { error: e?.message || 'Brand not found' };
-      }
+    const { result: corpus, error: corpusError } = await loadBrandQueryCorpus(
+      brandId,
+      userId,
+      preloaded
+    );
+
+    if (corpusError || !corpus) {
+      return { error: corpusError || new Error('Failed to load brand query corpus') };
     }
 
-    // Ownership guard: brand.userId must match the authenticated caller.
-    if (brand.userId !== userId) {
-      throw new Error('Unauthorized: brand does not belong to user');
-    }
-
+    const { brand, allResults } = corpus;
     const brandName = brand.companyName;
     const brandDomain = brand.domain;
-    
-    // Collect all query results from brand document
-    let allQueryResults: any[] = [];
-    
-    // 1. Get results from brand document
-    if (brand.queryProcessingResults && brand.queryProcessingResults.length > 0) {
-      allQueryResults = [...brand.queryProcessingResults];
-    }
-    
-    // 2. Try to get additional results from v8userqueries collection (fault-tolerant)
-    try {
-      const historicalQueriesResult = await getQueriesByBrand(brandId);
-      if (historicalQueriesResult.result) {
-        // Convert historical query format to current format (with safe property access)
-        const convertedResults = historicalQueriesResult.result
-          .filter((q: any) => q.status === 'completed' && q.aiResponses && q.aiResponses.length > 0)
-          .map((query: any) => ({
-            date: toIsoString(query.updatedAt) || toIsoString(query.createdAt) || new Date().toISOString(),
-            processingSessionId: query.sessionId || 'legacy_session',
-            processingSessionTimestamp: toIsoString(query.updatedAt) || toIsoString(query.createdAt) || new Date().toISOString(),
-            query: query.userQuery || query.queryText || 'Unknown query',
-            keyword: query.keyword || 'unknown',
-            category: query.category || 'unknown',
-            results: {
-              // Convert legacy format to current format with safe access
-              ...(query.aiResponses?.find((r: any) => r.provider === 'openai') && {
-                chatgpt: {
-                  response: query.aiResponses.find((r: any) => r.provider === 'openai')?.response || '',
-                  timestamp: query.aiResponses.find((r: any) => r.provider === 'openai')?.timestamp || query.updatedAt,
-                  responseTime: query.aiResponses.find((r: any) => r.provider === 'openai')?.responseTime
-                }
-              }),
-              ...(query.aiResponses?.find((r: any) => r.provider === 'gemini') && {
-                googleAI: {
-                  aiOverview: query.aiResponses.find((r: any) => r.provider === 'gemini')?.response || '',
-                  timestamp: query.aiResponses.find((r: any) => r.provider === 'gemini')?.timestamp || query.updatedAt,
-                  responseTime: query.aiResponses.find((r: any) => r.provider === 'gemini')?.responseTime
-                }
-              })
-            }
-          }));
-        
-        allQueryResults.push(...convertedResults);
-      }
-    } catch (error) {
-      console.warn('⚠️ Could not fetch historical queries for latest session (fault-tolerant):', error);
-      // Continue without historical data
-    }
-    
-    if (allQueryResults.length === 0) {
+
+    if (allResults.length === 0) {
       return { result: undefined };
     }
     
@@ -537,7 +597,7 @@ export async function calculateLatestSessionFromBrandDocument(
     let latestSessionMs = -Infinity;
     let latestSessionTimestamp = '';
 
-    allQueryResults.forEach(query => {
+    allResults.forEach(query => {
       const sessionId = query.processingSessionId || 'unknown_session';
       const sessionTimestamp = query.processingSessionTimestamp || query.date || '';
 
@@ -602,140 +662,47 @@ export async function calculateLifetimeBrandAnalytics(
   try {
     console.log('🔄 Calculating lifetime analytics for brand:', brandId);
 
-    let brand: any;
-    let dataTruncated = false;
+    const { result: corpus, error: corpusError } = await loadBrandQueryCorpus(
+      brandId,
+      userId,
+      preloaded
+    );
 
-    if (preloaded) {
-      brand = preloaded.brand;
-      dataTruncated = preloaded.dataTruncated;
-    } else {
-      const { loadBrandWithQueryResults } = await import('./brandWithResults');
-      try {
-        const loaded = await loadBrandWithQueryResults(brandId);
-        brand = loaded.brand;
-        dataTruncated = loaded.dataTruncated;
-      } catch (e: any) {
-        return { error: e?.message || 'Brand not found' };
-      }
+    if (corpusError || !corpus) {
+      return { error: corpusError || new Error('Failed to load brand query corpus') };
     }
 
-    // Ownership guard: brand.userId must match the authenticated caller.
-    if (brand.userId !== userId) {
-      throw new Error('Unauthorized: brand does not belong to user');
-    }
+    const {
+      brand,
+      dataTruncated,
+      currentResults,
+      historicalResults,
+      allResults,
+    } = corpus;
 
     const brandName = brand.companyName;
     const brandDomain = brand.domain;
-    
-    // Collect all historical query results from multiple sources
-    const allQueryResults: any[] = [];
-    let totalProcessingSessions = 0;
-    const processingSessions = new Set<string>();
-    
-    // Store original Firestore query count for diagnostics
-    const originalFirestoreQueryCount = brand.queryProcessingResults?.length || 0;
-    (brand as any)._originalFirestoreQueryCount = originalFirestoreQueryCount;
-    
-    // 1. Get current session results from brand document
-    if (brand.queryProcessingResults && brand.queryProcessingResults.length > 0) {
-      allQueryResults.push(...brand.queryProcessingResults);
-      brand.queryProcessingResults.forEach((result: any) => {
-        if (result.processingSessionId) {
-          processingSessions.add(result.processingSessionId);
-        }
-      });
-    }
-    
-    // 2. Try to get historical results from v8userqueries collection (fault-tolerant)
-    console.log('🔍 Attempting to retrieve historical queries from v8userqueries collection...');
-    try {
-      const historicalQueriesResult = await getQueriesByBrand(brandId);
-      if (historicalQueriesResult.result && historicalQueriesResult.result.length > 0) {
-        console.log(`📚 Found ${historicalQueriesResult.result.length} historical queries in v8userqueries collection`);
-        
-        // Log the status breakdown for diagnostic purposes
-        const statusCounts = historicalQueriesResult.result.reduce((acc: Record<string, number>, q: any) => {
-          const status = q.status || 'unknown';
-          acc[status] = (acc[status] || 0) + 1;
-          return acc;
-        }, {});
-        console.log('📊 Historical query status breakdown:', statusCounts);
-        // Convert historical query format to current format (fault-tolerant)
-        const convertedResults = historicalQueriesResult.result
-          .filter(q => q.status === 'completed' && q.aiResponses && q.aiResponses.length > 0)
-          .map(query => {
-            const result: any = {
-              date: toIsoString(query.processedAt) || toIsoString(query.createdAt) || new Date().toISOString(),
-              processingSessionId: `legacy_${query.id}`,
-              processingSessionTimestamp: toIsoString(query.createdAt) || new Date().toISOString(),
-              query: query.originalQuery,
-              keyword: query.keyword,
-              category: query.category,
-              results: {}
-            };
-            
-            // Convert AI responses to current format
-            query.aiResponses.forEach(response => {
-              const provider = response.provider.toLowerCase();
-              if (provider.includes('openai') || provider.includes('chatgpt')) {
-                result.results.chatgpt = {
-                  response: response.response || '',
-                  error: response.error,
-                  timestamp: response.timestamp || result.date,
-                  responseTime: response.responseTime
-                };
-              } else if (provider.includes('gemini') || provider.includes('google')) {
-                // Legacy gemini replies are plain text. Mirror them into both
-                // `response` and `aiOverview` so analytics (which reads
-                // googleAI.aiOverview) actually counts these historical rows.
-                result.results.googleAI = {
-                  response: response.response || '',
-                  aiOverview: response.response || '',
-                  error: response.error,
-                  timestamp: response.timestamp || result.date,
-                  responseTime: response.responseTime
-                };
-              } else if (provider.includes('perplexity')) {
-                result.results.perplexity = {
-                  response: response.response || '',
-                  error: response.error,
-                  timestamp: response.timestamp || result.date,
-                  responseTime: response.responseTime
-                };
-              }
-            });
-            
-            processingSessions.add(result.processingSessionId);
-            return result;
-          });
-        
-        allQueryResults.push(...convertedResults);
-        console.log(`✅ Successfully converted ${convertedResults.length} historical queries to current format`);
-      } else {
-        console.log('ℹ️ No historical queries found in v8userqueries collection');
-      }
-    } catch (error) {
-      console.warn('⚠️ Could not fetch historical queries (fault-tolerant):', error);
-      // Continue without historical data
-    }
-    
-    totalProcessingSessions = processingSessions.size;
+    const totalProcessingSessions = new Set(
+      allResults
+        .map((result) => result.processingSessionId)
+        .filter((sessionId): sessionId is string => typeof sessionId === 'string' && sessionId.length > 0)
+    ).size;
     
     console.log(`📊 Analytics data collection summary:`, {
-      totalQueries: allQueryResults.length,
+      totalQueries: allResults.length,
       totalSessions: totalProcessingSessions,
-      brandDocumentQueries: brand.queryProcessingResults?.length || 0,
-      historicalQueries: allQueryResults.length - (brand.queryProcessingResults?.length || 0),
+      brandDocumentQueries: currentResults.length,
+      historicalQueries: historicalResults.length,
       brandId,
       brandName
     });
     
     // Additional diagnostic: Log query source breakdown
-    const querySourceBreakdown = allQueryResults.reduce((acc, q) => {
+    const querySourceBreakdown = allResults.reduce((acc, q) => {
       const isLegacy = q.processingSessionId?.startsWith('legacy_');
       acc[isLegacy ? 'historical' : 'current'] = (acc[isLegacy ? 'historical' : 'current'] || 0) + 1;
       return acc;
-    }, {});
+    }, {} as Record<string, number>);
     console.log('🔍 Query source breakdown:', querySourceBreakdown);
     
     // Analytics debug functionality removed - no longer needed
@@ -758,7 +725,7 @@ export async function calculateLifetimeBrandAnalytics(
     //   }
     // }
     
-    if (allQueryResults.length === 0) {
+    if (allResults.length === 0) {
       // Return empty analytics if no queries found
       return {
         result: {
@@ -773,6 +740,7 @@ export async function calculateLifetimeBrandAnalytics(
           totalCitations: 0,
           totalDomainCitations: 0,
           allCitations: [], // Add required field
+          trendData: [],
           providerStats: {
             chatgpt: { queriesProcessed: 0, brandMentions: 0, citations: 0, domainCitations: 0 },
             google: { queriesProcessed: 0, brandMentions: 0, citations: 0, domainCitations: 0 },
@@ -800,11 +768,11 @@ export async function calculateLifetimeBrandAnalytics(
       brandDomain,
       'lifetime_analytics',
       new Date().toISOString(),
-      allQueryResults
+      allResults
     );
     
     // Find first and last query dates
-    const queryDates = allQueryResults
+    const queryDates = allResults
       .map(q => new Date(q.date))
       .filter(date => !isNaN(date.getTime()))
       .sort((a, b) => a.getTime() - b.getTime());
@@ -850,8 +818,10 @@ export async function calculateLifetimeBrandAnalytics(
     const allCitations: LifetimeCitation[] = [];
     let citationId = 1;
     
-    allQueryResults.forEach(query => {
+    allResults.forEach(query => {
       const queryTimestamp = toIsoString(query.date) || new Date().toISOString();
+      const canonicalGoogleResult = getCanonicalGoogleResult(query.results);
+      const googleOverview = getGoogleResultText(canonicalGoogleResult);
       
       // Extract ChatGPT citations
       // (extractChatGPTCitations lives in the UI layer because it handles the
@@ -874,7 +844,7 @@ export async function calculateLifetimeBrandAnalytics(
               source: citation.source || 'ChatGPT',
               provider: 'chatgpt',
               query: query.query,
-              queryId: query.id || '',
+              queryId: buildTrackedQueryIdentity(query),
               brandName,
               domain,
               timestamp: queryTimestamp,
@@ -890,9 +860,12 @@ export async function calculateLifetimeBrandAnalytics(
       }
       
       // Extract Google AI citations
-      if (query.results?.googleAI?.aiOverview) {
+      if (canonicalGoogleResult && googleOverview) {
         try {
-          const googleCitations = extractGoogleAIOverviewCitations(query.results.googleAI.aiOverview, query.results.googleAI);
+          const googleCitations = extractGoogleAIOverviewCitations(googleOverview, {
+            ...canonicalGoogleResult,
+            aiOverview: googleOverview,
+          });
           
           googleCitations.forEach((citation: any) => {
             const domain = extractDomainFromUrl(citation.url);
@@ -905,7 +878,7 @@ export async function calculateLifetimeBrandAnalytics(
               source: citation.source || 'Google AI Overview',
               provider: 'googleAI',
               query: query.query,
-              queryId: query.id || '',
+              queryId: buildTrackedQueryIdentity(query),
               brandName,
               domain,
               timestamp: queryTimestamp,
@@ -936,7 +909,7 @@ export async function calculateLifetimeBrandAnalytics(
               source: citation.source || 'Perplexity',
               provider: 'perplexity',
               query: query.query,
-              queryId: query.id || '',
+              queryId: buildTrackedQueryIdentity(query),
               brandName,
               domain,
               timestamp: queryTimestamp,
@@ -952,15 +925,15 @@ export async function calculateLifetimeBrandAnalytics(
       }
     });
     
-    console.log(`✅ Extracted ${allCitations.length} individual citations from ${allQueryResults.length} historical queries`);
+    console.log(`✅ Extracted ${allCitations.length} individual citations from ${allResults.length} historical queries`);
 
-    // Lifetime `totalQueriesProcessed` counts UNIQUE query texts (normalized:
-    // trimmed, lowercased), not rows. A question re-run across 5 sessions
-    // counts as 1 here. Use `totalProcessingSessions` for run frequency.
+    // Lifetime totals count unique tracked query identities so duplicate query
+    // text under different topic/category buckets still shows up correctly in
+    // the UI.
     const uniqueQueryCount = new Set(
-      allQueryResults
-        .map(r => (typeof r?.query === 'string' ? r.query.trim().toLowerCase() : ''))
-        .filter(t => t.length > 0)
+      allResults
+        .map((result) => buildTrackedQueryIdentity(result))
+        .filter((identity) => identity.length > 0)
     ).size;
 
     // Convert to lifetime analytics format
@@ -976,6 +949,7 @@ export async function calculateLifetimeBrandAnalytics(
       totalCitations: sessionAnalytics.totalCitations,
       totalDomainCitations: sessionAnalytics.totalDomainCitations,
       allCitations, // Add the extracted individual citations
+      trendData: buildLifetimeTrendData(allResults, brandName, brandDomain),
       providerStats: sessionAnalytics.providerStats,
       insights: {
         topPerformingProvider: sessionAnalytics.insights.topPerformingProvider,
@@ -1010,8 +984,9 @@ export async function calculateLifetimeBrandAnalytics(
 // Save brand analytics to Firestore
 export async function saveBrandAnalytics(analyticsData: BrandAnalyticsData): Promise<{ success: boolean; error?: any }> {
   try {
-    const docRef = doc(collection(db, 'v8_user_brand_analytics'));
-    await setDoc(docRef, analyticsData);
+    const documentId = `${analyticsData.brandId}_${analyticsData.processingSessionId}`;
+    const docRef = doc(db, 'v8_user_brand_analytics', documentId);
+    await setDoc(docRef, analyticsData, { merge: true });
     
     return { success: true };
   } catch (error) {
@@ -1164,7 +1139,7 @@ export async function getLatestBrandAnalytics(brandId: string): Promise<{ result
       collection(db, 'v8_user_brand_analytics'),
       where('brandId', '==', brandId),
       orderBy('processingSessionTimestamp', 'desc'),
-      limit(1)
+      limit(ANALYTICS_SESSION_READ_LIMIT)
     );
     
     const querySnapshot = await getDocs(q);
@@ -1173,10 +1148,12 @@ export async function getLatestBrandAnalytics(brandId: string): Promise<{ result
       return { result: undefined };
     }
     
-    const doc = querySnapshot.docs[0];
-    const analytics = { id: doc.id, ...doc.data() } as BrandAnalyticsData;
+    const deduped = dedupeAnalyticsSessions(
+      querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as BrandAnalyticsData)),
+      1
+    );
     
-    return { result: analytics };
+    return { result: deduped[0] };
   } catch (error) {
     console.error('❌ Error fetching latest brand analytics:', error);
     return { error };
@@ -1190,7 +1167,7 @@ export async function getBrandAnalyticsHistory(brandId: string): Promise<{ resul
       collection(db, 'v8_user_brand_analytics'),
       where('brandId', '==', brandId),
       orderBy('processingSessionTimestamp', 'desc'),
-      limit(2) // Get latest and previous for trend calculation
+      limit(ANALYTICS_SESSION_READ_LIMIT)
     );
     
     const querySnapshot = await getDocs(q);
@@ -1199,9 +1176,13 @@ export async function getBrandAnalyticsHistory(brandId: string): Promise<{ resul
       return { result: undefined };
     }
     
-    const docs = querySnapshot.docs;
-    const latestAnalytics = { id: docs[0].id, ...docs[0].data() } as BrandAnalyticsData;
-    const previousAnalytics = docs.length > 1 ? { id: docs[1].id, ...docs[1].data() } as BrandAnalyticsData : undefined;
+    const analyticsDocs = querySnapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data()
+    } as BrandAnalyticsData));
+    const deduped = dedupeAnalyticsSessions(analyticsDocs, 2);
+    const latestAnalytics = deduped[0];
+    const previousAnalytics = deduped.length > 1 ? deduped[1] : undefined;
     
     // Calculate trends
     let trend = {
@@ -1225,7 +1206,7 @@ export async function getBrandAnalyticsHistory(brandId: string): Promise<{ resul
     
     const history: BrandAnalyticsHistory = {
       brandId,
-      totalSessions: querySnapshot.size,
+      totalSessions: dedupeAnalyticsSessions(analyticsDocs).length,
       latestAnalytics,
       previousAnalytics,
       trend
@@ -1249,17 +1230,16 @@ export async function getUserBrandAnalytics(userId: string): Promise<{ result?: 
     
     const querySnapshot = await getDocs(q);
     
-    const analytics: BrandAnalyticsData[] = [];
-    querySnapshot.forEach((doc) => {
-      analytics.push({
+    const analytics = dedupeAnalyticsSessions(
+      querySnapshot.docs.map((doc) => ({
         id: doc.id,
         ...doc.data()
-      } as BrandAnalyticsData);
-    });
+      } as BrandAnalyticsData))
+    );
     
     return { result: analytics };
   } catch (error) {
     console.error('❌ Error fetching user brand analytics:', error);
     return { error };
   }
-} 
+}

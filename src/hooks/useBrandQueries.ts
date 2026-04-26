@@ -4,65 +4,14 @@ import { useAuthContext } from '@/context/AuthContext';
 import { getBrandInfo } from '@/firebase/firestore/brandDataService';
 import { retrieveDocumentWithLargeData } from '@/firebase/storage/cloudStorage';
 import { toIsoString } from '@/firebase/firestore/timestamps';
-import type { UserBrand } from '@/firebase/firestore/getUserBrands';
+import {
+  getCanonicalGoogleResult,
+  hasProviderContent,
+  type QueryProcessingResult,
+} from '@/firebase/firestore/queryResultUtils';
 
-// Interface for processed query results (the format stored in brand documents)
-export interface ProcessedQueryResult {
-  id?: string;
-  query: string;
-  keyword: string;
-  category: string;
-  date: string;
-  processingSessionId: string;
-  processingSessionTimestamp: string;
-  results: {
-    chatgpt?: {
-      response: string;
-      error?: string;
-      timestamp: string;
-      responseTime?: number;
-      webSearchUsed?: boolean;
-      citations?: number;
-    };
-    googleAI?: {
-      response: string;
-      error?: string;
-      timestamp: string;
-      responseTime?: number;
-      totalItems?: number;
-      organicResults?: number;
-      peopleAlsoAsk?: number;
-      location?: string;
-      aiOverview?: string;
-      aiOverviewReferences?: any[];
-      hasAIOverview?: boolean;
-      serpFeatures?: any[];
-      relatedSearches?: any[];
-      videoResults?: any[];
-    };
-    perplexity?: {
-      response: string;
-      error?: string;
-      timestamp: string;
-      responseTime?: number;
-      citations?: number;
-      realTimeData?: boolean;
-      citationsData?: string;
-      searchResultsData?: string;
-      structuredCitationsData?: string;
-      citationsCount?: number;
-      searchResultsCount?: number;
-      structuredCitationsCount?: number;
-      hasMetadata?: boolean;
-      hasUsageStats?: boolean;
-    };
-  };
-  creditInfo?: {
-    creditsDeducted: number;
-    creditsAfter: number;
-    totalCost: number;
-  };
-}
+// Canonical processed-query shape stored on brand documents.
+export type ProcessedQueryResult = QueryProcessingResult;
 
 interface UseBrandQueriesOptions {
   brandId?: string;
@@ -200,9 +149,9 @@ export function useBrandQueries(options: UseBrandQueriesOptions = {}): UseBrandQ
   // Calculate stats
   const stats = {
     total: queries.length,
-    withChatGPT: queries.filter(q => q.results?.chatgpt?.response).length,
-    withGoogleAI: queries.filter(q => q.results?.googleAI?.aiOverview).length,
-    withPerplexity: queries.filter(q => q.results?.perplexity?.response).length,
+    withChatGPT: queries.filter(q => hasProviderContent(q.results?.chatgpt)).length,
+    withGoogleAI: queries.filter(q => hasProviderContent(getCanonicalGoogleResult(q.results))).length,
+    withPerplexity: queries.filter(q => hasProviderContent(q.results?.perplexity)).length,
     totalSessions: new Set(queries.map(q => q.processingSessionId)).size,
   };
 

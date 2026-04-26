@@ -2,6 +2,13 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useBrandContext } from '@/context/BrandContext';
 import Card from '@/components/shared/Card';
+import { useBrandQueries } from '@/hooks/useBrandQueries';
+import {
+  buildTrackedQueryIdentity,
+  getCanonicalGoogleResult,
+  getGoogleResultText,
+  type QueryProcessingResult,
+} from '@/firebase/firestore/queryResultUtils';
 import { 
   Search, 
   Eye,
@@ -60,7 +67,7 @@ export default function QueriesOverview({
   const { selectedBrand, refetchBrands } = useBrandContext();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [liveResults, setLiveResults] = useState<any[]>([]);
+  const [liveResults, setLiveResults] = useState<QueryProcessingResult[]>([]);
   const [countdown, setCountdown] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
   const [processingQueries, setProcessingQueries] = useState<Set<string>>(new Set()); // Track which queries are being processed
   const [isProcessingActive, setIsProcessingActive] = useState(false); // Track if any processing is happening
@@ -72,22 +79,53 @@ export default function QueriesOverview({
 
   // Use brand override if provided, otherwise use selected brand
   const brand = brandOverride || selectedBrand;
+  const { queries: fetchedQueryResults } = useBrandQueries({ brandId: brand?.id });
   
   // Safely get queries and results (with fallbacks)
   const queries = brand?.queries || [];
-  const savedResults = brand?.queryProcessingResults || [];
+  const savedResults = useMemo(() => {
+    if (fetchedQueryResults.length > 0) {
+      return fetchedQueryResults;
+    }
+
+    return Array.isArray(brand?.queryProcessingResults)
+      ? brand.queryProcessingResults
+      : [];
+  }, [fetchedQueryResults, brand?.queryProcessingResults]);
   
   // Combine saved results with live processing results (memoized to prevent infinite re-renders)
   const queryResults = useMemo(() => {
     return [...savedResults, ...liveResults];
   }, [savedResults, liveResults]);
-  
-  // Create stable values for the countdown effect
-  const resultsCount = useMemo(() => queryResults.length, [queryResults.length]);
-  const latestResultTime = useMemo(() => {
-    if (queryResults.length === 0) return 0;
-    return Math.max(...queryResults.map(r => r.date ? new Date(r.date).getTime() : 0));
+
+  const sortedQueryResults = useMemo(() => {
+    return [...queryResults].sort((left, right) => {
+      const leftTime = left.date ? new Date(left.date).getTime() : 0;
+      const rightTime = right.date ? new Date(right.date).getTime() : 0;
+      return rightTime - leftTime;
+    });
   }, [queryResults]);
+
+  const latestResultsByIdentity = useMemo(() => {
+    const resultsMap = new Map<string, QueryProcessingResult>();
+
+    sortedQueryResults.forEach((result) => {
+      const identity = buildTrackedQueryIdentity(result);
+      if (!resultsMap.has(identity)) {
+        resultsMap.set(identity, result);
+      }
+    });
+
+    return resultsMap;
+  }, [sortedQueryResults]);
+
+  const lastProcessedDate = sortedQueryResults[0]?.date || null;
+  const processedTrackedQueryCount = useMemo(() => {
+    return queries.reduce((count, query) => {
+      const identity = buildTrackedQueryIdentity(query);
+      return count + (latestResultsByIdentity.has(identity) ? 1 : 0);
+    }, 0);
+  }, [queries, latestResultsByIdentity]);
 
   // Calculate next processing date and setup countdown
   useEffect(() => {
@@ -98,24 +136,11 @@ export default function QueriesOverview({
     }
 
     // Reset countdown if no results
-    if (resultsCount === 0) {
-      setCountdown({ days: 0, hours: 0, minutes: 0, seconds: 0 });
-      return;
-    }
-    
-    // Find the most recent result
-    let lastProcessedDate: string | null = null;
-    for (const result of queryResults) {
-      if (result.date && (!lastProcessedDate || new Date(result.date) > new Date(lastProcessedDate))) {
-        lastProcessedDate = result.date;
-      }
-    }
-    
     if (!lastProcessedDate) {
       setCountdown({ days: 0, hours: 0, minutes: 0, seconds: 0 });
       return;
     }
-    
+
     const nextProcessingDate = new Date(lastProcessedDate);
     nextProcessingDate.setDate(nextProcessingDate.getDate() + 7);
     
@@ -155,14 +180,14 @@ export default function QueriesOverview({
     const interval = setInterval(updateCountdown, 1000);
     
     return () => clearInterval(interval);
-  }, [brand?.id, resultsCount, latestResultTime]);
+  }, [brand?.id, lastProcessedDate]);
 
-  const findQueryResult = (query: string) => {
-    return queryResults.find(result => result.query === query);
+  const findQueryResult = (query: { query?: string; keyword?: string; category?: string }) => {
+    return latestResultsByIdentity.get(buildTrackedQueryIdentity(query));
   };
 
   // Compute if we should auto-start processing
-  const queriesWithoutResults = queries.filter(q => !findQueryResult(q.query));
+  const queriesWithoutResults = queries.filter(q => !findQueryResult(q));
   const shouldAutoStart = queriesWithoutResults.length >= 4 && !isProcessingActive;
 
   // Automatically trigger Process Queries if more than 5 queries have no results
@@ -191,7 +216,7 @@ export default function QueriesOverview({
   const displayQueries = variant === 'full' ? filteredQueries : filteredQueries.slice(0, maxQueries);
 
   // Get unique categories for filter
-  const categories = ['all', ...new Set(queries.map(q => q.category))];
+  const categories = ['all', ...Array.from(new Set(queries.map(q => q.category)))];
 
   const getCategoryIcon = (category: string) => {
     switch (category) {
@@ -220,9 +245,10 @@ export default function QueriesOverview({
   // spinner on in-flight queries — including re-runs of queries that already
   // have prior data. Non-batch queries fall through to their real status.
   const getQueryStatus = (query: any) => {
-    const queryResult = findQueryResult(query.query);
+    const queryIdentity = buildTrackedQueryIdentity(query);
+    const queryResult = findQueryResult(query);
 
-    if (processingQueries.has(query.query)) {
+    if (processingQueries.has(queryIdentity)) {
       return {
         status: 'Processing',
         color: 'bg-blue-500 text-white',
@@ -270,8 +296,13 @@ export default function QueriesOverview({
     // Extract citations for each provider
     const chatgptCitations = queryResult.results?.chatgpt ? 
       extractChatGPTCitations(queryResult.results.chatgpt.response || '') : [];
-    const googleCitations = queryResult.results?.googleAI ? 
-      extractGoogleAIOverviewCitations(queryResult.results.googleAI.aiOverview || '', queryResult.results.googleAI) : [];
+    const canonicalGoogleResult = getCanonicalGoogleResult(queryResult.results);
+    const googleOverview = getGoogleResultText(canonicalGoogleResult);
+    const googleCitations = canonicalGoogleResult ?
+      extractGoogleAIOverviewCitations(googleOverview, {
+        ...canonicalGoogleResult,
+        aiOverview: googleOverview,
+      }) : [];
     const perplexityCitations = queryResult.results?.perplexity ? 
       extractPerplexityCitations(queryResult.results.perplexity.response || '', queryResult.results.perplexity) : [];
 
@@ -281,15 +312,15 @@ export default function QueriesOverview({
         response: queryResult.results.chatgpt.response || '',
         citations: chatgptCitations
       } : undefined,
-      googleAI: queryResult.results?.googleAI ? {
-        aiOverview: queryResult.results.googleAI.aiOverview || '',
+      googleAI: canonicalGoogleResult ? {
+        aiOverview: googleOverview,
         citations: googleCitations
       } : undefined,
       perplexity: queryResult.results?.perplexity ? {
         response: queryResult.results.perplexity.response || '',
         citations: perplexityCitations
       } : undefined
-    }, brand?.competitors || []);
+    }, (brand as any)?.competitors || []);
 
     return {
       analysis,
@@ -331,19 +362,13 @@ export default function QueriesOverview({
               {variant !== 'minimal' && (
                 <p className="text-xs text-muted-foreground">
                   {brand.companyName}
-                  {queryResults.length > 0 && (
+                  {processedTrackedQueryCount > 0 && (
                     <span className="ml-2">
-                      • Total: {queryResults.length} Queries Processed
+                      • Processed: {processedTrackedQueryCount} / {queries.length}
                       <br />
-                      {(() => {
-                        const sortedResults = queryResults.sort((a, b) => 
-                          new Date(b.date).getTime() - new Date(a.date).getTime()
-                        );
-                        const lastProcessedDate = sortedResults[0]?.date;
-                        return lastProcessedDate ? 
-                          `Last Processed: ${new Date(lastProcessedDate).toLocaleDateString()}` : 
-                          '';
-                      })()}
+                      {lastProcessedDate
+                        ? `Last Processed: ${new Date(lastProcessedDate).toLocaleDateString()}`
+                        : ''}
                     </span>
                   )}
                 </p>
@@ -352,7 +377,7 @@ export default function QueriesOverview({
           </div>
           
           <div className="flex items-center space-x-3">
-            {queryResults.length > 0 && variant !== 'minimal' && (
+            {lastProcessedDate && variant !== 'minimal' && (
               <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-md">
                 <Clock className="h-3 w-3 inline mr-1" />
                 Scheduled: {countdown.days}d {countdown.hours}h {countdown.minutes}m
@@ -365,29 +390,31 @@ export default function QueriesOverview({
                 variant="ghost"
                 size="sm"
                 autoStart={shouldAutoStart}
-                onStart={(batchQueries) => {
+                onStart={(batchQueryIds) => {
                   // Scope the processing set to the current batch only. Queries
                   // not in this batch keep their existing status (Processed,
                   // Due, Unprocessed) and don't get the "Processing" badge.
                   setIsProcessingActive(true);
-                  batchQueriesRef.current = new Set(batchQueries);
-                  setProcessingQueries(new Set(batchQueries));
+                  batchQueriesRef.current = new Set(batchQueryIds);
+                  setProcessingQueries(new Set(batchQueryIds));
                 }}
-                onQueryStart={(queryName) => {
+                onQueryStart={(queryId) => {
                   // Defensive: ensure the active query is in the set even if
                   // onStart hasn't fired yet (or if this query was added to
                   // the batch after start — currently doesn't happen but
                   // cheap to be safe).
-                  batchQueriesRef.current.add(queryName);
-                  setProcessingQueries(prev => new Set([...prev, queryName]));
+                  batchQueriesRef.current.add(queryId);
+                  setProcessingQueries(prev => new Set(Array.from(prev).concat(queryId)));
                 }}
                 onProgress={(results) => {
                   setLiveResults(results);
                   // Remove queries that have completed in this batch.
                   // Scope is the batch, not the full query list.
-                  const completedQueries = new Set(results.map(r => r.query));
+                  const completedQueries = new Set(
+                    results.map((result) => buildTrackedQueryIdentity(result))
+                  );
                   const stillProcessing = new Set(
-                    [...batchQueriesRef.current].filter(q => !completedQueries.has(q))
+                    Array.from(batchQueriesRef.current).filter(q => !completedQueries.has(q))
                   );
                   setProcessingQueries(stillProcessing);
                 }}
@@ -482,7 +509,7 @@ export default function QueriesOverview({
                 </thead>
                 <tbody className="divide-y divide-border">
                   {displayQueries.map((query, index) => {
-                    const queryResult = findQueryResult(query.query);
+                    const queryResult = findQueryResult(query);
                     const hasResults = !!queryResult;
                     const brandAnalysis = hasResults ? getBrandAnalysisForQuery(queryResult) : null;
                     const statusInfo = getQueryStatus(query);
@@ -680,7 +707,7 @@ export default function QueriesOverview({
                             {!hasResults && brand?.id && (
                               <ProcessQueriesButton
                                 brandId={brand.id}
-                                queriesFilter={[query.query]}
+                                queriesFilter={[buildTrackedQueryIdentity(query)]}
                                 iconOnly
                                 onComplete={async () => {
                                   await refetchBrands();
@@ -699,7 +726,7 @@ export default function QueriesOverview({
             /* Cards Layout */
             <div className="space-y-3">
               {displayQueries.map((query, index) => {
-                const queryResult = findQueryResult(query.query);
+                const queryResult = findQueryResult(query);
                 const hasResults = !!queryResult;
                 const statusInfo = getQueryStatus(query);
                 
@@ -766,7 +793,7 @@ export default function QueriesOverview({
                       {!hasResults && brand?.id && (
                         <ProcessQueriesButton
                           brandId={brand.id}
-                          queriesFilter={[query.query]}
+                          queriesFilter={[buildTrackedQueryIdentity(query)]}
                           iconOnly
                           onComplete={async () => {
                             await refetchBrands();
@@ -799,4 +826,4 @@ export default function QueriesOverview({
       </div>
     </Card>
   );
-} 
+}

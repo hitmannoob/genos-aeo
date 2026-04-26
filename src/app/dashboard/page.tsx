@@ -15,7 +15,7 @@ import BrandAnalyticsDisplay from '@/components/features/BrandAnalyticsDisplay';
 import { useBrandAnalyticsCombined } from '@/hooks/useBrandAnalytics';
 import LifetimeAnalyticsCharts from '@/components/features/LifetimeAnalyticsCharts';
 import CompetitorMentionsCard from '@/components/features/CompetitorMentionsCard';
-import { useRecommendations } from '@/hooks/useRecommendations';
+import { buildLiveRecommendations } from '@/lib/liveRecommendations';
 
 
 function Page(): React.ReactElement {
@@ -30,8 +30,6 @@ function Page(): React.ReactElement {
     hasLatestData,
     hasLifetimeData
   } = useBrandAnalyticsCombined(selectedBrand?.id);
-
-  const { recommendations } = useRecommendations({ brandId: selectedBrand?.id });
 
   // Modal state
   const [showTrackingModal, setShowTrackingModal] = React.useState(false);
@@ -80,6 +78,14 @@ function Page(): React.ReactElement {
       brandMentionRate: totalCitations > 0 ? (brandMentions / totalCitations * 100) : 0
     };
   }, [lifetimeAnalytics?.allCitations, selectedBrand]);
+
+  const recommendations = useMemo(() => {
+    return buildLiveRecommendations({
+      brand: selectedBrand,
+      latestAnalytics,
+      lifetimeAnalytics,
+    });
+  }, [selectedBrand, latestAnalytics, lifetimeAnalytics]);
 
   useEffect(() => {
     // Only redirect if not loading and user is null
@@ -269,9 +275,10 @@ function Page(): React.ReactElement {
           </div>
         )}
 
-        {/* --- Recommendations (real data from user_recommendations; only renders if present) --- */}
+        {/* --- Recommendations (derived from live analytics; only renders if present) --- */}
         {recommendations.length > 0 && (
           <RecommendationSection
+            title="Live Recommendations"
             recommendations={recommendations}
             defaultExpanded={true}
           />
@@ -311,4 +318,4 @@ function Page(): React.ReactElement {
   );
 }
 
-export default Page; 
+export default Page;

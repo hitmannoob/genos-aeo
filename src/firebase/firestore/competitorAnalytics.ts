@@ -1,14 +1,16 @@
 import { CompetitorAnalyticsData, calculateCumulativeCompetitorAnalytics } from '@/utils/competitor-analytics';
 import { Competitor } from '@/lib/competitor-matching';
-import { loadBrandWithQueryResults } from './brandWithResults';
+import { loadBrandQueryCorpus } from './brandQueryCorpus';
 
 /**
- * Live-compute competitor analytics for a brand from its queryProcessingResults.
+ * Live-compute competitor analytics for a brand from the same full query corpus
+ * used by lifetime brand analytics.
  *
  * Counterpart to calculateLifetimeBrandAnalytics: both read the same corpus
- * (brand.queryProcessingResults, with Cloud Storage fallback) and use the same
- * matcher (matchCompetitorsInText via analyzeCompetitorMentionsInQuery), so
- * brand vs. competitor numbers on the dashboard are always comparable.
+ * (current brand results plus legacy historical rows, with Cloud Storage
+ * fallback) and use the same matcher (matchCompetitorsInText via
+ * analyzeCompetitorMentionsInQuery), so brand vs. competitor numbers on the
+ * dashboard are always comparable.
  *
  * Returns:
  *   - current:  analytics over ALL query results
@@ -28,25 +30,17 @@ export async function calculateLiveCompetitorAnalytics(
   error?: any;
 }> {
   try {
-    let brand: any;
-    let dataTruncated = false;
-    if (preloaded) {
-      brand = preloaded.brand;
-      dataTruncated = preloaded.dataTruncated;
-    } else {
-      try {
-        const loaded = await loadBrandWithQueryResults(brandId);
-        brand = loaded.brand;
-        dataTruncated = loaded.dataTruncated;
-      } catch (e: any) {
-        return { error: e?.message || 'Brand not found' };
-      }
+    const { result: corpus, error: corpusError } = await loadBrandQueryCorpus(
+      brandId,
+      userId,
+      preloaded
+    );
+
+    if (corpusError || !corpus) {
+      return { error: corpusError || new Error('Failed to load brand query corpus') };
     }
 
-    // Ownership guard: brand.userId must match the authenticated caller.
-    if (brand.userId !== userId) {
-      throw new Error('Unauthorized: brand does not belong to user');
-    }
+    const { brand, dataTruncated, allResults } = corpus;
 
     const competitors: Competitor[] = ((brand as any).competitors || []).map((name: string) => ({
       name,
@@ -54,7 +48,6 @@ export async function calculateLiveCompetitorAnalytics(
       aliases: undefined,
     }));
 
-    const allResults = brand.queryProcessingResults || [];
     const timestamp = new Date().toISOString();
 
     const current = calculateCumulativeCompetitorAnalytics(

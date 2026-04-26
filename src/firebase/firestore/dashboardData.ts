@@ -33,6 +33,8 @@ export interface RecommendationData {
   imageUrl: string;
   readTime: string;
   rating: number;
+  details?: string[];
+  evidence?: string[];
 }
 
 export interface TopDomainData {
@@ -356,4 +358,4 @@ export async function getBrandPromptsData(userId: string, brandId?: string): Pro
   }
 
   return { result, error };
-} 
+}

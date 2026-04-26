@@ -28,6 +28,7 @@ if (!admin.apps.length) {
           privateKey,
         }),
         databaseURL: process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL,
+        storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
       });
       console.log('✅ Firebase Admin SDK initialized with service account');
       console.log('📋 Project ID:', projectId);
@@ -42,6 +43,7 @@ if (!admin.apps.length) {
 export const firestore = admin.firestore();
 export const auth = admin.auth();
 export const adminApp = admin.app();
+export const storage = admin.storage();
 
 // Re-export FieldValue so server code can use
 // `FieldValue.serverTimestamp()` / `FieldValue.increment()` without a

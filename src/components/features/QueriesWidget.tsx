@@ -3,6 +3,8 @@ import React from 'react';
 import { useBrandContext } from '@/context/BrandContext';
 import { Activity, Eye, ArrowRight, Clock } from 'lucide-react';
 import { UserBrand } from '@/firebase/firestore/getUserBrands';
+import { useBrandQueries } from '@/hooks/useBrandQueries';
+import { buildTrackedQueryIdentity } from '@/firebase/firestore/queryResultUtils';
 
 interface QueriesWidgetProps {
   brandOverride?: UserBrand;
@@ -19,6 +21,7 @@ export default function QueriesWidget({
   
   // Use brand override if provided, otherwise use selected brand
   const brand = brandOverride || selectedBrand;
+  const { queries: fetchedQueryResults } = useBrandQueries({ brandId: brand?.id });
   
   if (!brand) {
     return (
@@ -32,16 +35,23 @@ export default function QueriesWidget({
   }
 
   const queries = brand.queries || [];
-  const queryResults = brand.queryProcessingResults || [];
+  const queryResults = fetchedQueryResults.length > 0
+    ? fetchedQueryResults
+    : (brand.queryProcessingResults || []);
+  const processedQueryIds = new Set(queryResults.map((result) => buildTrackedQueryIdentity(result)));
   
   // Calculate processing stats
-  const processedCount = queryResults.length;
+  const processedCount = queries.filter((query) =>
+    processedQueryIds.has(buildTrackedQueryIdentity(query))
+  ).length;
   const totalQueries = queries.length;
   const processingRate = totalQueries > 0 ? Math.round((processedCount / totalQueries) * 100) : 0;
   
   // Get last processed date
   const lastProcessed = queryResults.length > 0 
-    ? new Date(queryResults.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0].date)
+    ? new Date(
+        [...queryResults].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0].date
+      )
     : null;
 
   return (
@@ -104,7 +114,7 @@ export default function QueriesWidget({
             <p className="text-xs font-medium text-foreground mb-1">Recent</p>
             <div className="space-y-1">
               {queries.slice(0, 2).map((query, index) => {
-                const hasResult = queryResults.some(r => r.query === query.query);
+                const hasResult = processedQueryIds.has(buildTrackedQueryIdentity(query));
                 return (
                   <div key={index} className="flex items-center justify-between">
                     <span className="text-xs text-muted-foreground truncate flex-1 mr-2">
@@ -127,4 +137,4 @@ export default function QueriesWidget({
       </div>
     </div>
   );
-} 
+}

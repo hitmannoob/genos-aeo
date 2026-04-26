@@ -9,21 +9,24 @@ import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
 // If a bug shows up in per-query or lifetime saves, fix it in the helper and
 // both manual and scheduled paths pick it up.
 import {
-  persistOneQueryResult,
   refreshLifetimeSnapshot,
 } from '@/firebase/firestore/persistQueryResult';
+import {
+  buildTrackedQueryIdentity,
+  type QueryProcessingResult,
+} from '@/firebase/firestore/queryResultUtils';
 
 interface ProcessQueriesButtonProps {
   brandId?: string;
   onComplete?: (result: any) => void;
-  onProgress?: (results: any[]) => void; // New callback for real-time updates
-  onStart?: (batchQueries: string[]) => void; // Fires at batch start with the list of queries that are about to be processed
-  onQueryStart?: (query: string) => void; // New callback for when individual query processing starts
+  onProgress?: (results: QueryProcessingResult[]) => void; // New callback for real-time updates
+  onStart?: (batchQueryIds: string[]) => void; // Fires at batch start with tracked-query identities that are about to be processed
+  onQueryStart?: (queryId: string) => void; // New callback for when individual query processing starts
   className?: string;
   variant?: 'primary' | 'secondary' | 'ghost';
   size?: 'sm' | 'md' | 'lg';
   autoStart?: boolean; // NEW PROP
-  queriesFilter?: string[]; // When set, only process queries whose text matches one of these
+  queriesFilter?: string[]; // When set, only process queries whose tracked-query identity matches one of these
   iconOnly?: boolean; // Render as a compact circular icon button (for per-row actions)
 }
 
@@ -46,7 +49,7 @@ export default function ProcessQueriesButton({
   const [processing, setProcessing] = useState(false);
   const [status, setStatus] = useState<'idle' | 'processing' | 'success' | 'error' | 'cancelled'>('idle');
   const [message, setMessage] = useState('');
-  const [processedResults, setProcessedResults] = useState<any[]>([]);
+  const [processedResults, setProcessedResults] = useState<QueryProcessingResult[]>([]);
   
   // Add ref to track cancellation
   const cancelledRef = useRef(false);
@@ -61,6 +64,17 @@ export default function ProcessQueriesButton({
       setAutoStarted(false);
     }
   }, [autoStart, autoStarted, processing]);
+
+  const getScopedQueries = (targetBrand: any) => {
+    const allBrandQueries = targetBrand?.queries || [];
+    if (!queriesFilter || queriesFilter.length === 0) {
+      return allBrandQueries;
+    }
+
+    return allBrandQueries.filter((query: any) =>
+      queriesFilter.includes(buildTrackedQueryIdentity(query))
+    );
+  };
 
   const handleProcessQueries = async () => {
     if (!user?.uid) {
@@ -80,10 +94,7 @@ export default function ProcessQueriesButton({
     }
 
     const brandName = targetBrand.companyName;
-    const allBrandQueries = targetBrand.queries || [];
-    const queries = queriesFilter
-      ? allBrandQueries.filter(q => queriesFilter.includes(q.query))
-      : allBrandQueries;
+    const queries = getScopedQueries(targetBrand);
 
     if (queries.length === 0) {
       setStatus('error');
@@ -119,7 +130,7 @@ export default function ProcessQueriesButton({
     // Notify parent that processing has started — pass the batch so the UI
     // can scope its "Processing" state to queries actually in this run.
     if (onStart) {
-      onStart(queries.map(q => q.query));
+      onStart(queries.map((query: any) => buildTrackedQueryIdentity(query)));
     }
 
     try {
@@ -137,10 +148,12 @@ export default function ProcessQueriesButton({
       // Process queries one by one and save incrementally. `allResults`
       // is reassigned to the updated accumulator returned by the shared
       // persistence helper, so `let`.
-      let allResults: any[] = [];
-      let processedCount = 0;
+      let allResults: QueryProcessingResult[] = [];
+      let successfulCount = 0;
+      let failedCount = 0;
 
-      for (const query of queries) {
+      for (let queryIndex = 0; queryIndex < queries.length; queryIndex++) {
+        const query = queries[queryIndex];
         // Check if cancelled
         if (cancelledRef.current) {
           break;
@@ -149,13 +162,15 @@ export default function ProcessQueriesButton({
         try {
           // Notify parent that this specific query is starting
           if (onQueryStart) {
-            onQueryStart(query.query);
+            onQueryStart(buildTrackedQueryIdentity(query));
           }
 
-          setMessage(`Processing query ${processedCount + 1} of ${queries.length} for ${brandName}... (10 credits per query)`);
+          setMessage(`Processing query ${queryIndex + 1} of ${queries.length} for ${brandName}... (10 credits per query)`);
           
-          // Process individual query with authentication
-          
+          // Process individual query with authentication and server-owned
+          // persistence. The API only returns 200 once the result has been
+          // durably written (or it refunds credits and errors).
+
           let response;
           try {
             response = await fetch(`${window.location.origin}/api/user-query`, {
@@ -172,6 +187,20 @@ export default function ProcessQueriesButton({
                 // request — only the cron path (server-side secret) skips
                 // billing. Auto-started UI batches now cost credits like
                 // manual ones.
+                persistResult: true,
+                brandId: targetBrandId,
+                brandName: targetBrand.companyName,
+                brandDomain: targetBrand.domain,
+                keyword: query.keyword,
+                category: query.category,
+                processingSessionId,
+                processingSessionTimestamp,
+                clientRequestId: [
+                  processingSessionId,
+                  query.category,
+                  query.keyword || '',
+                  query.query,
+                ].join('::'),
               }),
             });
           } catch (fetchError) {
@@ -222,28 +251,21 @@ export default function ProcessQueriesButton({
           // refreshes can race against each other and against the batch's
           // own deductions, briefly flashing stale credits in the sidebar.
 
-          // Single persistence call: builds the QueryProcessingResult, writes
-          // to v8detailed_query_results, updates the brand doc's array, and
-          // saves per-session analytics. Returns the updated accumulator.
-          setMessage(`Saving result ${processedCount + 1} of ${queries.length} for ${brandName}...`);
-          const { updatedAllResults } = await persistOneQueryResult({
-            brandId: targetBrandId!,
-            userId: targetBrand.userId,
-            companyName: targetBrand.companyName,
-            brandDomain: targetBrand.domain,
-            query: {
-              query: query.query,
-              keyword: query.keyword,
-              category: query.category,
-            },
-            processingSessionId,
-            processingSessionTimestamp,
-            userQueryResponse: queryData,
-            allPriorResults: allResults,
-          });
+          const persistedQueryResult = queryData.persistedQueryResult as QueryProcessingResult | undefined;
+          if (!persistedQueryResult) {
+            throw new Error('Server did not return the persisted query result');
+          }
 
-          allResults = updatedAllResults;
-          processedCount++;
+          allResults = [
+            ...allResults.filter((existing) => !(
+              existing.processingSessionId === persistedQueryResult.processingSessionId &&
+              existing.query === persistedQueryResult.query &&
+              existing.keyword === persistedQueryResult.keyword &&
+              existing.category === persistedQueryResult.category
+            )),
+            persistedQueryResult,
+          ];
+          successfulCount++;
 
           // Update local state immediately to show progress
           setProcessedResults([...allResults]);
@@ -272,21 +294,30 @@ export default function ProcessQueriesButton({
             return;
           }
           
-          processedCount++;
+          failedCount++;
         }
       }
+
+      const attemptedCount = successfulCount + failedCount;
 
       // Check if cancelled
       if (cancelledRef.current) {
         setStatus('cancelled');
-        setMessage(`Processing cancelled. Processed ${processedCount} of ${queries.length} queries.`);
+        setMessage(`Processing cancelled. Attempted ${attemptedCount} of ${queries.length} queries.`);
         showWarning(
           '⏸️ Processing Cancelled',
-          `Processed ${processedCount} of ${queries.length} queries before cancellation. You can resume processing the remaining queries anytime.`
+          `Attempted ${attemptedCount} of ${queries.length} queries before cancellation. ${successfulCount} succeeded and ${failedCount} failed.`
+        );
+      } else if (failedCount > 0) {
+        setStatus('error');
+        setMessage(`Processed ${successfulCount} of ${queries.length} queries for ${brandName}. ${failedCount} failed.`);
+        showWarning(
+          'Processing completed with errors',
+          `${successfulCount} queries succeeded and ${failedCount} failed for ${brandName}. Credits were only used for successful queries.`
         );
       } else {
         setStatus('success');
-        setMessage(`Successfully processed ${processedCount} queries for ${brandName}! (${processedCount * 10} credits used)`);
+        setMessage(`Successfully processed ${successfulCount} queries for ${brandName}! (${successfulCount * 10} credits used)`);
         // Calculate next processing date (7 days from now)
         const nextProcessingDate = new Date();
         nextProcessingDate.setDate(nextProcessingDate.getDate() + 7);
@@ -299,7 +330,7 @@ export default function ProcessQueriesButton({
         
         showSuccess(
           '🎉 All Queries Processed!',
-          `Successfully processed ${processedCount} queries for ${brandName}. Used ${processedCount * 10} credits.`
+          `Successfully processed ${successfulCount} queries for ${brandName}. Used ${successfulCount * 10} credits.`
         );
         
         // Show scheduling information after a brief delay
@@ -317,7 +348,7 @@ export default function ProcessQueriesButton({
       // Refresh lifetime snapshot after completing all queries so the
       // Overview page's Lifetime tab reflects reality. Runs even when the
       // user cancelled mid-batch, as long as at least one query persisted.
-      if (processedCount > 0) {
+      if (successfulCount > 0) {
         setMessage(`Updating lifetime analytics for ${brandName}...`);
         const { success: lifetimeOk, error: lifetimeError } =
           await refreshLifetimeSnapshot(targetBrandId!, user!.uid);
@@ -330,14 +361,15 @@ export default function ProcessQueriesButton({
       // Call the onComplete callback if provided
       if (onComplete) {
         onComplete({
-          success: !cancelledRef.current,
+          success: !cancelledRef.current && failedCount === 0,
           cancelled: cancelledRef.current,
           queryResults: allResults,
           summary: {
             totalQueries: queries.length,
-            processedQueries: processedCount,
-            totalErrors: queries.length - processedCount,
-            creditsUsed: processedCount * 10
+            attemptedQueries: attemptedCount,
+            processedQueries: successfulCount,
+            totalErrors: failedCount,
+            creditsUsed: successfulCount * 10
           }
         });
       }
@@ -401,7 +433,15 @@ export default function ProcessQueriesButton({
   const getProcessedQueriesCount = () => {
     const targetBrandId = brandId || selectedBrand?.id;
     const targetBrand = brands.find(b => b.id === targetBrandId);
-    return targetBrand?.queryProcessingResults?.length || 0;
+    if (!targetBrand) return 0;
+
+    const processedQueryIds = new Set(
+      (targetBrand.queryProcessingResults || []).map((result) => buildTrackedQueryIdentity(result))
+    );
+
+    return getScopedQueries(targetBrand).filter((query: any) =>
+      processedQueryIds.has(buildTrackedQueryIdentity(query))
+    ).length;
   };
 
   const hasProcessedQueries = getProcessedQueriesCount() > 0;
@@ -410,10 +450,7 @@ export default function ProcessQueriesButton({
   const getRequiredCredits = () => {
     const targetBrandId = brandId || selectedBrand?.id;
     const targetBrand = brands.find(b => b.id === targetBrandId);
-    const allQueries = targetBrand?.queries || [];
-    const scoped = queriesFilter
-      ? allQueries.filter(q => queriesFilter.includes(q.query))
-      : allQueries;
+    const scoped = getScopedQueries(targetBrand);
     return scoped.length * 10;
   };
 
@@ -603,4 +640,4 @@ export default function ProcessQueriesButton({
       )}
     </div>
   );
-} 
+}

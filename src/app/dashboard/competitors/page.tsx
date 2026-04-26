@@ -3,7 +3,7 @@ import React from 'react';
 import Link from 'next/link';
 import { useBrandContext } from '@/context/BrandContext';
 import { useCompetitors } from '@/hooks/useCompetitors';
-import { useBrandAnalyticsCombined } from '@/hooks/useBrandAnalytics';
+import { useLifetimeBrandAnalytics } from '@/hooks/useBrandAnalytics';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import Card from '@/components/shared/Card';
 import WebLogo from '@/components/shared/WebLogo';
@@ -28,15 +28,13 @@ export default function CompetitorsPage(): React.ReactElement {
   } = useCompetitors();
 
   // Brand analytics for SOV denominator
-  const {
-    latestAnalytics,
-    lifetimeAnalytics,
-    loading: brandAnalyticsLoading,
-    refetchLatest,
-    refetchLifetime
-  } = useBrandAnalyticsCombined(selectedBrand?.id);
-
-  const brandAnalytics = latestAnalytics || lifetimeAnalytics;
+  const lifetimeAnalyticsQuery = useLifetimeBrandAnalytics(selectedBrand?.id);
+  const lifetimeAnalytics = lifetimeAnalyticsQuery.data || null;
+  const brandAnalyticsLoading = lifetimeAnalyticsQuery.isLoading;
+  const brandAnalyticsError = lifetimeAnalyticsQuery.error instanceof Error
+    ? lifetimeAnalyticsQuery.error.message
+    : null;
+  const brandAnalytics = lifetimeAnalytics;
 
   // SOV metrics — only meaningful once brand analytics has loaded, otherwise
   // realBrandMentions=0 flashes "100% you / 0% competitors" for a beat.
@@ -66,7 +64,7 @@ export default function CompetitorsPage(): React.ReactElement {
 
   // Refresh pulls both pipelines so competitor numbers + brand mentions stay in sync.
   const handleRefresh = async () => {
-    await Promise.all([refetchCompetitors(), refetchLatest(), refetchLifetime()]);
+    await Promise.all([refetchCompetitors(), lifetimeAnalyticsQuery.refetch()]);
   };
 
   const isRefreshing = competitorsLoading || brandAnalyticsLoading;
@@ -170,11 +168,11 @@ export default function CompetitorsPage(): React.ReactElement {
         </div>
 
         {/* Error State */}
-        {error && (
+        {(error || brandAnalyticsError) && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-4">
             <div className="flex items-center">
               <AlertCircle className="h-5 w-5 text-red-600 mr-2" />
-              <p className="text-red-800">{error}</p>
+              <p className="text-red-800">{error || brandAnalyticsError}</p>
             </div>
           </div>
         )}
@@ -410,4 +408,4 @@ export default function CompetitorsPage(): React.ReactElement {
       </div>
     </DashboardLayout>
   );
-} 
+}

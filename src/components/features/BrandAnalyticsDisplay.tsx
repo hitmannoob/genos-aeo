@@ -1,5 +1,5 @@
 'use client'
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { BrandAnalyticsData, LifetimeBrandAnalytics } from '@/firebase/firestore/brandAnalytics';
 import { Award, Eye, MessageSquare, Calendar, Clock, BarChart3, Quote, Globe } from 'lucide-react';
 
@@ -41,11 +41,6 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
       minute: '2-digit'
     });
   }, []);
-
-
-
-
-
   const getProviderIcon = useCallback((provider: string) => {
     switch (provider) {
       case 'chatgpt':
@@ -74,18 +69,6 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
     }
   }, []);
 
-  // Memoize provider stats processing to avoid recalculation on every render
-  const processedProviderStats = useMemo(() => {
-    const stats = latestAnalytics?.providerStats || lifetimeAnalytics?.providerStats;
-    if (!stats) return {};
-    
-    return Object.entries(stats).map(([provider, providerStats]) => ({
-      provider,
-      ...providerStats,
-      icon: getProviderIcon(provider)
-    }));
-  }, [latestAnalytics?.providerStats, lifetimeAnalytics?.providerStats, getProviderIcon]);
-
   const renderAnalyticsSection = useCallback((
     analytics: BrandAnalyticsData | LifetimeBrandAnalytics,
     title: string,
@@ -93,6 +76,14 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
     isLifetime: boolean,
     citationData?: any
   ) => {
+    const processedProviderStats = Object.entries(analytics.providerStats || {}).map(
+      ([provider, providerStats]) => ({
+        provider,
+        ...providerStats,
+        icon: getProviderIcon(provider),
+      })
+    );
+
     return (
       <div className="space-y-6">
         {/* Header with title and indicator */}
@@ -244,7 +235,7 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
         )}
     </div>
   );
-  }, [formatDate, processedProviderStats, showDetails]);
+  }, [formatDate, getProviderIcon, showDetails]);
 
   // If no data available
   if (!latestAnalytics && !lifetimeAnalytics) {

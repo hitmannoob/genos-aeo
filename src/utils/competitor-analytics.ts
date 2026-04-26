@@ -1,4 +1,8 @@
 import { Competitor, MatchResult, matchCompetitorsInText } from '@/lib/competitor-matching';
+import {
+  getCanonicalGoogleResult,
+  getGoogleResultText,
+} from '@/firebase/firestore/queryResultUtils';
 
 export interface CompetitorAnalyticsData {
   id?: string;
@@ -207,9 +211,12 @@ export function calculateCumulativeCompetitorAnalytics(
   
   // Process each query result
   queryResults.forEach(queryResult => {
+    const canonicalGoogleResult = getCanonicalGoogleResult(queryResult.results);
+    const googleOverview = getGoogleResultText(canonicalGoogleResult);
+
     const queryAnalysis = analyzeCompetitorMentionsInQuery(competitors, {
       chatgpt: queryResult.results?.chatgpt ? { response: queryResult.results.chatgpt.response || '' } : undefined,
-      googleAI: queryResult.results?.googleAI ? { aiOverview: queryResult.results.googleAI.aiOverview || '' } : undefined,
+      googleAI: canonicalGoogleResult ? { aiOverview: googleOverview } : undefined,
       perplexity: queryResult.results?.perplexity ? { response: queryResult.results.perplexity.response || '' } : undefined
     });
     
@@ -331,4 +338,4 @@ export function calculateCumulativeCompetitorAnalytics(
     lastUpdated: new Date(),
     createdAt: new Date()
   };
-} 
+}

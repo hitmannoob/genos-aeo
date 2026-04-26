@@ -4,7 +4,7 @@ import { Users, BarChart3, Award, AlertTriangle, Eye, Target, Shield, ArrowUp, A
 import Card from '@/components/shared/Card';
 import { useCompetitors } from '@/hooks/useCompetitors';
 import { useBrandContext } from '@/context/BrandContext';
-import { useBrandAnalyticsCombined } from '@/hooks/useBrandAnalytics';
+import { useLifetimeBrandAnalytics } from '@/hooks/useBrandAnalytics';
 
 interface CompetitorMentionsCardProps {
   className?: string;
@@ -125,17 +125,16 @@ function Legend({ data }: LegendProps) {
 export default function CompetitorMentionsCard({ className = '' }: CompetitorMentionsCardProps): React.ReactElement {
   const { competitors, loading: competitorsLoading, error: competitorsError } = useCompetitors();
   const { selectedBrand } = useBrandContext();
-  
-  // Get real brand analytics data for accurate SOV calculation
-  const { 
-    latestAnalytics, 
-    lifetimeAnalytics, 
-    loading: analyticsLoading, 
-    error: analyticsError 
-  } = useBrandAnalyticsCombined(selectedBrand?.id);
+  const lifetimeAnalyticsQuery = useLifetimeBrandAnalytics(selectedBrand?.id);
+  const lifetimeAnalytics = lifetimeAnalyticsQuery.data || null;
+  const analyticsLoading = lifetimeAnalyticsQuery.isLoading;
+  const analyticsError = lifetimeAnalyticsQuery.error instanceof Error
+    ? lifetimeAnalyticsQuery.error.message
+    : null;
 
-  // Use the most recent analytics data available
-  const brandAnalytics = latestAnalytics || lifetimeAnalytics;
+  // Competitor analytics are computed from the lifetime corpus, so the SOV
+  // denominator must use lifetime brand mentions from that same corpus.
+  const brandAnalytics = lifetimeAnalytics;
   
   // Calculate competitor metrics
   const totalCompetitorMentions = competitors.reduce((sum, comp) => sum + comp.mentions, 0);
@@ -491,4 +490,4 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
       </div>
     </Card>
   );
-} 
+}

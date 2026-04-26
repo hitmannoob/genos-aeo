@@ -2,12 +2,28 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ProviderManager } from '@/lib/api-providers/provider-manager';
 import { auth, firestore, FieldValue } from '@/firebase/firebase-admin';
 import { getUserProfileServer } from '@/firebase/firestore/userProfileServer';
+import { persistOneQueryResultServer } from '@/firebase/firestore/persistQueryResultServer';
+import {
+  acquireQueryExecution,
+  completeQueryExecution,
+  failQueryExecution,
+} from '@/firebase/firestore/queryExecutionLedger';
+import type { QueryProcessingResult } from '@/firebase/firestore/queryResultUtils';
 
 // Type definitions
 interface UserQueryRequest {
   query: string;
   context?: string;
   userId?: string;
+  persistResult?: boolean;
+  brandId?: string;
+  brandName?: string;
+  brandDomain?: string;
+  keyword?: string;
+  category?: string;
+  processingSessionId?: string;
+  processingSessionTimestamp?: string;
+  clientRequestId?: string;
 }
 
 interface ProviderResult {
@@ -54,6 +70,25 @@ interface ModalQueryResult {
     before: number;
     after: number;
     deducted: number;
+  };
+  persistedQueryResult?: QueryProcessingResult;
+  persistence?: {
+    persisted: boolean;
+    refundApplied: boolean;
+  };
+}
+
+function buildReplayModalResult(modalResult: ModalQueryResult): ModalQueryResult {
+  return {
+    ...modalResult,
+    results: modalResult.results.map((result) => ({
+      providerId: result.providerId,
+      status: result.status,
+      error: result.error,
+      responseTime: result.responseTime,
+      cost: result.cost,
+      timestamp: result.timestamp,
+    })),
   };
 }
 
@@ -168,14 +203,58 @@ async function authenticateUser(
 // Main POST handler
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
+  let parsedBody: UserQueryRequest | null = null;
+  let executionIdentityForCatch:
+    | {
+        userId: string;
+        brandId?: string;
+        clientRequestId: string;
+      }
+    | null = null;
   
   try {
     const body: UserQueryRequest = await request.json();
-    const { query, context } = body;
+    parsedBody = body;
+    const {
+      query,
+      context,
+      persistResult = false,
+      brandId,
+      brandName,
+      brandDomain,
+      keyword,
+      category,
+      processingSessionId,
+      processingSessionTimestamp,
+      clientRequestId,
+    } = body;
 
     if (!query || typeof query !== 'string') {
       return NextResponse.json(
         { error: 'Query is required and must be a string' },
+        { status: 400 }
+      );
+    }
+
+    if (
+      persistResult &&
+      (!brandId || !processingSessionId || !processingSessionTimestamp)
+    ) {
+      return NextResponse.json(
+        {
+          error: 'brandId, processingSessionId, and processingSessionTimestamp are required when persistResult is true',
+          code: 'PERSISTENCE_METADATA_REQUIRED',
+        },
+        { status: 400 }
+      );
+    }
+
+    if (persistResult && !clientRequestId) {
+      return NextResponse.json(
+        {
+          error: 'clientRequestId is required when persistResult is true',
+          code: 'CLIENT_REQUEST_ID_REQUIRED',
+        },
         { status: 400 }
       );
     }
@@ -195,6 +274,34 @@ export async function POST(request: NextRequest) {
 
     const { uid, profile, isCron } = authResult;
     const requiredCredits = 10; // Cost for processing a query
+    const executionIdentity = clientRequestId
+      ? {
+          userId: uid,
+          brandId,
+          clientRequestId,
+        }
+      : null;
+    executionIdentityForCatch = executionIdentity;
+    const markExecutionFailed = async (
+      code: string,
+      message: string,
+      httpStatus: number,
+      refundApplied?: boolean
+    ) => {
+      if (!executionIdentity) return;
+
+      try {
+        await failQueryExecution({
+          ...executionIdentity,
+          code,
+          message,
+          httpStatus,
+          refundApplied,
+        });
+      } catch (ledgerError) {
+        console.error('❌ Failed to update query execution ledger:', ledgerError);
+      }
+    };
 
     // Only the cron path bypasses billing. Authenticated user requests always
     // pay — we no longer trust a client-supplied flag (the old `isAutoStart`)
@@ -203,6 +310,10 @@ export async function POST(request: NextRequest) {
 
     console.log('📝 Processing user query with authentication:', {
       query: query.substring(0, 100) + '...',
+      persistResult,
+      brandId,
+      processingSessionId,
+      clientRequestId,
       userId: uid,
       userCredits: profile.credits,
       requiredCredits,
@@ -211,12 +322,65 @@ export async function POST(request: NextRequest) {
       timestamp: new Date().toISOString()
     });
 
+    if (executionIdentity) {
+      const acquireResult = await acquireQueryExecution<ModalQueryResult>({
+        ...executionIdentity,
+        requestFingerprintSource: {
+          query,
+          context,
+          persistResult,
+          brandId,
+          keyword,
+          category,
+          processingSessionId,
+          processingSessionTimestamp,
+        },
+      });
+
+      if (acquireResult.status === 'replay') {
+        return NextResponse.json(acquireResult.response);
+      }
+
+      if (acquireResult.status === 'in_progress') {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'This request is already being processed.',
+            code: 'REQUEST_IN_PROGRESS',
+            retryAfterSeconds: acquireResult.retryAfterSeconds,
+          },
+          {
+            status: 409,
+            headers: {
+              'Retry-After': String(acquireResult.retryAfterSeconds),
+            },
+          }
+        );
+      }
+
+      if (acquireResult.status === 'conflict') {
+        return NextResponse.json(
+          {
+            success: false,
+            error: acquireResult.message,
+            code: 'IDEMPOTENCY_KEY_REUSED',
+          },
+          { status: 409 }
+        );
+      }
+    }
+
     // Advisory upfront credit check: fail fast if the user is obviously
     // short on credits. This is NOT a reservation — the transaction below
     // (after provider execution) is the real atomicity guard against
     // concurrent requests draining credits simultaneously.
     if (!skipBilling) {
       if (profile.credits < requiredCredits) {
+        await markExecutionFailed(
+          'INSUFFICIENT_CREDITS',
+          `Insufficient credits. Required: ${requiredCredits}, Available: ${profile.credits}`,
+          402
+        );
         return NextResponse.json(
           {
             error: `Insufficient credits. Required: ${requiredCredits}, Available: ${profile.credits}`,
@@ -244,6 +408,11 @@ export async function POST(request: NextRequest) {
 
     if (selectedProviders.length === 0) {
       console.error('❌ No user-query providers configured. Preferred:', preferredProviders, 'Available:', Array.from(availableProviders));
+      await markExecutionFailed(
+        'NO_PROVIDERS_CONFIGURED',
+        'No AI providers are configured.',
+        503
+      );
       return NextResponse.json(
         {
           success: false,
@@ -258,7 +427,7 @@ export async function POST(request: NextRequest) {
 
     // Create API request for the available providers
     const apiRequest = {
-      id: `user-query-${Date.now()}`,
+      id: clientRequestId || `user-query-${Date.now()}`,
       prompt: query,
       providers: selectedProviders,
       userId: uid,
@@ -277,7 +446,7 @@ export async function POST(request: NextRequest) {
     // billed if every provider fails.
     const jobResult = await providerManager.executeRequest(apiRequest);
 
-    const totalTime = Date.now() - startTime;
+    let totalTime = Date.now() - startTime;
 
     // Determine success: at least one provider returned success.
     const anySuccess = jobResult.results.some(r => r.status === 'success');
@@ -289,6 +458,11 @@ export async function POST(request: NextRequest) {
         providerCount: jobResult.results.length,
         totalTime
       });
+      await markExecutionFailed(
+        'ALL_PROVIDERS_FAILED',
+        'All AI providers failed. No credits were deducted.',
+        502
+      );
       return NextResponse.json(
         {
           success: false,
@@ -338,6 +512,11 @@ export async function POST(request: NextRequest) {
           // The AI work is already done, but we can't charge them — surface
           // 402 so the client knows the balance is empty. We do NOT retry.
           console.warn('⚠️ Credit deduction race: credits drained during provider execution', { userId: uid });
+          await markExecutionFailed(
+            'INSUFFICIENT_CREDITS',
+            `Insufficient credits. Required: ${requiredCredits}.`,
+            402
+          );
           return NextResponse.json(
             {
               error: `Insufficient credits. Required: ${requiredCredits}.`,
@@ -348,6 +527,11 @@ export async function POST(request: NextRequest) {
           );
         }
         console.error('❌ Credit deduction transaction failed:', txError);
+        await markExecutionFailed(
+          'CREDIT_DEDUCTION_FAILED',
+          'Failed to deduct credits. Please try again.',
+          500
+        );
         return NextResponse.json(
           {
             error: 'Failed to deduct credits. Please try again.',
@@ -411,6 +595,82 @@ export async function POST(request: NextRequest) {
 
     const deductedAmount = skipBilling ? 0 : requiredCredits;
 
+    let persistedQueryResult: QueryProcessingResult | undefined;
+    if (persistResult) {
+      try {
+        const persistenceResponse = {
+          success: true,
+          results: modalResults,
+          userCredits: {
+            before: creditsBefore,
+            after: creditsBefore - deductedAmount,
+            deducted: deductedAmount,
+          },
+          totalCost: jobResult.totalCost,
+        };
+
+        const persisted = await persistOneQueryResultServer({
+          brandId: brandId!,
+          userId: uid,
+          companyName: brandName || 'Unknown',
+          brandDomain: brandDomain || '',
+          query: {
+            query,
+            keyword,
+            category,
+          },
+          processingSessionId: processingSessionId!,
+          processingSessionTimestamp: processingSessionTimestamp!,
+          userQueryResponse: persistenceResponse,
+        });
+
+        persistedQueryResult = persisted.queryResult;
+      } catch (persistError) {
+        let refundApplied = false;
+        let refundErrorMessage: string | undefined;
+
+        if (!skipBilling) {
+          try {
+            await firestore.collection('users').doc(uid).update({
+              credits: FieldValue.increment(requiredCredits),
+            });
+            refundApplied = true;
+          } catch (refundError) {
+            refundErrorMessage =
+              refundError instanceof Error ? refundError.message : String(refundError);
+            console.error('❌ Failed to refund credits after persistence error:', refundError);
+          }
+        }
+
+        await markExecutionFailed(
+          refundApplied
+            ? 'PERSISTENCE_FAILED_REFUNDED'
+            : (skipBilling ? 'PERSISTENCE_FAILED' : 'PERSISTENCE_FAILED_REFUND_FAILED'),
+          persistError instanceof Error ? persistError.message : 'Unknown persistence error',
+          500,
+          refundApplied
+        );
+
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Failed to persist query result',
+            code: refundApplied
+              ? 'PERSISTENCE_FAILED_REFUNDED'
+              : (skipBilling ? 'PERSISTENCE_FAILED' : 'PERSISTENCE_FAILED_REFUND_FAILED'),
+            message: persistError instanceof Error ? persistError.message : 'Unknown persistence error',
+            refundApplied,
+            refundError: refundErrorMessage,
+            totalTime: Date.now() - startTime,
+            timestamp: new Date().toISOString(),
+          },
+          { status: 500 }
+        );
+      }
+    }
+
+    totalTime = Date.now() - startTime;
+
     const modalResult: ModalQueryResult = {
       success: true,
       query,
@@ -425,8 +685,26 @@ export async function POST(request: NextRequest) {
         before: creditsBefore,
         after: creditsBefore - deductedAmount,
         deducted: deductedAmount
-      }
+      },
+      ...(persistedQueryResult && { persistedQueryResult }),
+      ...(persistResult && {
+        persistence: {
+          persisted: true,
+          refundApplied: false,
+        },
+      }),
     };
+
+    if (executionIdentity) {
+      try {
+        await completeQueryExecution({
+          ...executionIdentity,
+          replayResponse: buildReplayModalResult(modalResult),
+        });
+      } catch (ledgerError) {
+        console.error('❌ Failed to mark query execution completed:', ledgerError);
+      }
+    }
 
     console.log('✅ User query processed successfully:', {
       query: query.substring(0, 50) + '...',
@@ -442,7 +720,36 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     const totalTime = Date.now() - startTime;
-    
+
+    if (executionIdentityForCatch) {
+      try {
+        await failQueryExecution({
+          ...executionIdentityForCatch,
+          code: 'UNHANDLED_USER_QUERY_ERROR',
+          message: error instanceof Error ? error.message : 'Unknown error',
+          httpStatus: 500,
+        });
+      } catch (ledgerError) {
+        console.error('❌ Failed to mark unhandled user-query error in ledger:', ledgerError);
+      }
+    } else if (parsedBody?.clientRequestId) {
+      const authResult = await authenticateUser(request).catch(() => null);
+      if (authResult?.uid) {
+        try {
+          await failQueryExecution({
+            userId: authResult.uid,
+            brandId: parsedBody.brandId,
+            clientRequestId: parsedBody.clientRequestId,
+            code: 'UNHANDLED_USER_QUERY_ERROR',
+            message: error instanceof Error ? error.message : 'Unknown error',
+            httpStatus: 500,
+          });
+        } catch (ledgerError) {
+          console.error('❌ Failed to mark unhandled user-query error in ledger:', ledgerError);
+        }
+      }
+    }
+
     console.error('❌ User query error:', {
       error: error instanceof Error ? error.message : 'Unknown error',
       totalTime
@@ -469,7 +776,7 @@ export async function GET(request: NextRequest) {
     },
     creditCost: {
       perQuery: 10,
-      description: 'Credits are deducted before processing begins'
+      description: 'Credits are deducted only after at least one provider succeeds'
     },
     providers: [
       {
@@ -500,7 +807,9 @@ export async function GET(request: NextRequest) {
         },
         body: {
           query: 'Your question here (required)',
-          context: 'Additional context for the query (optional)'
+          context: 'Additional context for the query (optional)',
+          clientRequestId: 'Stable idempotency key (optional, required for persistResult)',
+          persistResult: 'Persist the result server-side and return only after the write succeeds (optional)',
         }
       }
     },
@@ -512,7 +821,7 @@ export async function GET(request: NextRequest) {
       description: 'Results are formatted for easy modal display with credit tracking',
       structure: {
         summary: 'Quick overview of each provider result',
-        results: 'Detailed provider responses',
+        results: 'Detailed provider responses on the first execution; replayed idempotent responses return summary results without raw provider data',
         performance: 'Response times and costs',
         userCredits: 'Credit balance before/after processing'
       }
@@ -520,7 +829,13 @@ export async function GET(request: NextRequest) {
     errorCodes: {
       AUTHENTICATION_REQUIRED: 'No valid authorization token provided',
       INSUFFICIENT_CREDITS: 'User does not have enough credits (requires 10)',
-      CREDIT_DEDUCTION_FAILED: 'Failed to deduct credits from user account'
+      CREDIT_DEDUCTION_FAILED: 'Failed to deduct credits from user account',
+      CLIENT_REQUEST_ID_REQUIRED: 'persistResult requests must include a stable clientRequestId',
+      REQUEST_IN_PROGRESS: 'Another request with the same clientRequestId is already executing',
+      IDEMPOTENCY_KEY_REUSED: 'The same clientRequestId was reused with a different request payload',
+      PERSISTENCE_FAILED: 'Provider execution succeeded but the server could not persist the result',
+      PERSISTENCE_FAILED_REFUNDED: 'Persistence failed and any deducted credits were refunded',
+      PERSISTENCE_FAILED_REFUND_FAILED: 'Persistence failed and the refund also failed'
     }
   });
-} 
+}

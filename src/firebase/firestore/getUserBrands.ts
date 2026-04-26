@@ -1,6 +1,7 @@
 import firebase_app from "../config";
 import { getFirestore, collection, query, where, getDocs, doc, setDoc, getDoc, serverTimestamp } from "firebase/firestore";
 import { storeDocumentWithLargeData, retrieveDocumentWithLargeData, exceedsFirestoreLimit } from '../storage/cloudStorage';
+import type { QueryProcessingResult } from './queryResultUtils';
 
 // Get the Firestore instance
 const db = getFirestore(firebase_app);
@@ -60,38 +61,7 @@ export interface UserBrand {
   lastProcessedAt?: any;
 }
 
-// Interface for query processing results
-export interface QueryProcessingResult {
-  date: string;
-  processingSessionId: string; // Unique identifier for each processing session
-  processingSessionTimestamp: string; // When this processing session started
-  results: {
-    chatgpt?: {
-      response: string;
-      error?: string;
-      timestamp: string;
-      responseTime?: number;
-      tokenCount?: any;
-    };
-    gemini?: {
-      response: string;
-      error?: string;
-      timestamp: string;
-      responseTime?: number;
-      tokenCount?: any;
-    };
-    perplexity?: {
-      response: string;
-      error?: string;
-      timestamp: string;
-      responseTime?: number;
-      tokenCount?: any;
-    };
-  };
-  query: string;
-  keyword: string;
-  category: string;
-}
+export type { QueryProcessingResult } from './queryResultUtils';
 
 // Function to get user brands from v8userbrands collection
 export async function getUserBrands(userId: string, includeQueryResults: boolean = false) {
@@ -266,6 +236,19 @@ export async function updateBrandWithQueryResults(
                 : (result.results.gemini.response || '')
             }
           }),
+          ...(result.results?.googleAI && {
+            googleAI: {
+              ...result.results.googleAI,
+              response: (result.results.googleAI.response && result.results.googleAI.response.length > 3000)
+                ? result.results.googleAI.response.substring(0, 3000) + '...[truncated for size]'
+                : (result.results.googleAI.response || ''),
+              ...(typeof result.results.googleAI.aiOverview === 'string' && {
+                aiOverview: result.results.googleAI.aiOverview.length > 3000
+                  ? result.results.googleAI.aiOverview.substring(0, 3000) + '...[truncated for size]'
+                  : result.results.googleAI.aiOverview
+              })
+            }
+          }),
           ...(result.results?.perplexity && {
             perplexity: {
               ...result.results.perplexity,
@@ -296,6 +279,7 @@ export async function updateBrandWithQueryResults(
           results: {
             ...(result.results?.chatgpt && { chatgpt: { timestamp: result.results.chatgpt.timestamp, hasContent: !!result.results.chatgpt.response } }),
             ...(result.results?.gemini && { gemini: { timestamp: result.results.gemini.timestamp, hasContent: !!result.results.gemini.response } }),
+            ...(result.results?.googleAI && { googleAI: { timestamp: result.results.googleAI.timestamp, hasContent: !!(result.results.googleAI.aiOverview || result.results.googleAI.response) } }),
             ...(result.results?.perplexity && { perplexity: { timestamp: result.results.perplexity.timestamp, hasContent: !!result.results.perplexity.response } })
           }
         }));
@@ -338,6 +322,7 @@ export async function updateBrandWithQueryResults(
           results: {
             ...(result.results?.chatgpt && { chatgpt: { timestamp: result.results.chatgpt.timestamp, error: result.results.chatgpt.error } }),
             ...(result.results?.gemini && { gemini: { timestamp: result.results.gemini.timestamp, error: result.results.gemini.error } }),
+            ...(result.results?.googleAI && { googleAI: { timestamp: result.results.googleAI.timestamp, error: result.results.googleAI.error } }),
             ...(result.results?.perplexity && { perplexity: { timestamp: result.results.perplexity.timestamp, error: result.results.perplexity.error } })
           }
         }));

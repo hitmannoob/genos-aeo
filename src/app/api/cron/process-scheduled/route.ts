@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { firestore } from '@/firebase/firebase-admin';
 import {
-  persistOneQueryResult,
   refreshLifetimeSnapshot,
 } from '@/firebase/firestore/persistQueryResult';
 
@@ -18,13 +17,64 @@ import {
 //   maxBrands                 — safety cap per invocation (default 50)
 //
 // Notes:
-//  - Each query goes through /api/user-query which deducts 10 credits from the
-//    brand owner. Owners out of credits will see per-query failures in logs.
+//  - Each query goes through /api/user-query in cron-auth mode. That route now
+//    owns durable persistence, so POST 200 means the result is already stored.
+//    Cron-auth requests still skip billing.
 //  - Execution is serial to stay within Cloud Function / serverless timeouts.
 //    Brands not reached this run are picked up on the next scheduled trigger.
 
 const DEFAULT_INTERVAL_DAYS = 7;
 const DEFAULT_MAX_BRANDS = 50;
+
+function toMillis(timestamp: any): number | null {
+  if (!timestamp) return null;
+
+  if (typeof timestamp?.toDate === 'function') {
+    const ms = timestamp.toDate().getTime();
+    return Number.isNaN(ms) ? null : ms;
+  }
+
+  if (timestamp instanceof Date) {
+    const ms = timestamp.getTime();
+    return Number.isNaN(ms) ? null : ms;
+  }
+
+  if (typeof timestamp === 'string' || typeof timestamp === 'number') {
+    const ms = new Date(timestamp).getTime();
+    return Number.isNaN(ms) ? null : ms;
+  }
+
+  if (typeof timestamp?.seconds === 'number') {
+    return timestamp.seconds * 1000;
+  }
+
+  if (typeof timestamp?._seconds === 'number') {
+    return timestamp._seconds * 1000;
+  }
+
+  return null;
+}
+
+function getLastProcessedAtMillis(brand: any): number | null {
+  const directTimestamp = toMillis(brand?.lastProcessedAt);
+  if (directTimestamp !== null) {
+    return directTimestamp;
+  }
+
+  const results: any[] = Array.isArray(brand?.queryProcessingResults)
+    ? brand.queryProcessingResults
+    : [];
+
+  let lastProcessedAt: number | null = null;
+  for (const result of results) {
+    const ms = toMillis(result?.date);
+    if (ms !== null && (lastProcessedAt === null || ms > lastProcessedAt)) {
+      lastProcessedAt = ms;
+    }
+  }
+
+  return lastProcessedAt;
+}
 
 export async function POST(request: NextRequest) {
   const startedAt = Date.now();
@@ -62,7 +112,6 @@ export async function POST(request: NextRequest) {
     companyName: string;
     brandDomain: string;
     queries: Array<{ query: string; keyword?: string; category?: string; context?: string }>;
-    priorResults: any[];
     lastProcessedAt: number | null;
   };
   const dueBrands: DueBrand[] = [];
@@ -73,17 +122,7 @@ export async function POST(request: NextRequest) {
     const queries: any[] = Array.isArray(brand?.queries) ? brand.queries : [];
     if (!userId || queries.length === 0) continue;
 
-    const results: any[] = Array.isArray(brand?.queryProcessingResults)
-      ? brand.queryProcessingResults
-      : [];
-    let lastProcessedAt: number | null = null;
-    for (const r of results) {
-      const d = r?.date ? new Date(r.date).getTime() : NaN;
-      if (!Number.isNaN(d) && (lastProcessedAt === null || d > lastProcessedAt)) {
-        lastProcessedAt = d;
-      }
-    }
-
+    const lastProcessedAt = getLastProcessedAtMillis(brand);
     const isDue = lastProcessedAt === null || now - lastProcessedAt >= thresholdMs;
     if (!isDue) continue;
 
@@ -93,7 +132,6 @@ export async function POST(request: NextRequest) {
       companyName: brand?.companyName ?? 'Unknown',
       brandDomain: brand?.domain ?? '',
       queries: queries.filter(q => q && typeof q.query === 'string'),
-      priorResults: results,
       lastProcessedAt,
     });
     if (dueBrands.length >= maxBrands) break;
@@ -140,13 +178,6 @@ export async function POST(request: NextRequest) {
     const processingSessionId = `cron_session_${randomUUID()}`;
     const processingSessionTimestamp = new Date().toISOString();
 
-    // Seed with the brand's existing queryProcessingResults so the accumulator
-    // fed into updateBrandWithQueryResults is complete. The called
-    // updateBrandWithQueryResults dedupes by processingSessionId, so passing
-    // prior results alongside the fresh ones in a new session won't clobber
-    // existing sessions or inflate counts.
-    let allResults: any[] = [...brand.priorResults];
-
     for (const q of brand.queries) {
       totalQueries++;
       try {
@@ -160,6 +191,20 @@ export async function POST(request: NextRequest) {
           body: JSON.stringify({
             query: q.query,
             context: (q as any).context || 'Scheduled reprocessing',
+            persistResult: true,
+            brandId: brand.id,
+            brandName: brand.companyName,
+            brandDomain: brand.brandDomain,
+            keyword: (q as any).keyword,
+            category: (q as any).category,
+            processingSessionId,
+            processingSessionTimestamp,
+            clientRequestId: [
+              processingSessionId,
+              (q as any).category || '',
+              (q as any).keyword || '',
+              q.query,
+            ].join('::'),
           }),
         });
 
@@ -171,32 +216,12 @@ export async function POST(request: NextRequest) {
         }
 
         const userQueryResponse = await resp.json();
-
-        // Persist across detailed_query_results, brand doc, per-session
-        // analytics. Accumulator flows forward so each save sees the full
-        // picture.
-        try {
-          const { updatedAllResults } = await persistOneQueryResult({
-            brandId: brand.id,
-            userId: brand.userId,
-            companyName: brand.companyName,
-            brandDomain: brand.brandDomain,
-            query: {
-              query: q.query,
-              keyword: (q as any).keyword,
-              category: (q as any).category,
-            },
-            processingSessionId,
-            processingSessionTimestamp,
-            userQueryResponse,
-            allPriorResults: allResults,
-          });
-          allResults = updatedAllResults;
-          succeeded++;
-        } catch (persistError) {
+        if (!userQueryResponse?.persistedQueryResult) {
           failed++;
-          errors.push(`persist: ${(persistError as Error).message ?? String(persistError)}`);
+          errors.push('persist: server response did not include persistedQueryResult');
+          continue;
         }
+        succeeded++;
       } catch (e) {
         failed++;
         errors.push((e as Error).message ?? String(e));
@@ -273,17 +298,7 @@ export async function GET(request: NextRequest) {
     const queries: any[] = Array.isArray(brand?.queries) ? brand.queries : [];
     if (!userId || queries.length === 0) continue;
 
-    const results: any[] = Array.isArray(brand?.queryProcessingResults)
-      ? brand.queryProcessingResults
-      : [];
-    let lastProcessedAt: number | null = null;
-    for (const r of results) {
-      const d = r?.date ? new Date(r.date).getTime() : NaN;
-      if (!Number.isNaN(d) && (lastProcessedAt === null || d > lastProcessedAt)) {
-        lastProcessedAt = d;
-      }
-    }
-
+    const lastProcessedAt = getLastProcessedAtMillis(brand);
     const isDue = lastProcessedAt === null || now - lastProcessedAt >= thresholdMs;
     if (!isDue) continue;
 

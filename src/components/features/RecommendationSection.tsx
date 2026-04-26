@@ -2,21 +2,11 @@
 import React, { useState } from 'react';
 import { ChevronDown, ChevronUp, Lightbulb, Star, Clock, ArrowRight } from 'lucide-react';
 import Card from '@/components/shared/Card';
-
-interface Recommendation {
-  id: string;
-  title: string;
-  description: string;
-  priority: 'high' | 'medium' | 'low';
-  category: string;
-  imageUrl?: string;
-  readTime?: string;
-  rating?: number;
-}
+import type { RecommendationData } from '@/firebase/firestore/dashboardData';
 
 interface RecommendationSectionProps {
   title?: string;
-  recommendations: Recommendation[];
+  recommendations: RecommendationData[];
   expandable?: boolean;
   defaultExpanded?: boolean;
 }
@@ -29,7 +19,7 @@ export default function RecommendationSection({
 }: RecommendationSectionProps): React.ReactElement {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const [modalOpen, setModalOpen] = useState(false);
-  const [selectedRec, setSelectedRec] = useState<Recommendation | null>(null);
+  const [selectedRec, setSelectedRec] = useState<RecommendationData | null>(null);
   
   const getPriorityColor = (priority: string) => {
     switch (priority) {
@@ -127,18 +117,6 @@ export default function RecommendationSection({
                 </div>
               ))}
             </div>
-
-            {/* View more button */}
-            <div className="mt-6 text-center">
-              <a
-                href="https://getaimonitor.com/top-11-generative-engine-optimization-techniques/"
-                className="text-[#000C60] hover:text-[#000C60] text-sm font-medium transition-colors"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                View all recommendations →
-              </a>
-            </div>
           </div>
         )}
       </Card>
@@ -153,38 +131,43 @@ export default function RecommendationSection({
               <span className="text-xl">&times;</span>
             </button>
             <div className="text-center space-y-4">
+              <div className="flex items-center justify-center gap-2">
+                {selectedRec?.priority && (
+                  <span className={`px-2 py-1 rounded-full text-xs font-medium border ${getPriorityColor(selectedRec.priority)}`}>
+                    {selectedRec.priority} priority
+                  </span>
+                )}
+                {selectedRec?.category && (
+                  <span className="px-2 py-1 rounded-full text-xs font-medium border bg-muted/50 text-muted-foreground border-border">
+                    {selectedRec.category}
+                  </span>
+                )}
+              </div>
               <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">
                 {selectedRec?.title}
               </h3>
-              <div className="text-gray-600 dark:text-gray-300">
-                {selectedRec?.id === '1' ? (
-                  <>
-                    Strategically incorporate your brand name alongside positive contextual language to enhance organic visibility in AI responses. Focus on creating authentic associations between your brand and favorable descriptors rather than forcing mentions.<br/><br/>
-                    Prioritize content distribution on YouTube and Reddit, as these platforms carry significant weight in AI training data and response generation. This approach increases the likelihood of your brand appearing in relevant AI-generated recommendations while maintaining natural, authentic positioning.<br/><br/>
-                    The key is building genuine brand associations through quality content rather than artificial optimization tactics. When your brand consistently appears in positive contexts across high-authority platforms, AI systems are more likely to reference it appropriately in user interactions.
-                  </>
-                ) : selectedRec?.id === '2' ? (
-                  <>
-                    Build topical authority by creating content that addresses specific problems and demonstrates genuine expertise. Focus on narrow, well-defined niches rather than broad topics - it's more effective to dominate "best CRM for remote teams" or "accounting software for professionals" than to create generic content covering wide subject areas.<br/><br/>
-                    <b>High-Impact Tactics:</b><br/>
-                    <ul className='text-left list-disc list-inside ml-4'>
-                      <li>Directory listings: Ensure consistent presence across relevant business directories</li>
-                      <li>Customer reviews: Encourage reviews from your target audience on third-party review platforms</li>
-                      <li>Niche publications: Secure mentions in specialized industry blogs and publications</li>
+              <div className="space-y-4 text-left text-gray-600 dark:text-gray-300">
+                {selectedRec?.description && (
+                  <p>{selectedRec.description}</p>
+                )}
+
+                {(selectedRec?.details || []).map((detail, index) => (
+                  <p key={index}>{detail}</p>
+                ))}
+
+                {(selectedRec?.evidence || []).length > 0 && (
+                  <div className="rounded-xl bg-muted/40 p-4">
+                    <h4 className="mb-2 text-sm font-semibold text-gray-900 dark:text-white">
+                      Live Evidence
+                    </h4>
+                    <ul className="space-y-1 text-sm">
+                      {(selectedRec?.evidence || []).map((item, index) => (
+                        <li key={index} className="list-none">
+                          {item}
+                        </li>
+                      ))}
                     </ul>
-                    <br/>
-                    These focused efforts deliver maximum impact because they create strong topical signals within specific domains.
-                  </>
-                ) : selectedRec?.id === '3' ? (
-                  <>
-                    Hallucinations and brand misrepresentation are inevitable realities in today's AI-driven landscape. A strong reputation has become essential for business survival, making proactive brand monitoring more critical than ever.<br/><br/>
-                    <b>Strategy:</b><br/>
-                    Actively monitor online mentions and feedback across all platforms to protect your brand image. Implement a rapid response system to address concerns quickly, amplify positive reviews, and strategically share success stories that build credibility.<br/><br/>
-                    <b>Benefits:</b><br/>
-                    This monitoring approach provides valuable market intelligence about competitor performance, helping you refine product positioning and messaging while building long-term brand trust and customer loyalty.
-                  </>
-                ) : (
-                  'Sample text for this recommendation. (You can provide the actual text next.)'
+                  </div>
                 )}
               </div>
             </div>
@@ -193,4 +176,4 @@ export default function RecommendationSection({
       )}
     </>
   );
-} 
+}

@@ -1,5 +1,5 @@
 'use client'
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { ArrowLeft, Check, Search, Sparkles, RefreshCw, Eye, Tag, TrendingUp, ShoppingCart, Lightbulb, Target, X, Plus, AlertCircle } from 'lucide-react';
@@ -9,6 +9,7 @@ import { CompanyInfo } from '@/lib/get-company-info';
 import { useAIQuery } from '@/hooks/useAIQuery';
 import { useUserCredits } from '@/hooks/useUserCredits';
 import addData from '@/firebase/firestore/addData';
+import { createBrandWithCredits } from '@/firebase/firestore/createBrandWithCredits';
 import { useAuthContext } from '@/context/AuthContext';
 import { generateRealisticAnalytics } from '@/utils/generateBrandData';
 import { useBrandContext } from '@/context/BrandContext';
@@ -23,9 +24,9 @@ interface GeneratedQuery {
 
 export default function AddBrandStep3(): React.ReactElement {
   const router = useRouter();
-  const { user } = useAuthContext();
+  const { user, refreshUserProfile } = useAuthContext();
   const { refetchBrands, setSelectedBrandId, clearBrandContext } = useBrandContext();
-  const { deduct: deductCredits, credits, loading: creditsLoading } = useUserCredits();
+  const { credits, loading: creditsLoading } = useUserCredits();
   const { showSuccess, showError, showInfo } = useToast();
   const [domain, setDomain] = useState<string>('');
   const [companyData, setCompanyData] = useState<CompanyInfo | null>(null);
@@ -46,7 +47,16 @@ export default function AddBrandStep3(): React.ReactElement {
   const [newQueryTopicDraft, setNewQueryTopicDraft] = useState<string>('');
   const [isCompleting, setIsCompleting] = useState(false);
   const [selectedQueries, setSelectedQueries] = useState<Set<number>>(new Set());
-  
+  // Set when the atomic brand-create transaction reports BRAND_ALREADY_EXISTS;
+  // drives the "open existing" modal. Stores the existing brand id so the
+  // modal's confirm action can navigate straight to it.
+  const [existingBrandId, setExistingBrandId] = useState<string | null>(null);
+
+  // Guards against auto-generating queries more than once per company. React
+  // StrictMode (and any setState that retriggers the effect before the first
+  // generation completes) would otherwise fire two `/api/ai-query` calls.
+  const autoGenerationStartedRef = useRef(false);
+
   const { queryState, executeQuery, clearQuery } = useAIQuery();
 
   useEffect(() => {
@@ -76,12 +86,22 @@ export default function AddBrandStep3(): React.ReactElement {
 
   // Auto-generate queries when company data is loaded
   useEffect(() => {
-    if (companyData && companyData.keywords && companyData.keywords.length > 0 && generatedQueries.length === 0) {
-      // Small delay to ensure UI is ready
-      setTimeout(() => {
-        generateQueries();
-      }, 500);
+    if (
+      !companyData ||
+      !companyData.keywords ||
+      companyData.keywords.length === 0 ||
+      generatedQueries.length > 0 ||
+      autoGenerationStartedRef.current
+    ) {
+      return;
     }
+
+    autoGenerationStartedRef.current = true;
+    const handle = setTimeout(() => {
+      generateQueries();
+    }, 500);
+
+    return () => clearTimeout(handle);
   }, [companyData, generatedQueries.length]);
 
   const generateQueries = async () => {
@@ -290,42 +310,26 @@ Output format (return ONLY valid JSON array):
     setIsCompleting(true);
 
     try {
-      // Deduct 100 credits for brand setup completion
-      console.log('💰 Deducting 100 credits for brand setup completion...');
-      const { success: creditSuccess, error: creditError } = await deductCredits(100);
-      
-      if (!creditSuccess) {
-        console.error('❌ Failed to deduct credits:', creditError);
-        showError(
-          'Credit Processing Failed',
-          'Unable to process credit deduction. Please try again or contact support if the issue persists.'
-        );
-        setIsCompleting(false);
-        return;
-      }
-      
-      console.log('✅ Successfully deducted 100 credits');
-
       console.log('🚀 Generating brand analytics...');
-      
+
       // Generate brand analytics data client-side
       const brandsbasicData = generateRealisticAnalytics(
         companyData.companyName,
         domain,
         companyData.keywords || []
       );
-      
+
       console.log('✅ Brand analytics generated:', brandsbasicData);
 
       // Prepare complete brand data for Firestore
       const completeBrandData = {
         // User Information
         userId: user.uid,
-        
+
         // Step 1 - Domain Information
         domain: domain,
         website: companyData.website,
-        
+
         // Step 2 - Company Information
         companyName: companyData.companyName,
         shortDescription: companyData.shortDescription,
@@ -335,7 +339,7 @@ Output format (return ONLY valid JSON array):
         // its queries reference. Dedupe case-insensitively.
         keywords: allTopics,
         competitors: companyData.competitors || [],
-        
+
         // Step 3 - Generated Queries (only selected ones)
         queries: generatedQueries
           .filter((_, index) => selectedQueries.has(index))
@@ -346,7 +350,7 @@ Output format (return ONLY valid JSON array):
             containsBrand: query.containsBrand,
             selected: true
           })),
-        
+
         // Query distribution by category (only selected queries)
         queryDistribution: {
           awareness: generatedQueries.filter((q, i) => selectedQueries.has(i) && q.category === 'Awareness').length,
@@ -354,7 +358,7 @@ Output format (return ONLY valid JSON array):
           consideration: generatedQueries.filter((q, i) => selectedQueries.has(i) && q.category === 'Consideration').length,
           purchase: generatedQueries.filter((q, i) => selectedQueries.has(i) && q.category === 'Purchase').length
         },
-        
+
         // AI Analysis metadata (if available)
         aiAnalysis: queryState.result ? {
           providersUsed: queryState.result.debug?.providersExecuted || [],
@@ -362,10 +366,10 @@ Output format (return ONLY valid JSON array):
           completedAt: queryState.result.completedAt || new Date().toISOString(),
           requestId: queryState.result.requestId || null
         } : null,
-        
+
         // Generated brand analytics
         brandsbasicData,
-        
+
         // Metadata — server-authoritative audit timestamps.
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -391,48 +395,90 @@ Output format (return ONLY valid JSON array):
       // Generate user-scoped document ID to prevent conflicts
       const cleanDomain = domain.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
       const brandId = `${user.uid}_${cleanDomain}`;
-      
-      console.log('💾 Saving complete brand data to Firestore...');
-      const { result: saveResult, error: saveError } = await addData('v8userbrands', brandId, completeBrandData);
-      
-      if (saveError) {
-        console.error('❌ Error saving brand data:', saveError);
-        
-        // Refund credits if save failed
-        console.log('🔄 Refunding credits due to save error...');
-        await deductCredits(-100); // Add credits back
-        
-        showError(
-          'Save Failed',
-          'Unable to save your brand data. Your credits have been refunded. Please try again.'
-        );
-        setIsCompleting(false);
-        return;
+
+      // Atomic write: brand doc + credit decrement in a single Firestore
+      // transaction. Either both commit or neither does, so a network failure
+      // mid-flight can never lose credits without producing a brand (the old
+      // deduct→save→refund flow could).
+      console.log('💾 Saving brand and deducting credits atomically...');
+      const txResult = await createBrandWithCredits({
+        brandId,
+        userId: user.uid,
+        brandData: completeBrandData,
+        creditCost: 100,
+      });
+
+      if (!txResult.success) {
+        if (txResult.code === 'INSUFFICIENT_CREDITS') {
+          showError(
+            'Insufficient Credits',
+            'You need 100 credits to complete brand setup. Please purchase more credits to continue.'
+          );
+          setIsCompleting(false);
+          return;
+        } else if (txResult.code === 'BRAND_ALREADY_EXISTS') {
+          // Don't overwrite the existing brand — the user might be re-adding
+          // the same domain by accident. Surface a modal that offers to open
+          // the existing brand instead.
+          setExistingBrandId(brandId);
+          setIsCompleting(false);
+          return;
+        } else if (txResult.code === 'DOC_TOO_LARGE') {
+          // Extremely unlikely for an initial brand doc — fall back to the
+          // legacy non-atomic path so the user is not blocked. Cloud Storage
+          // can't participate in a Firestore transaction.
+          console.warn('⚠️ Brand doc too large for atomic write, using legacy path');
+          const { error: saveError } = await addData('v8userbrands', brandId, completeBrandData);
+          if (saveError) {
+            showError(
+              'Save Failed',
+              'Unable to save your brand data. Please try again.'
+            );
+            setIsCompleting(false);
+            return;
+          }
+          // Brand saved; deduction has to happen separately. Best-effort.
+          const { updateUserCredits } = await import('@/firebase/firestore/userProfile');
+          await updateUserCredits(user.uid, -100);
+        } else {
+          console.error('❌ Brand creation transaction failed:', txResult.error);
+          showError(
+            'Save Failed',
+            'Unable to save your brand. No credits were deducted. Please try again.'
+          );
+          setIsCompleting(false);
+          return;
+        }
       }
-      
+
       console.log('✅ Brand data saved successfully to Firestore:', brandId);
-      
-      // Clear all local storage and session storage
-      console.log('🧹 Clearing local storage and session storage...');
-      localStorage.clear();
-      sessionStorage.clear();
-      
+
+      // Sync the credit balance shown in the sidebar / UI now that the tx committed.
+      await refreshUserProfile();
+
+      // Clear only the keys this onboarding flow set. The previous
+      // localStorage.clear() / sessionStorage.clear() wiped unrelated state
+      // (theme, selectedBrandId, anything else on the origin).
+      sessionStorage.removeItem('brandDomain');
+      sessionStorage.removeItem('companyInfo');
+      sessionStorage.removeItem('aiInsights');
+
       // Refresh brands in context and set the new brand as selected
       console.log('🔄 Refreshing brand context...');
       await refetchBrands(); // Refresh the brands list
-      
+
       // Set the newly created brand as the selected brand
       console.log('✅ Setting new brand as selected:', brandId);
       setSelectedBrandId(brandId);
-      
+
       console.log('✅ Brand setup completed successfully! (100 credits deducted)');
-      
+
       // Show comprehensive completion notification
       showSuccess(
         '🎉 Brand Setup Complete!',
         `${companyData.companyName} has been added with ${selectedQueries.size} selected queries. Your first processing is ready to begin!`
       );
-      
+
       // Show info about next steps
       setTimeout(() => {
         showInfo(
@@ -440,23 +486,16 @@ Output format (return ONLY valid JSON array):
           'You can now process your queries to see how AI platforms respond to questions about your brand. Each query costs 10 credits.'
         );
       }, 2000);
-      
+
       console.log('🎯 Redirecting directly to queries page...');
-      
+
       // Navigate directly to queries page
       router.replace('/dashboard/queries');
-      
+
     } catch (error) {
       console.error('❌ Error during setup completion:', error);
-      
-      // Try to refund credits if an error occurred
-      try {
-        console.log('🔄 Attempting to refund credits due to error...');
-        await deductCredits(-100);
-      } catch (refundError) {
-        console.error('❌ Failed to refund credits:', refundError);
-      }
-      
+      // The atomic transaction either committed both writes or neither, so
+      // there's no half-finished state to clean up. No refund needed.
       showError(
         'Setup Failed',
         'An unexpected error occurred during brand setup. Please try again or contact support if the issue persists.'
@@ -1156,6 +1195,47 @@ Output format (return ONLY valid JSON array):
           </div>
         </div>
       </div>
+
+      {/* Brand-already-exists Modal */}
+      {existingBrandId && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-card border border-border rounded-2xl p-6 w-full max-w-md mx-4 shadow-xl">
+            <div className="flex items-center gap-3 mb-3">
+              <AlertCircle className="h-6 w-6 text-amber-500" />
+              <h3 className="text-lg font-semibold text-foreground">Brand already exists</h3>
+            </div>
+            <p className="text-muted-foreground text-sm mb-6">
+              You've already added <span className="font-medium text-foreground">{domain}</span>.
+              Would you like to open the existing brand instead? No credits will be charged.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setExistingBrandId(null)}
+                className="px-4 py-2 rounded-lg text-foreground border border-border hover:bg-muted transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  const targetId = existingBrandId;
+                  setExistingBrandId(null);
+                  // Match the success path: clear scratch storage, refresh
+                  // brand list, select the existing brand, then navigate.
+                  sessionStorage.removeItem('brandDomain');
+                  sessionStorage.removeItem('companyInfo');
+                  sessionStorage.removeItem('aiInsights');
+                  await refetchBrands();
+                  setSelectedBrandId(targetId!);
+                  router.replace('/dashboard/queries');
+                }}
+                className="px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+              >
+                Open existing
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add Topic Modal */}
       {showAddTopicModal && (

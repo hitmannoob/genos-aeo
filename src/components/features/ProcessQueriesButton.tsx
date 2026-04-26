@@ -91,29 +91,28 @@ export default function ProcessQueriesButton({
       return;
     }
 
-    // Only check credits if NOT auto-starting
-    if (!autoStart) {
-      // Check if user has enough credits (10 per query)
-      const requiredCredits = queries.length * 10;
-      const availableCredits = userProfile?.credits || 0;
-      
-      if (availableCredits < requiredCredits) {
-        setStatus('error');
-        setMessage(`Insufficient credits. Need ${requiredCredits}, have ${availableCredits}`);
-        
-        // Show user-friendly notification
-        showError(
-          'Insufficient Credits',
-          `You need ${requiredCredits} credits to process ${queries.length} queries, but you only have ${availableCredits} credits available.`,
-        );
-        
-        return;
-      }
+    // Always check credits — the server charges every authenticated request,
+    // including auto-started batches, so the UI must validate the balance
+    // before starting (otherwise the user would only learn of the shortfall
+    // mid-batch when individual queries 402 out).
+    const requiredCredits = queries.length * 10;
+    const availableCredits = userProfile?.credits || 0;
+
+    if (availableCredits < requiredCredits) {
+      setStatus('error');
+      setMessage(`Insufficient credits. Need ${requiredCredits}, have ${availableCredits}`);
+
+      showError(
+        'Insufficient Credits',
+        `You need ${requiredCredits} credits to process ${queries.length} queries, but you only have ${availableCredits} credits available.`,
+      );
+
+      return;
     }
 
     setProcessing(true);
     setStatus('processing');
-    setMessage(`Processing ${queries.length} queries for ${brandName}...${!autoStart ? ` (${queries.length * 10} credits)` : ''}`);
+    setMessage(`Processing ${queries.length} queries for ${brandName}... (${requiredCredits} credits)`);
     setProcessedResults([]); // Reset processed results
     cancelledRef.current = false;
 
@@ -168,7 +167,11 @@ export default function ProcessQueriesButton({
               body: JSON.stringify({
                 query: query.query,
                 context: `This query is related to ${targetBrand.companyName} in the ${query.category} category. Topic: ${query.keyword}.`,
-                isAutoStart: autoStart // Add isAutoStart flag
+                // Note: `isAutoStart` is no longer sent. The server ignores
+                // client-set bypass flags and charges every authenticated
+                // request — only the cron path (server-side secret) skips
+                // billing. Auto-started UI batches now cost credits like
+                // manual ones.
               }),
             });
           } catch (fetchError) {
@@ -214,10 +217,10 @@ export default function ProcessQueriesButton({
 
           const queryData = await response.json();
 
-          // Refresh user profile to update credits in sidebar
-          if (queryData.userCredits) {
-            await refreshUserProfile();
-          }
+          // Don't refresh the profile inside the loop — the `finally` block
+          // does a single refresh once the batch is done. Per-iteration
+          // refreshes can race against each other and against the batch's
+          // own deductions, briefly flashing stale credits in the sidebar.
 
           // Single persistence call: builds the QueryProcessingResult, writes
           // to v8detailed_query_results, updates the brand doc's array, and

@@ -685,8 +685,12 @@ export async function calculateLifetimeBrandAnalytics(
                   responseTime: response.responseTime
                 };
               } else if (provider.includes('gemini') || provider.includes('google')) {
+                // Legacy gemini replies are plain text. Mirror them into both
+                // `response` and `aiOverview` so analytics (which reads
+                // googleAI.aiOverview) actually counts these historical rows.
                 result.results.googleAI = {
                   response: response.response || '',
+                  aiOverview: response.response || '',
                   error: response.error,
                   timestamp: response.timestamp || result.date,
                   responseTime: response.responseTime

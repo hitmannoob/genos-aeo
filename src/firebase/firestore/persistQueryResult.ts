@@ -130,7 +130,9 @@ export function buildQueryResult(args: PersistQueryResultArgs): any {
 
   if (userQueryResponse?.userCredits) {
     queryResult.creditInfo = {
-      creditsDeducted: userQueryResponse.userCredits.deducted || 10,
+      // `??` (not `||`) so a legitimate 0 — e.g. cron-authenticated runs that
+      // skip billing — is preserved instead of being rewritten to 10.
+      creditsDeducted: userQueryResponse.userCredits.deducted ?? 10,
       creditsAfter: userQueryResponse.userCredits.after,
       totalCost: userQueryResponse.totalCost,
     };

@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuthContext } from '@/context/AuthContext';
 import { getBrandInfo } from '@/firebase/firestore/brandDataService';
 import { retrieveDocumentWithLargeData } from '@/firebase/storage/cloudStorage';
@@ -92,9 +92,17 @@ export function useBrandQueries(options: UseBrandQueriesOptions = {}): UseBrandQ
 
   const { brandId, autoRefresh = false, refreshInterval = 30000 } = options;
 
+  // Tracks the (uid, brandId) pair an in-flight fetch was started for. If
+  // either changes mid-flight, we drop the late response so the newer fetch
+  // wins instead of being clobbered by a slower call for a different brand.
+  const activeFetchKeyRef = useRef<string | null>(null);
+
   // Fetch queries from brand document
   const fetchQueries = useCallback(async () => {
-    if (!user?.uid || !brandId) {
+    const requestKey = user?.uid && brandId ? `${user.uid}::${brandId}` : null;
+    activeFetchKeyRef.current = requestKey;
+
+    if (!requestKey) {
       setQueries([]);
       setLoading(false);
       return;
@@ -103,12 +111,16 @@ export function useBrandQueries(options: UseBrandQueriesOptions = {}): UseBrandQ
     try {
       setLoading(true);
       setError(null);
-      
+
       console.log('🔍 Fetching brand queries for brandId:', brandId);
-      
+
       // Get brand info which contains queryProcessingResults
-      let brand = await getBrandInfo(brandId);
-      
+      let brand = await getBrandInfo(brandId!);
+
+      if (activeFetchKeyRef.current !== requestKey) {
+        return;
+      }
+
       if (!brand) {
         setError('Brand not found');
         setQueries([]);
@@ -120,11 +132,15 @@ export function useBrandQueries(options: UseBrandQueriesOptions = {}): UseBrandQ
         console.log('📥 Brand has Cloud Storage references, retrieving full query results...');
         try {
           const { document: fullBrandData } = await retrieveDocumentWithLargeData(
-            'v8userbrands', 
-            brandId, 
+            'v8userbrands',
+            brandId!,
             ['queryProcessingResults']
           );
-          
+
+          if (activeFetchKeyRef.current !== requestKey) {
+            return;
+          }
+
           if (fullBrandData?.queryProcessingResults) {
             brand.queryProcessingResults = fullBrandData.queryProcessingResults;
             console.log(`✅ Retrieved ${fullBrandData.queryProcessingResults.length} query results from Cloud Storage`);
@@ -136,13 +152,13 @@ export function useBrandQueries(options: UseBrandQueriesOptions = {}): UseBrandQ
       }
 
       const queryResults = brand.queryProcessingResults || [];
-      
+
       console.log('✅ Brand queries fetched:', {
         brandName: brand.companyName,
         queriesCount: queryResults.length,
         lastProcessed: toIsoString((brand as any).lastProcessedAt) || 'Never'
       });
-      
+
       // Sort by date descending (newest first)
       const sortedQueries = queryResults.slice().sort((a, b) => {
         const dateA = new Date(a.date || 0).getTime();
@@ -152,11 +168,16 @@ export function useBrandQueries(options: UseBrandQueriesOptions = {}): UseBrandQ
 
       setQueries(sortedQueries);
     } catch (err) {
+      if (activeFetchKeyRef.current !== requestKey) {
+        return;
+      }
       const errorMessage = err instanceof Error ? err.message : 'Failed to fetch brand queries';
       setError(errorMessage);
       console.error('Error fetching brand queries:', err);
     } finally {
-      setLoading(false);
+      if (activeFetchKeyRef.current === requestKey) {
+        setLoading(false);
+      }
     }
   }, [user?.uid, brandId]);
 

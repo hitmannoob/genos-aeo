@@ -8,7 +8,6 @@ interface UserQueryRequest {
   query: string;
   context?: string;
   userId?: string;
-  isAutoStart?: boolean; // Add this flag
 }
 
 interface ProviderResult {
@@ -172,7 +171,7 @@ export async function POST(request: NextRequest) {
   
   try {
     const body: UserQueryRequest = await request.json();
-    const { query, context, isAutoStart } = body;
+    const { query, context } = body;
 
     if (!query || typeof query !== 'string') {
       return NextResponse.json(
@@ -197,13 +196,18 @@ export async function POST(request: NextRequest) {
     const { uid, profile, isCron } = authResult;
     const requiredCredits = 10; // Cost for processing a query
 
+    // Only the cron path bypasses billing. Authenticated user requests always
+    // pay — we no longer trust a client-supplied flag (the old `isAutoStart`)
+    // since callers could set it to `true` and run unlimited free queries.
+    const skipBilling = !!isCron;
+
     console.log('📝 Processing user query with authentication:', {
       query: query.substring(0, 100) + '...',
       userId: uid,
       userCredits: profile.credits,
       requiredCredits,
-      isAutoStart,
       isCron: !!isCron,
+      skipBilling,
       timestamp: new Date().toISOString()
     });
 
@@ -211,10 +215,7 @@ export async function POST(request: NextRequest) {
     // short on credits. This is NOT a reservation — the transaction below
     // (after provider execution) is the real atomicity guard against
     // concurrent requests draining credits simultaneously.
-    //
-    // Auto-start queries are free: skip the check AND skip the later
-    // deduction (preserves prior behaviour).
-    if (!isAutoStart) {
+    if (!skipBilling) {
       if (profile.credits < requiredCredits) {
         return NextResponse.json(
           {
@@ -227,7 +228,7 @@ export async function POST(request: NextRequest) {
         );
       }
     } else {
-      console.log('🚀 Auto-start query - skipping credit check and deduction');
+      console.log('🛠️ Cron-authenticated request — skipping credit check and deduction');
     }
 
     // Initialize provider manager
@@ -266,7 +267,7 @@ export async function POST(request: NextRequest) {
       metadata: {
         context,
         type: 'user-query',
-        creditsDeducted: isAutoStart ? 0 : requiredCredits
+        creditsDeducted: skipBilling ? 0 : requiredCredits
       }
     };
 
@@ -309,7 +310,7 @@ export async function POST(request: NextRequest) {
     // transaction so concurrent requests cannot both pass the earlier
     // advisory check and overspend.
     let creditsBefore = profile.credits;
-    if (!isAutoStart) {
+    if (!skipBilling) {
       try {
         creditsBefore = await firestore.runTransaction(async (tx) => {
           const userRef = firestore.collection('users').doc(uid);
@@ -408,7 +409,7 @@ export async function POST(request: NextRequest) {
       }
     });
 
-    const deductedAmount = isAutoStart ? 0 : requiredCredits;
+    const deductedAmount = skipBilling ? 0 : requiredCredits;
 
     const modalResult: ModalQueryResult = {
       success: true,

@@ -111,11 +111,10 @@ export async function POST(request: NextRequest) {
   }
 
   // Resolve base URL for internal calls
+  const forwardedHost = request.headers.get('x-forwarded-host');
   const baseUrl =
     process.env.NEXT_PUBLIC_APP_URL ||
-    request.headers.get('x-forwarded-host')
-      ? `https://${request.headers.get('x-forwarded-host')}`
-      : request.nextUrl.origin;
+    (forwardedHost ? `https://${forwardedHost}` : request.nextUrl.origin);
 
   const perBrandSummary: Array<{
     brandId: string;

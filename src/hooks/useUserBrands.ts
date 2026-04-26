@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuthContext } from '@/context/AuthContext';
 import { getUserBrands, UserBrand } from '@/firebase/firestore/getUserBrands';
 import { toIsoString } from '@/firebase/firestore/timestamps';
@@ -16,14 +16,22 @@ export function useUserBrands(): UseUserBrandsReturn {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Tracks the uid an in-flight fetch was started for. If the user changes
+  // (signout-then-signin, account switch) before a slow fetch resolves, we
+  // discard the late response so it can't overwrite the new user's data.
+  const activeFetchUidRef = useRef<string | null>(null);
+
   const fetchBrands = useCallback(async () => {
-    console.log('🔍 useUserBrands - fetchBrands called:', { 
-      userUid: user?.uid, 
+    const requestUid = user?.uid ?? null;
+    activeFetchUidRef.current = requestUid;
+
+    console.log('🔍 useUserBrands - fetchBrands called:', {
+      userUid: requestUid,
       hasUser: !!user,
-      userEmail: user?.email 
+      userEmail: user?.email
     });
-    
-    if (!user?.uid) {
+
+    if (!requestUid) {
       console.log('⚠️ useUserBrands - No user UID, stopping fetch');
       setLoading(false);
       setBrands([]);
@@ -34,9 +42,16 @@ export function useUserBrands(): UseUserBrandsReturn {
     setError(null);
 
     try {
-      console.log('🚀 useUserBrands - Calling getUserBrands with UID:', user.uid);
-      const { result, error: fetchError } = await getUserBrands(user.uid);
-      
+      console.log('🚀 useUserBrands - Calling getUserBrands with UID:', requestUid);
+      const { result, error: fetchError } = await getUserBrands(requestUid);
+
+      // If the user changed during the fetch, the response is for a stale
+      // identity — drop it so the newer fetch's result wins.
+      if (activeFetchUidRef.current !== requestUid) {
+        console.log('🚫 useUserBrands - Discarding stale response for', requestUid);
+        return;
+      }
+
       if (fetchError) {
         console.error('❌ useUserBrands - Error fetching user brands:', fetchError);
         setError('Failed to load brands. Please try again.');
@@ -60,11 +75,16 @@ export function useUserBrands(): UseUserBrandsReturn {
         setBrands(sortedBrands);
       }
     } catch (err) {
+      if (activeFetchUidRef.current !== requestUid) {
+        return;
+      }
       console.error('💥 useUserBrands - Unexpected error fetching brands:', err);
       setError('Failed to load brands. Please try again.');
       setBrands([]);
     } finally {
-      setLoading(false);
+      if (activeFetchUidRef.current === requestUid) {
+        setLoading(false);
+      }
     }
   }, [user?.uid]);
 

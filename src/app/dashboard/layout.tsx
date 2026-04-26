@@ -1,6 +1,7 @@
 'use client'
 import React, { useEffect } from 'react';
 import { useAuthContext } from '@/context/AuthContext';
+import { useBrandContext } from '@/context/BrandContext';
 import { useRouter, usePathname } from 'next/navigation';
 
 interface DashboardLayoutProps {
@@ -9,6 +10,7 @@ interface DashboardLayoutProps {
 
 export default function DashboardLayout({ children }: DashboardLayoutProps): React.ReactElement {
   const { user, userProfile, loading } = useAuthContext();
+  const { brands, loading: brandsLoading } = useBrandContext();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -19,22 +21,24 @@ export default function DashboardLayout({ children }: DashboardLayoutProps): Rea
     }
   }, [user, loading, router]);
 
-  // Credit-based redirect for users with default credits (new users).
-  // Heuristic: if credits equals the onboarding grant exactly, treat as a
-  // brand-new account that hasn't spent anything yet. Keep this in sync
-  // with the default in userProfile.ts / userProfileServer.ts.
+  // Send users with no brands into the add-brand flow. The previous
+  // heuristic used `userProfile.credits === 1000` as a "new user" tell, but
+  // any paid user who happened to land on exactly 1000 (top-up, refund) got
+  // force-redirected. `brands.length === 0` is the actual condition we care
+  // about — onboarding is "complete" once at least one brand exists.
   useEffect(() => {
-    // Only check credits if user is authenticated and user profile is loaded
-    if (user && userProfile && !loading) {
-      const hasDefaultCredits = userProfile.credits === 1000;
-
-      if (hasDefaultCredits && !pathname.startsWith('/dashboard/add-brand')) {
-        console.log('🎯 Redirecting new user with 1000 credits to add-brand flow');
-        router.push('/dashboard/add-brand/step-1');
-        return;
-      }
+    if (
+      user &&
+      userProfile &&
+      !loading &&
+      !brandsLoading &&
+      brands.length === 0 &&
+      !pathname.startsWith('/dashboard/add-brand')
+    ) {
+      console.log('🎯 Redirecting user with no brands to add-brand flow');
+      router.push('/dashboard/add-brand/step-1');
     }
-  }, [user, userProfile, loading, pathname, router]);
+  }, [user, userProfile, loading, brandsLoading, brands.length, pathname, router]);
 
   // Show loading while auth state is being determined
   if (loading) {

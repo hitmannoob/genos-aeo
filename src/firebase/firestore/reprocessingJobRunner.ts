@@ -5,6 +5,7 @@ import {
   updateReprocessingJobProgress,
 } from './reprocessingJobs';
 import { refreshLifetimeSnapshotServer } from './brandAnalyticsServer';
+import { executePersistedUserQueryServer } from '@/lib/userQueryExecutionServer';
 
 const MAX_ERROR_ITEMS = 25;
 
@@ -24,31 +25,10 @@ function buildQueryContext(
 }
 
 export async function runReprocessingJob(
-  jobId: string,
-  baseUrl: string
+  jobId: string
 ): Promise<void> {
   const acquired = await acquireReprocessingJobRunner(jobId);
   if (!acquired.acquired || !acquired.job) {
-    return;
-  }
-
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) {
-    await completeReprocessingJob({
-      jobId,
-      status: 'failed',
-      successfulCount: acquired.job.successfulCount,
-      failedCount: acquired.job.failedCount,
-      attemptedCount: acquired.job.attemptedCount,
-      creditsUsed: acquired.job.creditsUsed,
-      currentIndex: acquired.job.currentIndex,
-      completedQueryIds: acquired.job.completedQueryIds,
-      failedQueryIds: acquired.job.failedQueryIds,
-      errors: appendError(acquired.job.errors, {
-        queryId: acquired.job.currentQueryId || 'job',
-        message: 'CRON_SECRET is not configured',
-      }),
-    });
     return;
   }
 
@@ -97,29 +77,22 @@ export async function runReprocessingJob(
       status: 'processing',
     });
 
-    let response: Response;
+    let payload:
+      | Awaited<ReturnType<typeof executePersistedUserQueryServer>>
+      | null = null;
     try {
-      response = await fetch(`${baseUrl}/api/user-query`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${cronSecret}`,
-          'X-Cron-User-Id': job.userId,
-          'X-Service-Billing-Mode': 'charge',
-        },
-        body: JSON.stringify({
-          query: currentQuery.query,
-          context: buildQueryContext(job.brandName, currentQuery),
-          persistResult: true,
-          brandId: job.brandId,
-          brandName: job.brandName,
-          brandDomain: job.brandDomain,
-          keyword: currentQuery.keyword,
-          category: currentQuery.category,
-          processingSessionId: job.processingSessionId,
-          processingSessionTimestamp: job.processingSessionTimestamp,
-          clientRequestId: [job.id, currentQuery.queryId].join('::'),
-        }),
+      payload = await executePersistedUserQueryServer({
+        userId: job.userId,
+        query: currentQuery.query,
+        context: buildQueryContext(job.brandName, currentQuery),
+        brandId: job.brandId,
+        brandName: job.brandName,
+        brandDomain: job.brandDomain,
+        keyword: currentQuery.keyword,
+        category: currentQuery.category,
+        processingSessionId: job.processingSessionId,
+        processingSessionTimestamp: job.processingSessionTimestamp,
+        clientRequestId: [job.id, currentQuery.queryId].join('::'),
       });
     } catch (error) {
       errors = appendError(errors, {
@@ -130,14 +103,7 @@ export async function runReprocessingJob(
       break;
     }
 
-    let payload: any = null;
-    try {
-      payload = await response.json();
-    } catch {
-      payload = null;
-    }
-
-    if (response.ok && payload?.persistedQueryResult) {
+    if (payload?.success && payload?.persistedQueryResult) {
       successfulCount += 1;
       attemptedCount += 1;
       creditsUsed += Number(payload?.userCredits?.deducted ?? 0);
@@ -166,7 +132,7 @@ export async function runReprocessingJob(
       const errorMessage =
         payload?.message ||
         payload?.error ||
-        `Request failed with status ${response.status}`;
+        'Request failed';
 
       errors = appendError(errors, {
         queryId: currentQuery.queryId,
@@ -190,7 +156,11 @@ export async function runReprocessingJob(
       if (
         payload?.code === 'INSUFFICIENT_CREDITS' ||
         payload?.code === 'AUTHENTICATION_REQUIRED' ||
-        response.status >= 500
+        payload?.code === 'CREDIT_DEDUCTION_FAILED' ||
+        payload?.code === 'PERSISTENCE_FAILED' ||
+        payload?.code === 'PERSISTENCE_FAILED_REFUND_FAILED' ||
+        payload?.code === 'PERSISTENCE_FAILED_REFUNDED' ||
+        payload?.code === 'UNHANDLED_USER_QUERY_ERROR'
       ) {
         terminalStatus = 'failed';
         break;

@@ -1,5 +1,5 @@
 'use client'
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { useBrandContext } from '@/context/BrandContext';
 import Card from '@/components/shared/Card';
 import { useBrandQueries } from '@/hooks/useBrandQueries';
@@ -15,7 +15,6 @@ import {
   Lightbulb,
   TrendingUp,
   ShoppingCart,
-  Clock,
   ArrowRight,
   Activity,
   RefreshCw,
@@ -67,9 +66,7 @@ export default function QueriesOverview({
   const { selectedBrand, refetchBrands } = useBrandContext();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [countdown, setCountdown] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
   const [processingQueries, setProcessingQueries] = useState<Set<string>>(new Set()); // Track which queries are being processed
-  const [isProcessingActive, setIsProcessingActive] = useState(false); // Track if any processing is happening
   // Queries in the current batch — populated by ProcessQueriesButton's onStart.
   // Held in a ref so the onProgress closure always sees the latest batch
   // scope without stale-state bugs.
@@ -122,82 +119,9 @@ export default function QueriesOverview({
     }, 0);
   }, [queries, latestResultsByIdentity]);
 
-  // Calculate next processing date and setup countdown
-  useEffect(() => {
-    // Early return if no brand
-    if (!brand) {
-      setCountdown({ days: 0, hours: 0, minutes: 0, seconds: 0 });
-      return;
-    }
-
-    // Reset countdown if no results
-    if (!lastProcessedDate) {
-      setCountdown({ days: 0, hours: 0, minutes: 0, seconds: 0 });
-      return;
-    }
-
-    const nextProcessingDate = new Date(lastProcessedDate);
-    nextProcessingDate.setDate(nextProcessingDate.getDate() + 7);
-    
-    const updateCountdown = () => {
-      const now = new Date().getTime();
-      const targetTime = nextProcessingDate.getTime();
-      const difference = targetTime - now;
-      
-      if (difference > 0) {
-        const days = Math.floor(difference / (1000 * 60 * 60 * 24));
-        const hours = Math.floor((difference % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-        const minutes = Math.floor((difference % (1000 * 60 * 60)) / (1000 * 60));
-        const seconds = Math.floor((difference % (1000 * 60)) / 1000);
-        
-        setCountdown(prev => {
-          // Only update if values actually changed to prevent unnecessary re-renders
-          if (prev.days !== days || prev.hours !== hours || prev.minutes !== minutes || prev.seconds !== seconds) {
-            return { days, hours, minutes, seconds };
-          }
-          return prev;
-        });
-      } else {
-        setCountdown(prev => {
-          // Only update if not already zero
-          if (prev.days !== 0 || prev.hours !== 0 || prev.minutes !== 0 || prev.seconds !== 0) {
-            return { days: 0, hours: 0, minutes: 0, seconds: 0 };
-          }
-          return prev;
-        });
-      }
-    };
-    
-    // Update immediately
-    updateCountdown();
-    
-    // Update every second
-    const interval = setInterval(updateCountdown, 1000);
-    
-    return () => clearInterval(interval);
-  }, [brand?.id, lastProcessedDate]);
-
   const findQueryResult = (query: { query?: string; keyword?: string; category?: string }) => {
     return latestResultsByIdentity.get(buildTrackedQueryIdentity(query));
   };
-
-  // Compute if we should auto-start processing
-  const queriesWithoutResults = queries.filter(q => !findQueryResult(q));
-  const shouldAutoStart = queriesWithoutResults.length >= 4 && !isProcessingActive;
-
-  // Automatically trigger Process Queries if more than 5 queries have no results
-  // useEffect(() => {
-  //   if (!brand || !showProcessButton) return;
-  //   const queriesWithoutResults = queries.filter(q => !findQueryResult(q.query));
-  //   if (queriesWithoutResults.length >= 1 && processButtonRef.current && !isProcessingActive) {
-  //     // Programmatically trigger the button's click or handler
-  //     if (typeof processButtonRef.current.click === 'function') {
-  //       processButtonRef.current.click();
-  //     } else if (typeof processButtonRef.current === 'function') {
-  //       processButtonRef.current();
-  //     }
-  //   }
-  // }, [brand, queries, queryResults, showProcessButton, isProcessingActive]); // Removed as per edit hint
 
   // Filter queries based on search and category
   const filteredQueries = queries.filter(query => {
@@ -372,24 +296,15 @@ export default function QueriesOverview({
           </div>
           
           <div className="flex items-center space-x-3">
-            {lastProcessedDate && variant !== 'minimal' && (
-              <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-md">
-                <Clock className="h-3 w-3 inline mr-1" />
-                Scheduled: {countdown.days}d {countdown.hours}h {countdown.minutes}m
-              </span>
-            )}
-            
             {showProcessButton && (
               <ProcessQueriesButton 
                 brandId={brand.id}
                 variant="ghost"
                 size="sm"
-                autoStart={shouldAutoStart}
                 onStart={(batchQueryIds) => {
                   // Scope the processing set to the current batch only. Queries
                   // not in this batch keep their existing status (Processed,
                   // Due, Unprocessed) and don't get the "Processing" badge.
-                  setIsProcessingActive(true);
                   batchQueriesRef.current = new Set(batchQueryIds);
                   lastAttemptedCountRef.current = 0;
                   setProcessingQueries(new Set(batchQueryIds));
@@ -419,7 +334,6 @@ export default function QueriesOverview({
                 }}
                 onComplete={async (result) => {
                   // Clear processing states immediately
-                  setIsProcessingActive(false);
                   batchQueriesRef.current = new Set();
                   lastAttemptedCountRef.current = 0;
                   setProcessingQueries(new Set());

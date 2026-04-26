@@ -18,7 +18,6 @@ interface ProcessQueriesButtonProps {
   className?: string;
   variant?: 'primary' | 'secondary' | 'ghost';
   size?: 'sm' | 'md' | 'lg';
-  autoStart?: boolean; // NEW PROP
   queriesFilter?: string[]; // When set, only process queries whose tracked-query identity matches one of these
   iconOnly?: boolean; // Render as a compact circular icon button (for per-row actions)
 }
@@ -66,25 +65,20 @@ export default function ProcessQueriesButton({
   className = '',
   variant = 'primary',
   size = 'md',
-  autoStart = false, // NEW PROP
   queriesFilter,
   iconOnly = false,
 }: ProcessQueriesButtonProps): React.ReactElement {
   const { user, userProfile, refreshUserProfile } = useAuthContext();
   const { selectedBrand, brands, refetchBrands } = useBrandContext();
-  const { showSuccess, showError, showWarning, showInfo } = useToast();
+  const { showSuccess, showError, showWarning } = useToast();
   const [processing, setProcessing] = useState(false);
   const [status, setStatus] = useState<'idle' | 'processing' | 'success' | 'error' | 'cancelled'>('idle');
   const [message, setMessage] = useState('');
   const [activeJob, setActiveJob] = useState<ReprocessingJobResponse | null>(null);
-  const [hasHydratedJob, setHasHydratedJob] = useState(false);
   const pollingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startNotifiedJobIdRef = useRef<string | null>(null);
   const completionNotifiedJobIdRef = useRef<string | null>(null);
   const currentQueryIdRef = useRef<string | null>(null);
-
-  // Auto-trigger processing if autoStart becomes true
-  const [autoStarted, setAutoStarted] = useState(false);
 
   const clearPollingTimeout = useCallback(() => {
     if (pollingTimeoutRef.current) {
@@ -164,22 +158,6 @@ export default function ProcessQueriesButton({
           'All Queries Processed',
           `Successfully processed ${job.successfulCount} queries for ${brandName}. Used ${job.creditsUsed} credits.`,
         );
-
-        const nextProcessingDate = new Date();
-        nextProcessingDate.setDate(nextProcessingDate.getDate() + 7);
-        const nextProcessingFormatted = nextProcessingDate.toLocaleDateString('en-US', {
-          weekday: 'long',
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric',
-        });
-
-        setTimeout(() => {
-          showInfo(
-            'Next Processing Scheduled',
-            `Your next automatic processing is scheduled for ${nextProcessingFormatted}.`,
-          );
-        }, 3000);
       }
     } else if (job.status === 'cancelled') {
       setStatus('cancelled');
@@ -225,7 +203,6 @@ export default function ProcessQueriesButton({
     refetchBrands,
     refreshUserProfile,
     showError,
-    showInfo,
     showSuccess,
     showWarning,
   ]);
@@ -309,7 +286,6 @@ export default function ProcessQueriesButton({
 
   const hydrateExistingJob = useCallback(async () => {
     if (!user?.uid || !targetBrandId) {
-      setHasHydratedJob(true);
       return;
     }
 
@@ -348,23 +324,11 @@ export default function ProcessQueriesButton({
       }
     } catch (error) {
       console.error('❌ Failed to hydrate reprocessing job:', error);
-    } finally {
-      setHasHydratedJob(true);
     }
   }, [applyJobState, clearPollingTimeout, getIdToken, pollJob, targetBrandId, user?.uid]);
 
   useEffect(() => {
-    if (autoStart && hasHydratedJob && !autoStarted && !processing) {
-      setAutoStarted(true);
-      void handleProcessQueries();
-    } else if (!autoStart && autoStarted) {
-      setAutoStarted(false);
-    }
-  }, [autoStart, autoStarted, hasHydratedJob, processing]);
-
-  useEffect(() => {
     clearPollingTimeout();
-    setHasHydratedJob(false);
     void hydrateExistingJob();
 
     return () => {
@@ -394,10 +358,9 @@ export default function ProcessQueriesButton({
       return;
     }
 
-    // Always check credits — the server charges every authenticated request,
-    // including auto-started batches, so the UI must validate the balance
-    // before starting (otherwise the user would only learn of the shortfall
-    // mid-batch when individual queries 402 out).
+    // Always check credits before starting the server job so the user gets
+    // immediate feedback instead of learning mid-batch when individual
+    // queries start failing with insufficient credits.
     const requiredCredits = queries.length * 10;
     const availableCredits = userProfile?.credits || 0;
 

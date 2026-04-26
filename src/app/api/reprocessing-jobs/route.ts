@@ -11,10 +11,6 @@ import { runReprocessingJob } from '@/firebase/firestore/reprocessingJobRunner';
 
 export const dynamic = 'force-dynamic';
 
-function resolveBaseUrl(request: NextRequest): string {
-  return process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin;
-}
-
 export async function GET(request: NextRequest) {
   const authResult = await authenticateApiRequest(request);
   if (!authResult) {
@@ -33,7 +29,7 @@ export async function GET(request: NextRequest) {
 
   if (shouldResumeReprocessingJob(activeJob)) {
     after(async () => {
-      await runReprocessingJob(activeJob.id, resolveBaseUrl(request));
+      await runReprocessingJob(activeJob.id);
     });
   }
 
@@ -89,7 +85,7 @@ export async function POST(request: NextRequest) {
     if (existingActiveJob) {
       if (shouldResumeReprocessingJob(existingActiveJob)) {
         after(async () => {
-          await runReprocessingJob(existingActiveJob.id, resolveBaseUrl(request));
+          await runReprocessingJob(existingActiveJob.id);
         });
       }
 
@@ -110,7 +106,7 @@ export async function POST(request: NextRequest) {
     });
 
     after(async () => {
-      await runReprocessingJob(job.id, resolveBaseUrl(request));
+      await runReprocessingJob(job.id);
     });
 
     return NextResponse.json({

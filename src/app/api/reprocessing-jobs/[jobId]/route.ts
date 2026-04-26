@@ -9,10 +9,6 @@ import { runReprocessingJob } from '@/firebase/firestore/reprocessingJobRunner';
 
 export const dynamic = 'force-dynamic';
 
-function resolveBaseUrl(request: NextRequest): string {
-  return process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin;
-}
-
 export async function GET(
   request: NextRequest,
   context: { params: Promise<{ jobId: string }> }
@@ -30,7 +26,7 @@ export async function GET(
 
   if (shouldResumeReprocessingJob(job)) {
     after(async () => {
-      await runReprocessingJob(job.id, resolveBaseUrl(request));
+      await runReprocessingJob(job.id);
     });
   }
 

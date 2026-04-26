@@ -8,12 +8,11 @@ import WebLogo from '@/components/shared/WebLogo';
 import { CompanyInfo } from '@/lib/get-company-info';
 import { useAIQuery } from '@/hooks/useAIQuery';
 import { useUserCredits } from '@/hooks/useUserCredits';
-import addData from '@/firebase/firestore/addData';
-import { createBrandWithCredits } from '@/firebase/firestore/createBrandWithCredits';
 import { useAuthContext } from '@/context/AuthContext';
 import { generateRealisticAnalytics } from '@/utils/generateBrandData';
 import { useBrandContext } from '@/context/BrandContext';
 import { useToast } from '@/context/ToastContext';
+import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
 
 interface GeneratedQuery {
   keyword: string;
@@ -146,8 +145,7 @@ Output format (return ONLY valid JSON array):
       await executeQuery(
         prompt,
         ['chatgptsearch', 'google-gemini'],
-        'high',
-        'query-generation'
+        'high'
       );
     } catch (error) {
       console.error('Failed to generate queries:', error);
@@ -396,19 +394,33 @@ Output format (return ONLY valid JSON array):
       const cleanDomain = domain.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
       const brandId = `${user.uid}_${cleanDomain}`;
 
-      // Atomic write: brand doc + credit decrement in a single Firestore
-      // transaction. Either both commit or neither does, so a network failure
-      // mid-flight can never lose credits without producing a brand (the old
-      // deduct→save→refund flow could).
-      console.log('💾 Saving brand and deducting credits atomically...');
-      const txResult = await createBrandWithCredits({
-        brandId,
-        userId: user.uid,
-        brandData: completeBrandData,
-        creditCost: 100,
+      console.log('💾 Saving brand and deducting credits on the server...');
+      const idToken = await getFirebaseIdTokenWithRetry(3, 500);
+      if (!idToken) {
+        showError(
+          'Authentication Failed',
+          'Please sign in again and retry brand creation.'
+        );
+        setIsCompleting(false);
+        return;
+      }
+
+      const response = await fetch('/api/brands', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          brandId,
+          brandData: completeBrandData,
+          creditCost: 100,
+        }),
       });
 
-      if (!txResult.success) {
+      const txResult = await response.json();
+
+      if (!response.ok || !txResult.success) {
         if (txResult.code === 'INSUFFICIENT_CREDITS') {
           showError(
             'Insufficient Credits',
@@ -416,39 +428,30 @@ Output format (return ONLY valid JSON array):
           );
           setIsCompleting(false);
           return;
-        } else if (txResult.code === 'BRAND_ALREADY_EXISTS') {
-          // Don't overwrite the existing brand — the user might be re-adding
-          // the same domain by accident. Surface a modal that offers to open
-          // the existing brand instead.
+        }
+
+        if (txResult.code === 'BRAND_ALREADY_EXISTS') {
           setExistingBrandId(brandId);
           setIsCompleting(false);
           return;
-        } else if (txResult.code === 'DOC_TOO_LARGE') {
-          // Extremely unlikely for an initial brand doc — fall back to the
-          // legacy non-atomic path so the user is not blocked. Cloud Storage
-          // can't participate in a Firestore transaction.
-          console.warn('⚠️ Brand doc too large for atomic write, using legacy path');
-          const { error: saveError } = await addData('v8userbrands', brandId, completeBrandData);
-          if (saveError) {
-            showError(
-              'Save Failed',
-              'Unable to save your brand data. Please try again.'
-            );
-            setIsCompleting(false);
-            return;
-          }
-          // Brand saved; deduction has to happen separately. Best-effort.
-          const { updateUserCredits } = await import('@/firebase/firestore/userProfile');
-          await updateUserCredits(user.uid, -100);
-        } else {
-          console.error('❌ Brand creation transaction failed:', txResult.error);
+        }
+
+        if (txResult.code === 'DOC_TOO_LARGE') {
           showError(
             'Save Failed',
-            'Unable to save your brand. No credits were deducted. Please try again.'
+            'This brand payload is too large to save atomically. Please trim the setup data and try again.'
           );
           setIsCompleting(false);
           return;
         }
+
+        console.error('❌ Brand creation API failed:', txResult);
+        showError(
+          'Save Failed',
+          'Unable to save your brand. No credits were deducted. Please try again.'
+        );
+        setIsCompleting(false);
+        return;
       }
 
       console.log('✅ Brand data saved successfully to Firestore:', brandId);
@@ -714,7 +717,7 @@ Output format (return ONLY valid JSON array):
 
     const newIndex = generatedQueries.length;
     setGeneratedQueries(prev => [...prev, newQueryObject]);
-    setSelectedQueries(prev => new Set([...prev, newIndex]));
+    setSelectedQueries(prev => new Set(Array.from(prev).concat(newIndex)));
 
     showSuccess(
       'Query Added Successfully!',
@@ -760,7 +763,7 @@ Output format (return ONLY valid JSON array):
       const filteredIndices = new Set(filteredQueries.map((_, index) => 
         generatedQueries.findIndex(q => q === filteredQueries[index])
       ));
-      setSelectedQueries(prev => new Set([...prev].filter(index => !filteredIndices.has(index))));
+      setSelectedQueries(prev => new Set(Array.from(prev).filter(index => !filteredIndices.has(index))));
     }
   };
 

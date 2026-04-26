@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { APIResponse } from '@/lib/api-providers/types';
+import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
 
 export interface AIQueryResult {
   requestId: string;
@@ -9,8 +10,6 @@ export interface AIQueryResult {
   completedAt: Date;
   debug?: {
     providersExecuted: string[];
-    serverLogs: string;
-    timestamp: string;
   };
 }
 
@@ -30,8 +29,7 @@ export function useAIQuery() {
   const executeQuery = async (
     prompt: string,
     providers: string[] = ['chatgptsearch', 'google-gemini'],
-    priority: 'low' | 'medium' | 'high' = 'medium',
-    userId: string = 'default-user'
+    priority: 'low' | 'medium' | 'high' = 'medium'
   ): Promise<AIQueryResult | null> => {
     setQueryState(prev => ({
       ...prev,
@@ -44,19 +42,23 @@ export function useAIQuery() {
         prompt: prompt.substring(0, 100) + '...',
         providers,
         priority,
-        userId
       });
+
+      const idToken = await getFirebaseIdTokenWithRetry(3, 1000);
+      if (!idToken) {
+        throw new Error('Authentication required');
+      }
 
       const response = await fetch('/api/ai-query', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
         },
         body: JSON.stringify({
           prompt,
           providers,
           priority,
-          userId,
         }),
       });
 
@@ -118,29 +120,9 @@ export function useAIQuery() {
     });
   };
 
-  const getProviderStatus = async () => {
-    try {
-      const response = await fetch('/api/ai-query', {
-        method: 'GET',
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      return data;
-
-    } catch (error) {
-      console.error('Provider Status Error:', error);
-      return null;
-    }
-  };
-
   return {
     queryState,
     executeQuery,
     clearQuery,
-    getProviderStatus,
   };
-} 
+}

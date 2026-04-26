@@ -1,14 +1,13 @@
 'use client'
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuthContext } from '@/context/AuthContext';
-import { getBrandInfo } from '@/firebase/firestore/brandDataService';
-import { retrieveDocumentWithLargeData } from '@/firebase/storage/cloudStorage';
 import { toIsoString } from '@/firebase/firestore/timestamps';
 import {
   getCanonicalGoogleResult,
   hasProviderContent,
   type QueryProcessingResult,
 } from '@/firebase/firestore/queryResultUtils';
+import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
 
 // Canonical processed-query shape stored on brand documents.
 export type ProcessedQueryResult = QueryProcessingResult;
@@ -61,10 +60,31 @@ export function useBrandQueries(options: UseBrandQueriesOptions = {}): UseBrandQ
       setLoading(true);
       setError(null);
 
-      console.log('🔍 Fetching brand queries for brandId:', brandId);
+      const idToken = await getFirebaseIdTokenWithRetry(3, 1000);
+      if (!idToken) {
+        throw new Error('Failed to get authentication token');
+      }
 
-      // Get brand info which contains queryProcessingResults
-      let brand = await getBrandInfo(brandId!);
+      const response = await fetch(
+        `/api/brands/${encodeURIComponent(brandId!)}?includeQueryResults=true`,
+        {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${idToken}`,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch brand query results (${response.status})`);
+      }
+
+      const payload = await response.json();
+      const brand = payload?.brand as {
+        companyName?: string;
+        lastProcessedAt?: any;
+        queryProcessingResults?: ProcessedQueryResult[];
+      } | undefined;
 
       if (activeFetchKeyRef.current !== requestKey) {
         return;
@@ -76,46 +96,22 @@ export function useBrandQueries(options: UseBrandQueriesOptions = {}): UseBrandQ
         return;
       }
 
-      // If the brand document has storage references, retrieve full data from Cloud Storage
-      if ((brand as any).storageReferences?.queryProcessingResults) {
-        console.log('📥 Brand has Cloud Storage references, retrieving full query results...');
-        try {
-          const { document: fullBrandData } = await retrieveDocumentWithLargeData(
-            'v8userbrands',
-            brandId!,
-            ['queryProcessingResults']
-          );
-
-          if (activeFetchKeyRef.current !== requestKey) {
-            return;
-          }
-
-          if (fullBrandData?.queryProcessingResults) {
-            brand.queryProcessingResults = fullBrandData.queryProcessingResults;
-            console.log(`✅ Retrieved ${fullBrandData.queryProcessingResults.length} query results from Cloud Storage`);
-          }
-        } catch (storageError) {
-          console.warn('⚠️ Failed to retrieve query results from Cloud Storage:', storageError);
-          // Continue with truncated data from Firestore
-        }
-      }
-
       const queryResults = brand.queryProcessingResults || [];
 
-      console.log('✅ Brand queries fetched:', {
-        brandName: brand.companyName,
-        queriesCount: queryResults.length,
-        lastProcessed: toIsoString((brand as any).lastProcessedAt) || 'Never'
-      });
-
       // Sort by date descending (newest first)
-      const sortedQueries = queryResults.slice().sort((a, b) => {
+      const sortedQueries = queryResults.slice().sort((a: ProcessedQueryResult, b: ProcessedQueryResult) => {
         const dateA = new Date(a.date || 0).getTime();
         const dateB = new Date(b.date || 0).getTime();
         return dateB - dateA;
       });
 
       setQueries(sortedQueries);
+
+      console.log('✅ Brand queries fetched:', {
+        brandName: brand.companyName,
+        queriesCount: queryResults.length,
+        lastProcessed: toIsoString((brand as any).lastProcessedAt) || 'Never',
+      });
     } catch (err) {
       if (activeFetchKeyRef.current !== requestKey) {
         return;

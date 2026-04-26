@@ -1,7 +1,7 @@
 'use client'
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { useUserBrands } from '@/hooks/useUserBrands';
-import { UserBrand } from '@/firebase/firestore/getUserBrands';
+import type { UserBrand } from '@/firebase/firestore/getUserBrands';
 
 interface BrandContextType {
   selectedBrand: UserBrand | null;

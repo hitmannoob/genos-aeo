@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { CompanyInfo } from '@/lib/get-company-info';
+import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
 
 interface CompanyInfoState {
   loading: boolean;
@@ -35,11 +36,17 @@ export function useCompanyInfo(): UseCompanyInfoReturn {
 
     try {
       console.log('🚀 Fetching company info for domain:', domain);
+
+      const idToken = await getFirebaseIdTokenWithRetry(3, 1000);
+      if (!idToken) {
+        throw new Error('Authentication required');
+      }
       
       const response = await fetch('/api/get-company-info', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
         },
         body: JSON.stringify({ domain }),
       });

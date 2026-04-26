@@ -2,31 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ProviderManager } from '@/lib/api-providers/provider-manager';
 import { APIRequest } from '@/lib/api-providers/types';
 import { getDomainMetadata } from '@/lib/domain-metadata';
-import { z } from 'zod';
-
-// Input schema
-const CompanyInfoInputSchema = z.object({
-  domain: z.string().describe('The company domain name (e.g., "example.com" or "https://example.com").'),
-});
-type CompanyInfoInput = z.infer<typeof CompanyInfoInputSchema>;
-
-// Output schema
-const CompanyInfoSchema = z.object({
-  companyName: z.string().describe('The official brand or company name'),
-  shortDescription: z.string().describe('A concise 2-3 sentence summary of what the company does'),
-  productsAndServices: z.array(z.string()).describe('List of main products, services, features, or offerings'),
-  keywords: z.array(z.string()).describe('4-5 relevant keywords or phrases representing core business'),
-  competitors: z.array(z.string()).describe('3-5 main competitor companies or brands in the same industry'),
-  website: z.string().describe('Company website URL'),
-});
-type CompanyInfo = z.infer<typeof CompanyInfoSchema>;
-
-function cleanDomain(domain: string): string {
-  let cleanedDomain = domain.replace(/^https?:\/\//, '');
-  cleanedDomain = cleanedDomain.replace(/^www\./, '');
-  cleanedDomain = cleanedDomain.replace(/\/$/, '');
-  return cleanedDomain;
-}
+import {
+  CompanyInfoInputSchema,
+  type CompanyInfo,
+} from '@/lib/get-company-info';
+import { authenticateApiRequest } from '@/lib/serverAuth';
+import {
+  DomainValidationError,
+  normalizePublicDomain,
+} from '@/lib/domainValidation';
 
 function generateCompanyInfoPrompt(domain: string, websiteData?: { title?: string; description?: string; siteName?: string }): string {
   const hasWebsiteData = websiteData && (websiteData.title || websiteData.description);
@@ -115,16 +99,24 @@ function parseAIResponse(response: string, domain: string): CompanyInfo {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json() as CompanyInfoInput;
-    
-    if (!body.domain) {
+    const authResult = await authenticateApiRequest(request);
+    if (!authResult) {
       return NextResponse.json(
-        { success: false, error: 'Domain is required' },
+        { success: false, error: 'Authentication required' },
+        { status: 401 }
+      );
+    }
+
+    const body = await request.json().catch(() => null);
+    const parsedInput = CompanyInfoInputSchema.safeParse(body);
+    if (!parsedInput.success) {
+      return NextResponse.json(
+        { success: false, error: 'A valid domain is required' },
         { status: 400 }
       );
     }
 
-    const domain = cleanDomain(body.domain);
+    const domain = normalizePublicDomain(parsedInput.data.domain);
     
     console.log('🚀 Starting company info fetch for domain:', domain);
     
@@ -153,7 +145,7 @@ export async function POST(request: NextRequest) {
       prompt: prompt,
       providers: ['chatgptsearch', 'google-gemini'],
       priority: 'medium',
-      userId: 'system', // Using system for non-authenticated requests
+      userId: authResult.uid,
       createdAt: new Date(),
       metadata: {
         domain: domain,
@@ -221,6 +213,16 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
+    if (error instanceof DomainValidationError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: error.message,
+        },
+        { status: 400 }
+      );
+    }
+
     console.error('❌ Company info API error:', error);
     
     return NextResponse.json(

@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { ChevronDown, ChevronUp, Lightbulb, Star, Clock, ArrowRight } from 'lucide-react';
 import Card from '@/components/shared/Card';
-import type { RecommendationData } from '@/firebase/firestore/dashboardData';
+import type { RecommendationData } from '@/lib/recommendation-types';
 
 interface RecommendationSectionProps {
   title?: string;

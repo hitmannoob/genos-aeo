@@ -22,7 +22,7 @@ import {
   X
 } from 'lucide-react';
 import ProcessQueriesButton from './ProcessQueriesButton';
-import { UserBrand } from '@/firebase/firestore/getUserBrands';
+import type { UserBrand } from '@/firebase/firestore/getUserBrands';
 import { extractChatGPTCitations } from './ChatGPTResponseRenderer';
 import { extractGoogleAIOverviewCitations } from './GoogleAIOverviewRenderer';
 import { extractPerplexityCitations } from './PerplexityResponseRenderer';
@@ -67,7 +67,6 @@ export default function QueriesOverview({
   const { selectedBrand, refetchBrands } = useBrandContext();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [liveResults, setLiveResults] = useState<QueryProcessingResult[]>([]);
   const [countdown, setCountdown] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
   const [processingQueries, setProcessingQueries] = useState<Set<string>>(new Set()); // Track which queries are being processed
   const [isProcessingActive, setIsProcessingActive] = useState(false); // Track if any processing is happening
@@ -75,11 +74,12 @@ export default function QueriesOverview({
   // Held in a ref so the onProgress closure always sees the latest batch
   // scope without stale-state bugs.
   const batchQueriesRef = useRef<Set<string>>(new Set());
+  const lastAttemptedCountRef = useRef(0);
   // const processButtonRef = React.useRef<any>(null); // Removed as per edit hint
 
   // Use brand override if provided, otherwise use selected brand
   const brand = brandOverride || selectedBrand;
-  const { queries: fetchedQueryResults } = useBrandQueries({ brandId: brand?.id });
+  const { queries: fetchedQueryResults, refetch: refetchQueryResults } = useBrandQueries({ brandId: brand?.id });
   
   // Safely get queries and results (with fallbacks)
   const queries = brand?.queries || [];
@@ -93,18 +93,13 @@ export default function QueriesOverview({
       : [];
   }, [fetchedQueryResults, brand?.queryProcessingResults]);
   
-  // Combine saved results with live processing results (memoized to prevent infinite re-renders)
-  const queryResults = useMemo(() => {
-    return [...savedResults, ...liveResults];
-  }, [savedResults, liveResults]);
-
   const sortedQueryResults = useMemo(() => {
-    return [...queryResults].sort((left, right) => {
+    return [...savedResults].sort((left, right) => {
       const leftTime = left.date ? new Date(left.date).getTime() : 0;
       const rightTime = right.date ? new Date(right.date).getTime() : 0;
       return rightTime - leftTime;
     });
-  }, [queryResults]);
+  }, [savedResults]);
 
   const latestResultsByIdentity = useMemo(() => {
     const resultsMap = new Map<string, QueryProcessingResult>();
@@ -396,6 +391,7 @@ export default function QueriesOverview({
                   // Due, Unprocessed) and don't get the "Processing" badge.
                   setIsProcessingActive(true);
                   batchQueriesRef.current = new Set(batchQueryIds);
+                  lastAttemptedCountRef.current = 0;
                   setProcessingQueries(new Set(batchQueryIds));
                 }}
                 onQueryStart={(queryId) => {
@@ -406,27 +402,30 @@ export default function QueriesOverview({
                   batchQueriesRef.current.add(queryId);
                   setProcessingQueries(prev => new Set(Array.from(prev).concat(queryId)));
                 }}
-                onProgress={(results) => {
-                  setLiveResults(results);
-                  // Remove queries that have completed in this batch.
-                  // Scope is the batch, not the full query list.
-                  const completedQueries = new Set(
-                    results.map((result) => buildTrackedQueryIdentity(result))
-                  );
+                onProgress={(job) => {
+                  const completedQueries = new Set([
+                    ...job.completedQueryIds,
+                    ...job.failedQueryIds,
+                  ]);
                   const stillProcessing = new Set(
                     Array.from(batchQueriesRef.current).filter(q => !completedQueries.has(q))
                   );
                   setProcessingQueries(stillProcessing);
+
+                  if (job.attemptedCount > lastAttemptedCountRef.current) {
+                    lastAttemptedCountRef.current = job.attemptedCount;
+                    void refetchQueryResults();
+                  }
                 }}
                 onComplete={async (result) => {
                   // Clear processing states immediately
                   setIsProcessingActive(false);
                   batchQueriesRef.current = new Set();
+                  lastAttemptedCountRef.current = 0;
                   setProcessingQueries(new Set());
-                  setLiveResults([]);
 
                   // Refresh brands to get updated data
-                  await refetchBrands();
+                  await Promise.all([refetchBrands(), refetchQueryResults()]);
                 }}
               />
             )}
@@ -710,7 +709,7 @@ export default function QueriesOverview({
                                 queriesFilter={[buildTrackedQueryIdentity(query)]}
                                 iconOnly
                                 onComplete={async () => {
-                                  await refetchBrands();
+                                  await Promise.all([refetchBrands(), refetchQueryResults()]);
                                 }}
                               />
                             )}
@@ -796,7 +795,7 @@ export default function QueriesOverview({
                           queriesFilter={[buildTrackedQueryIdentity(query)]}
                           iconOnly
                           onComplete={async () => {
-                            await refetchBrands();
+                            await Promise.all([refetchBrands(), refetchQueryResults()]);
                           }}
                         />
                       )}

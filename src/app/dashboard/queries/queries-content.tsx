@@ -6,9 +6,9 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import QueriesOverview from '@/components/features/QueriesOverview';
 import { useAuthContext } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
-import { addQueryToBrand, addKeywordToBrand } from '@/firebase/firestore/addQuery';
 import AIResponseModal from './AIResponseModal';
 import WebLogo from '@/components/shared/WebLogo';
+import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
 import {
   Search,
   RefreshCw,
@@ -68,6 +68,31 @@ export default function QueriesContent(): React.ReactElement {
     setIsCreatingNewTopic(false);
   };
 
+  const postBrandMutation = async (body: Record<string, unknown>) => {
+    if (!selectedBrand) {
+      throw new Error('No brand selected');
+    }
+
+    const idToken = await getFirebaseIdTokenWithRetry(3, 500);
+    if (!idToken) {
+      throw new Error('Failed to get authentication token');
+    }
+
+    const response = await fetch(`/api/brands/${selectedBrand.id}/queries`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${idToken}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    const payload = await response.json();
+    if (!response.ok || !payload?.success) {
+      throw new Error(payload?.error || 'Request failed');
+    }
+  };
+
   // Add Query Modal Handlers
   const handleAddQuery = () => {
     // Pre-select the first existing topic if there is one; otherwise open the
@@ -97,7 +122,10 @@ export default function QueriesContent(): React.ReactElement {
     }
 
     try {
-      await addKeywordToBrand(selectedBrand.id, draft);
+      await postBrandMutation({
+        action: 'addKeyword',
+        keyword: draft,
+      });
       await refetchBrands();
       setSelectedTopic(draft);
       setIsCreatingNewTopic(false);
@@ -129,19 +157,18 @@ export default function QueriesContent(): React.ReactElement {
         isCreatingNewTopic &&
         !existingTopics.some(t => t.toLowerCase() === topic.toLowerCase());
       if (isNewTopic) {
-        await addKeywordToBrand(selectedBrand.id, topic);
+        await postBrandMutation({
+          action: 'addKeyword',
+          keyword: topic,
+        });
       }
 
-      await addQueryToBrand(
-        selectedBrand.id,
-        newQuery,
-        selectedCategory,
-        {
-          companyName: selectedBrand.companyName,
-          domain: selectedBrand.domain,
-        },
-        topic
-      );
+      await postBrandMutation({
+        action: 'addQuery',
+        query: newQuery,
+        category: selectedCategory,
+        keyword: topic,
+      });
 
       resetModal();
       setShowAddQueryModal(false);

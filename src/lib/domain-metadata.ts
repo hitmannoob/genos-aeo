@@ -1,4 +1,8 @@
 import { z } from 'zod';
+import {
+  DomainValidationError,
+  normalizePublicDomain,
+} from './domainValidation';
 
 // Types for domain metadata
 export const DomainMetadataSchema = z.object({
@@ -13,13 +17,6 @@ export type DomainMetadata = z.infer<typeof DomainMetadataSchema>;
 
 export interface DomainMetadataInput {
   domain: string;
-}
-
-function cleanDomain(domain: string): string {
-  let cleanedDomain = domain.replace(/^https?:\/\//, '');
-  cleanedDomain = cleanedDomain.replace(/^www\./, '');
-  cleanedDomain = cleanedDomain.replace(/\/$/, '');
-  return cleanedDomain;
 }
 
 function extractMetaTags(html: string): Partial<DomainMetadata> {
@@ -65,10 +62,11 @@ function extractMetaTags(html: string): Partial<DomainMetadata> {
 }
 
 export async function getDomainMetadata(input: DomainMetadataInput): Promise<DomainMetadata> {
-  const cleanedDomain = cleanDomain(input.domain);
-  const url = `https://${cleanedDomain}`;
+  let cleanedDomain = '';
 
   try {
+    cleanedDomain = normalizePublicDomain(input.domain);
+    const url = `https://${cleanedDomain}`;
     console.log(`🔍 Fetching metadata for: ${url}`);
     
     const response = await fetch(url, {
@@ -108,13 +106,23 @@ export async function getDomainMetadata(input: DomainMetadataInput): Promise<Dom
     return result;
 
   } catch (error) {
-    console.error(`❌ Failed to fetch metadata for ${url}:`, error);
+    if (error instanceof DomainValidationError) {
+      throw error;
+    }
+
+    const fallbackDomain = cleanedDomain || input.domain.trim();
+    const fallbackName = fallbackDomain && fallbackDomain.includes('.')
+      ? fallbackDomain.split('.')[0]
+      : 'website';
+    const fallbackTitle = fallbackName.charAt(0).toUpperCase() + fallbackName.slice(1);
+
+    console.error(`❌ Failed to fetch metadata for ${fallbackDomain || input.domain}:`, error);
     
     // Return fallback metadata
     return {
-      title: cleanedDomain.split('.')[0].charAt(0).toUpperCase() + cleanedDomain.split('.')[0].slice(1),
-      description: `Website for ${cleanedDomain}`,
-      url: url,
+      title: fallbackTitle,
+      description: `Website for ${fallbackDomain || 'the provided domain'}`,
+      url: cleanedDomain ? `https://${cleanedDomain}` : '',
     };
   }
-} 
+}

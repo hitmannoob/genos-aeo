@@ -115,8 +115,7 @@ export default function AddBrandStep2(): React.ReactElement {
     await executeQuery(
       prompts[type],
       ['chatgptsearch', 'google-gemini'],
-      'high',
-      'brand-analysis-user'
+      'high'
     );
   };
 

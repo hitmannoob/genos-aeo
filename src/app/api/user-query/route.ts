@@ -95,9 +95,9 @@ function buildReplayModalResult(modalResult: ModalQueryResult): ModalQueryResult
 // Helper function to authenticate user and get profile.
 // Supports two modes:
 //   1. User mode: Authorization: Bearer <firebase-id-token> — verified via Admin SDK
-//   2. Cron/service mode: Authorization: Bearer <CRON_SECRET> + X-Cron-User-Id: <uid>
-//      — used by /api/cron/process-scheduled to run on behalf of a brand's owner.
-//      Returns isCron=true so callers can adjust behaviour (e.g. credits).
+//   2. Service mode: Authorization: Bearer <CRON_SECRET> + X-Cron-User-Id: <uid>
+//      — used by internal server-owned workers to run on behalf of a brand's
+//        owner. Billing behavior is selected later via X-Service-Billing-Mode.
 async function authenticateUser(
   request: NextRequest
 ): Promise<{ uid: string; profile: any; isCron?: boolean } | null> {
@@ -126,7 +126,9 @@ async function authenticateUser(
         console.log('❌ Cron request missing X-Cron-User-Id header');
         return null;
       }
-      console.log('🔑 Cron-authenticated request for user:', cronUserId);
+      console.log('🔑 Service-authenticated request for user:', cronUserId, {
+        billingMode: request.headers.get('x-service-billing-mode') || 'skip',
+      });
       const { result: userProfile, error } = await getUserProfileServer(cronUserId);
       if (error || !userProfile) {
         console.log('❌ Cron request: user profile not found for', cronUserId);
@@ -303,10 +305,11 @@ export async function POST(request: NextRequest) {
       }
     };
 
-    // Only the cron path bypasses billing. Authenticated user requests always
-    // pay — we no longer trust a client-supplied flag (the old `isAutoStart`)
-    // since callers could set it to `true` and run unlimited free queries.
-    const skipBilling = !!isCron;
+    // Service-authenticated internal callers can explicitly choose whether to
+    // skip billing (`skip`, scheduled cron) or charge (`charge`, manual
+    // server-owned batch jobs). Browser-authenticated user requests always pay.
+    const serviceBillingMode = request.headers.get('x-service-billing-mode') || 'skip';
+    const skipBilling = !!isCron && serviceBillingMode !== 'charge';
 
     console.log('📝 Processing user query with authentication:', {
       query: query.substring(0, 100) + '...',
@@ -318,6 +321,7 @@ export async function POST(request: NextRequest) {
       userCredits: profile.credits,
       requiredCredits,
       isCron: !!isCron,
+      serviceBillingMode,
       skipBilling,
       timestamp: new Date().toISOString()
     });

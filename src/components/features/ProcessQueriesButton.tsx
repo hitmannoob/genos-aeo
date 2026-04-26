@@ -1,25 +1,18 @@
 'use client'
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuthContext } from '@/context/AuthContext';
 import { useBrandContext } from '@/context/BrandContext';
 import { useToast } from '@/context/ToastContext';
-import { RefreshCw, Zap, AlertCircle, CheckCircle, RotateCcw, StopCircle, CreditCard, Play } from 'lucide-react';
+import { RefreshCw, Zap, AlertCircle, CheckCircle, RotateCcw, StopCircle, Play } from 'lucide-react';
 import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
-// Shared persistence helpers — same pipeline used by /api/cron/process-scheduled.
-// If a bug shows up in per-query or lifetime saves, fix it in the helper and
-// both manual and scheduled paths pick it up.
-import {
-  refreshLifetimeSnapshot,
-} from '@/firebase/firestore/persistQueryResult';
 import {
   buildTrackedQueryIdentity,
-  type QueryProcessingResult,
 } from '@/firebase/firestore/queryResultUtils';
 
 interface ProcessQueriesButtonProps {
   brandId?: string;
   onComplete?: (result: any) => void;
-  onProgress?: (results: QueryProcessingResult[]) => void; // New callback for real-time updates
+  onProgress?: (job: ReprocessingJobResponse) => void;
   onStart?: (batchQueryIds: string[]) => void; // Fires at batch start with tracked-query identities that are about to be processed
   onQueryStart?: (queryId: string) => void; // New callback for when individual query processing starts
   className?: string;
@@ -29,6 +22,40 @@ interface ProcessQueriesButtonProps {
   queriesFilter?: string[]; // When set, only process queries whose tracked-query identity matches one of these
   iconOnly?: boolean; // Render as a compact circular icon button (for per-row actions)
 }
+
+interface ReprocessingJobResponse {
+  id: string;
+  brandId: string;
+  brandName: string;
+  brandDomain: string;
+  status: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
+  totalQueries: number;
+  successfulCount: number;
+  failedCount: number;
+  attemptedCount: number;
+  creditsRequired: number;
+  creditsUsed: number;
+  currentIndex: number;
+  currentQueryId: string | null;
+  cancellationRequested: boolean;
+  completedQueryIds: string[];
+  failedQueryIds: string[];
+  queries: Array<{
+    queryId: string;
+    query: string;
+    keyword: string;
+    category: string;
+  }>;
+  errors: Array<{ queryId: string; message: string }>;
+  processingSessionId: string;
+  processingSessionTimestamp: string;
+  startedAtMs: number | null;
+  completedAtMs: number | null;
+  failedAtMs: number | null;
+  cancelledAtMs: number | null;
+}
+
+const JOB_POLL_INTERVAL_MS = 2000;
 
 export default function ProcessQueriesButton({
   brandId,
@@ -49,24 +76,31 @@ export default function ProcessQueriesButton({
   const [processing, setProcessing] = useState(false);
   const [status, setStatus] = useState<'idle' | 'processing' | 'success' | 'error' | 'cancelled'>('idle');
   const [message, setMessage] = useState('');
-  const [processedResults, setProcessedResults] = useState<QueryProcessingResult[]>([]);
-  
-  // Add ref to track cancellation
-  const cancelledRef = useRef(false);
+  const [activeJob, setActiveJob] = useState<ReprocessingJobResponse | null>(null);
+  const [hasHydratedJob, setHasHydratedJob] = useState(false);
+  const pollingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const startNotifiedJobIdRef = useRef<string | null>(null);
+  const completionNotifiedJobIdRef = useRef<string | null>(null);
+  const currentQueryIdRef = useRef<string | null>(null);
 
   // Auto-trigger processing if autoStart becomes true
   const [autoStarted, setAutoStarted] = useState(false);
-  useEffect(() => {
-    if (autoStart && !autoStarted && !processing) {
-      setAutoStarted(true);
-      handleProcessQueries();
-    } else if (!autoStart && autoStarted) {
-      setAutoStarted(false);
-    }
-  }, [autoStart, autoStarted, processing]);
 
-  const getScopedQueries = (targetBrand: any) => {
-    const allBrandQueries = targetBrand?.queries || [];
+  const clearPollingTimeout = useCallback(() => {
+    if (pollingTimeoutRef.current) {
+      clearTimeout(pollingTimeoutRef.current);
+      pollingTimeoutRef.current = null;
+    }
+  }, []);
+
+  const targetBrandId = brandId || selectedBrand?.id;
+  const targetBrand = useMemo(
+    () => brands.find((brand) => brand.id === targetBrandId),
+    [brands, targetBrandId]
+  );
+
+  const getScopedQueries = useCallback((brand: any) => {
+    const allBrandQueries = brand?.queries || [];
     if (!queriesFilter || queriesFilter.length === 0) {
       return allBrandQueries;
     }
@@ -74,7 +108,269 @@ export default function ProcessQueriesButton({
     return allBrandQueries.filter((query: any) =>
       queriesFilter.includes(buildTrackedQueryIdentity(query))
     );
-  };
+  }, [queriesFilter]);
+
+  const scopedQueries = useMemo(
+    () => getScopedQueries(targetBrand),
+    [getScopedQueries, targetBrand]
+  );
+
+  const getIdToken = useCallback(async (): Promise<string> => {
+    const idToken = await getFirebaseIdTokenWithRetry(3, 1000);
+    if (!idToken) {
+      throw new Error('Failed to get authentication token. Please sign in again.');
+    }
+    return idToken;
+  }, []);
+
+  const getJobStatusMessage = useCallback((job: ReprocessingJobResponse, brandName: string): string => {
+    if (job.status === 'queued') {
+      return `Queued ${job.totalQueries} queries for ${brandName}...`;
+    }
+
+    if (job.status === 'processing') {
+      return `Processing ${job.attemptedCount + (job.currentQueryId ? 1 : 0)} of ${job.totalQueries} queries for ${brandName}...`;
+    }
+
+    if (job.status === 'cancelled') {
+      return `Processing cancelled after ${job.attemptedCount} of ${job.totalQueries} queries for ${brandName}.`;
+    }
+
+    if (job.status === 'failed') {
+      return `Processed ${job.successfulCount} of ${job.totalQueries} queries for ${brandName}. ${job.failedCount} failed.`;
+    }
+
+    return `Successfully processed ${job.successfulCount} queries for ${brandName}.`;
+  }, []);
+
+  const finishJob = useCallback(async (job: ReprocessingJobResponse, brandName: string) => {
+    if (completionNotifiedJobIdRef.current === job.id) {
+      return;
+    }
+
+    completionNotifiedJobIdRef.current = job.id;
+    setProcessing(false);
+
+    if (job.status === 'completed') {
+      setStatus(job.failedCount > 0 ? 'error' : 'success');
+      if (job.failedCount > 0) {
+        showWarning(
+          'Processing completed with errors',
+          `${job.successfulCount} queries succeeded and ${job.failedCount} failed for ${brandName}. Credits were only used for successful queries.`,
+        );
+      } else {
+        setStatus('success');
+        showSuccess(
+          'All Queries Processed',
+          `Successfully processed ${job.successfulCount} queries for ${brandName}. Used ${job.creditsUsed} credits.`,
+        );
+
+        const nextProcessingDate = new Date();
+        nextProcessingDate.setDate(nextProcessingDate.getDate() + 7);
+        const nextProcessingFormatted = nextProcessingDate.toLocaleDateString('en-US', {
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        });
+
+        setTimeout(() => {
+          showInfo(
+            'Next Processing Scheduled',
+            `Your next automatic processing is scheduled for ${nextProcessingFormatted}.`,
+          );
+        }, 3000);
+      }
+    } else if (job.status === 'cancelled') {
+      setStatus('cancelled');
+      showWarning(
+        'Processing Cancelled',
+        `Attempted ${job.attemptedCount} of ${job.totalQueries} queries before cancellation. ${job.successfulCount} succeeded and ${job.failedCount} failed.`,
+      );
+    } else if (job.status === 'failed') {
+      setStatus('error');
+      const latestError = job.errors[job.errors.length - 1]?.message || 'Reprocessing job failed.';
+      showError('Processing Failed', latestError);
+    }
+
+    try {
+      await Promise.all([refreshUserProfile(), refetchBrands()]);
+    } catch (refreshError) {
+      console.error('❌ Error refreshing post-job state:', refreshError);
+    }
+
+    onComplete?.({
+      success: job.status === 'completed' && job.failedCount === 0,
+      cancelled: job.status === 'cancelled',
+      job,
+      summary: {
+        totalQueries: job.totalQueries,
+        attemptedQueries: job.attemptedCount,
+        processedQueries: job.successfulCount,
+        totalErrors: job.failedCount,
+        creditsUsed: job.creditsUsed,
+      },
+    });
+
+    setTimeout(() => {
+      setActiveJob((current) => (current?.id === job.id ? null : current));
+      setStatus('idle');
+      setMessage('');
+      startNotifiedJobIdRef.current = null;
+      completionNotifiedJobIdRef.current = null;
+      currentQueryIdRef.current = null;
+    }, 5000);
+  }, [
+    onComplete,
+    refetchBrands,
+    refreshUserProfile,
+    showError,
+    showInfo,
+    showSuccess,
+    showWarning,
+  ]);
+
+  const applyJobState = useCallback(async (job: ReprocessingJobResponse, options: { notifyCompletion?: boolean } = {}) => {
+    const brandName = targetBrand?.companyName || job.brandName;
+    const isActive = job.status === 'queued' || job.status === 'processing';
+
+    setActiveJob(job);
+    setProcessing(isActive);
+    setStatus(
+      job.status === 'cancelled'
+        ? 'cancelled'
+        : job.status === 'failed'
+        ? 'error'
+        : job.status === 'completed'
+        ? 'success'
+        : 'processing'
+    );
+    setMessage(getJobStatusMessage(job, brandName));
+
+    if (startNotifiedJobIdRef.current !== job.id) {
+      startNotifiedJobIdRef.current = job.id;
+      onStart?.(job.queries.map((query) => query.queryId));
+    }
+
+    if (job.currentQueryId && currentQueryIdRef.current !== job.currentQueryId) {
+      currentQueryIdRef.current = job.currentQueryId;
+      onQueryStart?.(job.currentQueryId);
+    }
+
+    onProgress?.(job);
+
+    if (!isActive && options.notifyCompletion !== false) {
+      await finishJob(job, brandName);
+    }
+  }, [
+    finishJob,
+    getJobStatusMessage,
+    onProgress,
+    onQueryStart,
+    onStart,
+    targetBrand?.companyName,
+  ]);
+
+  const pollJob = useCallback(async (jobId: string) => {
+    try {
+      const idToken = await getIdToken();
+      const response = await fetch(`/api/reprocessing-jobs/${jobId}`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to poll job (${response.status})`);
+      }
+
+      const payload = await response.json();
+      const job = payload?.job as ReprocessingJobResponse | undefined;
+      if (!job) {
+        throw new Error('Server did not return a reprocessing job');
+      }
+
+      await applyJobState(job);
+
+      if (job.status === 'queued' || job.status === 'processing') {
+        clearPollingTimeout();
+        pollingTimeoutRef.current = setTimeout(() => {
+          void pollJob(job.id);
+        }, JOB_POLL_INTERVAL_MS);
+      }
+    } catch (error) {
+      console.error('❌ Failed to poll reprocessing job:', error);
+      setStatus('error');
+      setMessage(error instanceof Error ? error.message : 'Failed to poll reprocessing job');
+      setProcessing(false);
+    }
+  }, [applyJobState, clearPollingTimeout, getIdToken]);
+
+  const hydrateExistingJob = useCallback(async () => {
+    if (!user?.uid || !targetBrandId) {
+      setHasHydratedJob(true);
+      return;
+    }
+
+    try {
+      const idToken = await getIdToken();
+      const response = await fetch(`/api/reprocessing-jobs?brandId=${encodeURIComponent(targetBrandId)}`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to load reprocessing job (${response.status})`);
+      }
+
+      const payload = await response.json();
+      const job = payload?.job as ReprocessingJobResponse | null;
+      if (job) {
+        await applyJobState(job);
+
+        if (job.status === 'queued' || job.status === 'processing') {
+          clearPollingTimeout();
+          pollingTimeoutRef.current = setTimeout(() => {
+            void pollJob(job.id);
+          }, JOB_POLL_INTERVAL_MS);
+        }
+      } else {
+        setActiveJob(null);
+        setProcessing(false);
+        setStatus('idle');
+        setMessage('');
+        startNotifiedJobIdRef.current = null;
+        completionNotifiedJobIdRef.current = null;
+        currentQueryIdRef.current = null;
+      }
+    } catch (error) {
+      console.error('❌ Failed to hydrate reprocessing job:', error);
+    } finally {
+      setHasHydratedJob(true);
+    }
+  }, [applyJobState, clearPollingTimeout, getIdToken, pollJob, targetBrandId, user?.uid]);
+
+  useEffect(() => {
+    if (autoStart && hasHydratedJob && !autoStarted && !processing) {
+      setAutoStarted(true);
+      void handleProcessQueries();
+    } else if (!autoStart && autoStarted) {
+      setAutoStarted(false);
+    }
+  }, [autoStart, autoStarted, hasHydratedJob, processing]);
+
+  useEffect(() => {
+    clearPollingTimeout();
+    setHasHydratedJob(false);
+    void hydrateExistingJob();
+
+    return () => {
+      clearPollingTimeout();
+    };
+  }, [clearPollingTimeout, hydrateExistingJob]);
 
   const handleProcessQueries = async () => {
     if (!user?.uid) {
@@ -83,10 +379,6 @@ export default function ProcessQueriesButton({
       return;
     }
 
-    // Check user credits (10 credits per query) - Skip if autoStart is true
-    const targetBrandId = brandId || selectedBrand?.id;
-    const targetBrand = brands.find(b => b.id === targetBrandId);
-    
     if (!targetBrand) {
       setStatus('error');
       setMessage('No brand selected');
@@ -94,7 +386,7 @@ export default function ProcessQueriesButton({
     }
 
     const brandName = targetBrand.companyName;
-    const queries = getScopedQueries(targetBrand);
+    const queries = scopedQueries;
 
     if (queries.length === 0) {
       setStatus('error');
@@ -124,276 +416,50 @@ export default function ProcessQueriesButton({
     setProcessing(true);
     setStatus('processing');
     setMessage(`Processing ${queries.length} queries for ${brandName}... (${requiredCredits} credits)`);
-    setProcessedResults([]); // Reset processed results
-    cancelledRef.current = false;
-
-    // Notify parent that processing has started — pass the batch so the UI
-    // can scope its "Processing" state to queries actually in this run.
-    if (onStart) {
-      onStart(queries.map((query: any) => buildTrackedQueryIdentity(query)));
-    }
 
     try {
-      // Get Firebase ID token for authentication with retry logic
-      const idToken = await getFirebaseIdTokenWithRetry(3, 1000);
-      
-      if (!idToken) {
-        throw new Error('Failed to get authentication token. Please sign in again.');
-      }
+      const idToken = await getIdToken();
+      const response = await fetch('/api/reprocessing-jobs', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          brandId: targetBrandId,
+          ...(queriesFilter && queriesFilter.length > 0 && { queriesFilter }),
+        }),
+      });
 
-      // Generate unique processing session identifier
-      const processingSessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      const processingSessionTimestamp = new Date().toISOString();
-      
-      // Process queries one by one and save incrementally. `allResults`
-      // is reassigned to the updated accumulator returned by the shared
-      // persistence helper, so `let`.
-      let allResults: QueryProcessingResult[] = [];
-      let successfulCount = 0;
-      let failedCount = 0;
-
-      for (let queryIndex = 0; queryIndex < queries.length; queryIndex++) {
-        const query = queries[queryIndex];
-        // Check if cancelled
-        if (cancelledRef.current) {
-          break;
-        }
-
-        try {
-          // Notify parent that this specific query is starting
-          if (onQueryStart) {
-            onQueryStart(buildTrackedQueryIdentity(query));
-          }
-
-          setMessage(`Processing query ${queryIndex + 1} of ${queries.length} for ${brandName}... (10 credits per query)`);
-          
-          // Process individual query with authentication and server-owned
-          // persistence. The API only returns 200 once the result has been
-          // durably written (or it refunds credits and errors).
-
-          let response;
-          try {
-            response = await fetch(`${window.location.origin}/api/user-query`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${idToken}`, // Add Firebase ID token
-              },
-              body: JSON.stringify({
-                query: query.query,
-                context: `This query is related to ${targetBrand.companyName} in the ${query.category} category. Topic: ${query.keyword}.`,
-                // Note: `isAutoStart` is no longer sent. The server ignores
-                // client-set bypass flags and charges every authenticated
-                // request — only the cron path (server-side secret) skips
-                // billing. Auto-started UI batches now cost credits like
-                // manual ones.
-                persistResult: true,
-                brandId: targetBrandId,
-                brandName: targetBrand.companyName,
-                brandDomain: targetBrand.domain,
-                keyword: query.keyword,
-                category: query.category,
-                processingSessionId,
-                processingSessionTimestamp,
-                clientRequestId: [
-                  processingSessionId,
-                  query.category,
-                  query.keyword || '',
-                  query.query,
-                ].join('::'),
-              }),
-            });
-          } catch (fetchError) {
-            console.error('❌ Fetch error:', fetchError);
-            throw new Error(`Network error: ${fetchError instanceof Error ? fetchError.message : 'Unknown fetch error'}`);
-          }
-
-          if (!response.ok) {
-            const errorText = await response.text();
-            console.error('❌ API error response:', errorText);
-
-            let errorData: any = null;
-            try {
-              errorData = JSON.parse(errorText);
-            } catch {
-              // Body wasn't JSON — fall through to the generic network-error branch.
-            }
-
-            if (!errorData) {
-              showError(
-                'Network Error',
-                'Failed to communicate with the server. Please check your connection and try again.',
-              );
-              throw new Error(`Failed to process query (${response.status}): ${query.query.substring(0, 30)}...`);
-            }
-
-            if (errorData.code === 'INSUFFICIENT_CREDITS') {
-              showError(
-                'Insufficient Credits',
-                `You need ${errorData.requiredCredits} credits but only have ${errorData.availableCredits} available.`,
-              );
-              throw new Error(`Insufficient credits: Need ${errorData.requiredCredits}, have ${errorData.availableCredits}`);
-            }
-
-            if (errorData.code === 'AUTHENTICATION_REQUIRED') {
-              showError(
-                'Authentication Failed',
-                'Please sign in again to continue processing queries.',
-              );
-              throw new Error('Authentication failed. Please sign in again.');
-            }
-
-            showError(
-              'Query Processing Failed',
-              errorData.error || 'An unexpected error occurred while processing your query.',
-            );
-            throw new Error(errorData.error || `Failed to process query (${response.status})`);
-          }
-
-          const queryData = await response.json();
-
-          // Don't refresh the profile inside the loop — the `finally` block
-          // does a single refresh once the batch is done. Per-iteration
-          // refreshes can race against each other and against the batch's
-          // own deductions, briefly flashing stale credits in the sidebar.
-
-          const persistedQueryResult = queryData.persistedQueryResult as QueryProcessingResult | undefined;
-          if (!persistedQueryResult) {
-            throw new Error('Server did not return the persisted query result');
-          }
-
-          allResults = [
-            ...allResults.filter((existing) => !(
-              existing.processingSessionId === persistedQueryResult.processingSessionId &&
-              existing.query === persistedQueryResult.query &&
-              existing.keyword === persistedQueryResult.keyword &&
-              existing.category === persistedQueryResult.category
-            )),
-            persistedQueryResult,
-          ];
-          successfulCount++;
-
-          // Update local state immediately to show progress
-          setProcessedResults([...allResults]);
-
-          // Notify parent component about progress
-          if (onProgress) {
-            onProgress([...allResults]);
-          }
-
-          // Competitor analytics are live-computed at view time from
-          // brand.queryProcessingResults (see calculateLiveCompetitorAnalytics),
-          // so no separate snapshot write is needed here.
-
-          // Small delay between queries
-          await new Promise(resolve => setTimeout(resolve, 1000));
-
-        } catch (queryError) {
-          console.error(`Error processing query: ${query.query}`, queryError);
-          
-          // If it's a credit or auth error, stop processing
-          if (queryError instanceof Error && 
-              (queryError.message.includes('Insufficient credits') || 
-               queryError.message.includes('Authentication failed'))) {
-            setStatus('error');
-            setMessage(queryError.message);
-            return;
-          }
-          
-          failedCount++;
-        }
-      }
-
-      const attemptedCount = successfulCount + failedCount;
-
-      // Check if cancelled
-      if (cancelledRef.current) {
-        setStatus('cancelled');
-        setMessage(`Processing cancelled. Attempted ${attemptedCount} of ${queries.length} queries.`);
-        showWarning(
-          '⏸️ Processing Cancelled',
-          `Attempted ${attemptedCount} of ${queries.length} queries before cancellation. ${successfulCount} succeeded and ${failedCount} failed.`
-        );
-      } else if (failedCount > 0) {
-        setStatus('error');
-        setMessage(`Processed ${successfulCount} of ${queries.length} queries for ${brandName}. ${failedCount} failed.`);
-        showWarning(
-          'Processing completed with errors',
-          `${successfulCount} queries succeeded and ${failedCount} failed for ${brandName}. Credits were only used for successful queries.`
-        );
-      } else {
-        setStatus('success');
-        setMessage(`Successfully processed ${successfulCount} queries for ${brandName}! (${successfulCount * 10} credits used)`);
-        // Calculate next processing date (7 days from now)
-        const nextProcessingDate = new Date();
-        nextProcessingDate.setDate(nextProcessingDate.getDate() + 7);
-        const nextProcessingFormatted = nextProcessingDate.toLocaleDateString('en-US', {
-          weekday: 'long',
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric'
-        });
-        
-        showSuccess(
-          '🎉 All Queries Processed!',
-          `Successfully processed ${successfulCount} queries for ${brandName}. Used ${successfulCount * 10} credits.`
-        );
-        
-        // Show scheduling information after a brief delay
-        setTimeout(() => {
-          showInfo(
-            '📅 Next Processing Scheduled',
-            `Your next automatic processing is scheduled for ${nextProcessingFormatted}. You can also process queries manually anytime.`
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        if (payload?.code === 'INSUFFICIENT_CREDITS') {
+          showError(
+            'Insufficient Credits',
+            `You need ${payload.requiredCredits} credits but only have ${payload.availableCredits} available.`,
           );
-        }, 3000);
-      }
-
-      // Analytics are now calculated and saved incrementally after each query
-      // No need for final analytics calculation since it's done per query
-
-      // Refresh lifetime snapshot after completing all queries so the
-      // Overview page's Lifetime tab reflects reality. Runs even when the
-      // user cancelled mid-batch, as long as at least one query persisted.
-      if (successfulCount > 0) {
-        setMessage(`Updating lifetime analytics for ${brandName}...`);
-        const { success: lifetimeOk, error: lifetimeError } =
-          await refreshLifetimeSnapshot(targetBrandId!, user!.uid);
-        if (!lifetimeOk) {
-          console.error('❌ Error refreshing lifetime snapshot:', lifetimeError);
-          // Don't fail the whole process for a snapshot miss.
+        } else {
+          showError(
+            'Processing Failed',
+            payload?.error || 'Failed to create reprocessing job.',
+          );
         }
+
+        throw new Error(payload?.error || `Failed to create reprocessing job (${response.status})`);
       }
 
-      // Call the onComplete callback if provided
-      if (onComplete) {
-        onComplete({
-          success: !cancelledRef.current && failedCount === 0,
-          cancelled: cancelledRef.current,
-          queryResults: allResults,
-          summary: {
-            totalQueries: queries.length,
-            attemptedQueries: attemptedCount,
-            processedQueries: successfulCount,
-            totalErrors: failedCount,
-            creditsUsed: successfulCount * 10
-          }
-        });
+      const job = payload?.job as ReprocessingJobResponse | undefined;
+      if (!job) {
+        throw new Error('Server did not return a reprocessing job');
       }
 
-      // Force a complete refresh of brand data to ensure all components update
-      try {
-        await refetchBrands();
-      } catch (refreshError) {
-        console.error('❌ Error during final brand data refresh:', refreshError);
-      }
-
-      // Reset status after 5 seconds
-      setTimeout(() => {
-        setStatus('idle');
-        setMessage('');
-      }, 5000);
-
+      await applyJobState(job, { notifyCompletion: false });
+      clearPollingTimeout();
+      pollingTimeoutRef.current = setTimeout(() => {
+        void pollJob(job.id);
+      }, JOB_POLL_INTERVAL_MS);
     } catch (error) {
+      setProcessing(false);
       setStatus('error');
       const errorMessage = error instanceof Error ? error.message : 'Failed to process queries';
       setMessage(errorMessage);
@@ -410,29 +476,42 @@ export default function ProcessQueriesButton({
         setStatus('idle');
         setMessage('');
       }, 5000);
-    } finally {
-      setProcessing(false);
-      cancelledRef.current = false; // Reset cancellation flag
-      
-      // Refresh user profile to show updated credits
-      try {
-        await refreshUserProfile();
-      } catch (refreshError) {
-        console.error('❌ Error refreshing user profile:', refreshError);
-      }
-      
-      // Do a final refresh to get the latest data
-      try {
-        await refetchBrands();
-      } catch (error) {
-        console.error('Error doing final refresh:', error);
-      }
     }
   };
 
-  const handleStopProcessing = () => {
-    cancelledRef.current = true;
-    setMessage('Stopping processing...');
+  const handleStopProcessing = async () => {
+    if (!activeJob) return;
+
+    try {
+      setMessage('Stopping processing...');
+      const idToken = await getIdToken();
+      const response = await fetch(`/api/reprocessing-jobs/${activeJob.id}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          action: 'cancel',
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to cancel reprocessing job (${response.status})`);
+      }
+
+      const payload = await response.json();
+      const job = payload?.job as ReprocessingJobResponse | undefined;
+      if (job) {
+        await applyJobState(job, { notifyCompletion: false });
+      }
+    } catch (error) {
+      console.error('❌ Failed to cancel reprocessing job:', error);
+      showError(
+        'Cancel Failed',
+        error instanceof Error ? error.message : 'Failed to cancel reprocessing job.',
+      );
+    }
   };
 
   // Check if queries have been processed
@@ -450,7 +529,7 @@ export default function ProcessQueriesButton({
     ).length;
   };
 
-  const hasProcessedQueries = getProcessedQueriesCount() > 0;
+  const hasProcessedQueries = getProcessedQueriesCount() > 0 || !!targetBrand?.lastProcessedAt;
 
   // Calculate required credits
   const getRequiredCredits = () => {
@@ -538,6 +617,9 @@ export default function ProcessQueriesButton({
     }
     
     if (processing) {
+      if (activeJob) {
+        return `Processing ${activeJob.attemptedCount}/${activeJob.totalQueries}...`;
+      }
       return 'Processing...';
     }
     
@@ -546,7 +628,6 @@ export default function ProcessQueriesButton({
     }
     
     if (hasProcessedQueries) {
-      const count = getProcessedQueriesCount();
       return `Reprocess Queries (${requiredCredits} Credits)`;
     }
     
@@ -612,7 +693,7 @@ export default function ProcessQueriesButton({
         </button>
         
         {/* Stop button - only visible during processing */}
-        {processing && !cancelledRef.current && (
+        {processing && !activeJob?.cancellationRequested && (
           <button
             onClick={handleStopProcessing}
             className={`
@@ -631,7 +712,7 @@ export default function ProcessQueriesButton({
       
       {processing && (
         <p className="text-xs text-green-600 mt-1 font-medium text-center">
-          ⚠️ Don't Refresh or Leave Page while Queries are Processing
+          Processing continues on the server if you leave this page.
         </p>
       )}
       

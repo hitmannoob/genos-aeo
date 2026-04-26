@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { firestore } from '@/firebase/firebase-admin';
 import {
-  refreshLifetimeSnapshot,
-} from '@/firebase/firestore/persistQueryResult';
+  refreshLifetimeSnapshotServer,
+} from '@/firebase/firestore/brandAnalyticsServer';
 
 // Scheduled-run endpoint.
 // Hit this periodically (Firebase Scheduler / vercel.json cron / GitHub Actions).
@@ -233,7 +233,7 @@ export async function POST(request: NextRequest) {
     // this closes the gap for scheduled runs.
     let lifetimeSnapshotRefreshed = false;
     if (succeeded > 0) {
-      const { success, error } = await refreshLifetimeSnapshot(brand.id, brand.userId);
+      const { success, error } = await refreshLifetimeSnapshotServer(brand.id, brand.userId);
       lifetimeSnapshotRefreshed = success;
       if (error) {
         errors.push(`lifetime-snapshot: ${(error as Error).message ?? String(error)}`);

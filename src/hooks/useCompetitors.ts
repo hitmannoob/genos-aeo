@@ -1,13 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useMemo } from 'react';
 import { useBrandContext } from '@/context/BrandContext';
-import { useAuthContext } from '@/context/AuthContext';
-import { calculateLiveCompetitorAnalytics } from '@/firebase/firestore/competitorAnalytics';
-import {
-  loadBrandWithQueryResults,
-  brandWithResultsQueryKey,
-  type BrandWithResults,
-} from '@/firebase/firestore/brandWithResults';
+import { useBrandAnalyticsBundle } from './useBrandAnalytics';
+import type { CompetitorAnalyticsData } from '@/utils/competitor-analytics';
 
 interface CompetitorData {
   id: string;
@@ -30,86 +24,46 @@ interface UseCompetitorsReturn {
 }
 
 export function useCompetitors(): UseCompetitorsReturn {
-  const { user } = useAuthContext();
   const { selectedBrand, selectedBrandId, loading: brandLoading } = useBrandContext();
-  const queryClient = useQueryClient();
-  const [competitors, setCompetitors] = useState<CompetitorData[]>([]);
-  const [totalQueriesProcessed, setTotalQueriesProcessed] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const analyticsQuery = useBrandAnalyticsBundle(selectedBrandId || undefined, true);
 
-  const fetchCompetitors = useCallback(async () => {
-    if (!user?.uid || !selectedBrandId || brandLoading || !selectedBrand) {
-      setLoading(false);
-      return;
+  const competitors = useMemo(() => {
+    const result = analyticsQuery.data?.competitorAnalytics;
+    if (!selectedBrandId || !selectedBrand || !result) {
+      return [];
     }
 
-    setLoading(true);
-    setError(null);
+    const { current, previous } = result;
+    return Object.entries(current.competitorStats as CompetitorAnalyticsData['competitorStats']).map(([name, stats], index) => {
+      const priorMentions = previous?.competitorStats?.[name]?.totalMentions;
+      const mentionsChange =
+        typeof priorMentions === 'number' ? stats.totalMentions - priorMentions : null;
 
-    try {
-      // Share the brand + queryProcessingResults fetch with brand analytics hooks
-      // so a single Cloud Storage load serves every pipeline on the page.
-      const preloaded = await queryClient.fetchQuery<BrandWithResults>({
-        queryKey: brandWithResultsQueryKey(selectedBrandId),
-        queryFn: () => loadBrandWithQueryResults(selectedBrandId),
-        staleTime: 3 * 60 * 1000,
-      });
+      return {
+        id: (index + 1).toString(),
+        name,
+        domain: undefined,
+        mentions: stats.totalMentions,
+        visibility: Math.round(stats.visibilityScore),
+        queriesAnalyzed: current.totalQueriesProcessed,
+        topProvider: stats.topProvider,
+        lastUpdated: current.processingSessionTimestamp,
+        mentionsChange,
+      };
+    });
+  }, [analyticsQuery.data?.competitorAnalytics, selectedBrand, selectedBrandId]);
 
-      const { result, error: analyticsError } = await calculateLiveCompetitorAnalytics(selectedBrandId, user!.uid, preloaded);
-
-      if (analyticsError) {
-        throw new Error(typeof analyticsError === 'string' ? analyticsError : 'Failed to compute competitor analytics');
-      }
-
-      if (!result) {
-        setCompetitors([]);
-        setTotalQueriesProcessed(0);
-        setLoading(false);
-        return;
-      }
-
-      const { current, previous } = result;
-
-      const competitorData: CompetitorData[] = Object.entries(current.competitorStats).map(([name, stats], index) => {
-        const priorMentions = previous?.competitorStats?.[name]?.totalMentions;
-        const mentionsChange =
-          typeof priorMentions === 'number' ? stats.totalMentions - priorMentions : null;
-
-        return {
-          id: (index + 1).toString(),
-          name,
-          domain: undefined,
-          mentions: stats.totalMentions,
-          visibility: Math.round(stats.visibilityScore),
-          queriesAnalyzed: current.totalQueriesProcessed,
-          topProvider: stats.topProvider,
-          lastUpdated: current.processingSessionTimestamp,
-          mentionsChange,
-        };
-      });
-
-      setCompetitors(competitorData);
-      setTotalQueriesProcessed(current.totalQueriesProcessed);
-    } catch (err) {
-      console.error('Error fetching competitors:', err);
-      setError('Failed to load competitor analytics. Please process some queries first.');
-      setCompetitors([]);
-      setTotalQueriesProcessed(0);
-    } finally {
-      setLoading(false);
-    }
-  }, [user?.uid, selectedBrandId, brandLoading, selectedBrand, queryClient]);
-
-  useEffect(() => {
-    fetchCompetitors();
-  }, [fetchCompetitors]);
+  const totalQueriesProcessed = analyticsQuery.data?.competitorAnalytics?.current.totalQueriesProcessed || 0;
 
   return {
     competitors,
     totalQueriesProcessed,
-    loading,
-    error,
-    refetch: fetchCompetitors
+    loading: brandLoading || analyticsQuery.isLoading,
+    error: analyticsQuery.error instanceof Error
+      ? analyticsQuery.error.message
+      : null,
+    refetch: async () => {
+      await analyticsQuery.refetch();
+    },
   };
-} 
+}

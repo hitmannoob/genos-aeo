@@ -15,7 +15,6 @@ import BrandAnalyticsDisplay from '@/components/features/BrandAnalyticsDisplay';
 import { useBrandAnalyticsCombined } from '@/hooks/useBrandAnalytics';
 import LifetimeAnalyticsCharts from '@/components/features/LifetimeAnalyticsCharts';
 import CompetitorMentionsCard from '@/components/features/CompetitorMentionsCard';
-import { buildLiveRecommendations } from '@/lib/liveRecommendations';
 
 
 function Page(): React.ReactElement {
@@ -26,6 +25,7 @@ function Page(): React.ReactElement {
   const {
     latestAnalytics,
     lifetimeAnalytics,
+    recommendations,
     loading: analyticsLoading,
     hasLatestData,
     hasLifetimeData
@@ -78,14 +78,6 @@ function Page(): React.ReactElement {
       brandMentionRate: totalCitations > 0 ? (brandMentions / totalCitations * 100) : 0
     };
   }, [lifetimeAnalytics?.allCitations, selectedBrand]);
-
-  const recommendations = useMemo(() => {
-    return buildLiveRecommendations({
-      brand: selectedBrand,
-      latestAnalytics,
-      lifetimeAnalytics,
-    });
-  }, [selectedBrand, latestAnalytics, lifetimeAnalytics]);
 
   useEffect(() => {
     // Only redirect if not loading and user is null

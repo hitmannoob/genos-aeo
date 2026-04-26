@@ -3,7 +3,7 @@ import type {
   BrandAnalyticsData,
   LifetimeBrandAnalytics,
 } from '@/firebase/firestore/brandAnalytics';
-import type { RecommendationData } from '@/firebase/firestore/dashboardData';
+import type { RecommendationData } from '@/lib/recommendation-types';
 
 interface BuildLiveRecommendationsOptions {
   brand?: Pick<UserBrand, 'companyName' | 'domain' | 'queries'> | null;

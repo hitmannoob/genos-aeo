@@ -1,35 +1,52 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ProviderManager } from '@/lib/api-providers/provider-manager';
 import { APIRequest } from '@/lib/api-providers/types';
+import { authenticateApiRequest } from '@/lib/serverAuth';
+import { z } from 'zod';
 
 const providerManager = new ProviderManager();
 
+const AllowedProviderSchema = z.enum([
+  'chatgptsearch',
+  'google-gemini',
+  'google-ai-overview',
+  'perplexity',
+]);
+
+const AIQueryRequestSchema = z.object({
+  prompt: z.string().trim().min(1).max(20000),
+  providers: z.array(AllowedProviderSchema).max(4).optional(),
+  priority: z.enum(['low', 'medium', 'high']).optional(),
+});
+
+const DEFAULT_AI_QUERY_PROVIDERS: APIRequest['providers'] = [
+  'chatgptsearch',
+  'google-gemini',
+];
+
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { prompt, providers = [], priority = 'medium', userId } = body;
-
-    console.log('🚀 AI Query API Request:', {
-      prompt: prompt?.substring(0, 100) + '...',
-      providers,
-      priority,
-      userId,
-      timestamp: new Date().toISOString()
-    });
-
-    if (!prompt) {
+    const authResult = await authenticateApiRequest(request);
+    if (!authResult) {
       return NextResponse.json(
-        { error: 'Prompt is required' },
+        { error: 'Authentication required' },
+        { status: 401 }
+      );
+    }
+
+    const body = await request.json().catch(() => null);
+    const parsedInput = AIQueryRequestSchema.safeParse(body);
+    if (!parsedInput.success) {
+      return NextResponse.json(
+        { error: 'Invalid AI query request' },
         { status: 400 }
       );
     }
 
-    if (!userId) {
-      return NextResponse.json(
-        { error: 'User ID is required' },
-        { status: 400 }
-      );
-    }
+    const { prompt, priority = 'medium' } = parsedInput.data;
+    const providers = parsedInput.data.providers && parsedInput.data.providers.length > 0
+      ? parsedInput.data.providers
+      : DEFAULT_AI_QUERY_PROVIDERS;
 
     // Create API request
     const apiRequest: APIRequest = {
@@ -37,7 +54,7 @@ export async function POST(request: NextRequest) {
       prompt,
       providers,
       priority,
-      userId,
+      userId: authResult.uid,
       metadata: {
         userAgent: request.headers.get('user-agent'),
         timestamp: new Date().toISOString(),
@@ -70,11 +87,8 @@ export async function POST(request: NextRequest) {
       results: result.results,
       totalCost: result.totalCost,
       completedAt: result.completedAt,
-      // Add debug info to see in browser
       debug: {
         providersExecuted: result.results?.map(r => r.providerId) || [],
-        serverLogs: "Check server console for detailed logs",
-        timestamp: new Date().toISOString()
       }
     });
 
@@ -86,24 +100,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-
-export async function GET(request: NextRequest) {
-  try {
-    // Get provider status
-    const status = await providerManager.getProviderStatus();
-    const availableProviders = providerManager.getAvailableProviders();
-
-    return NextResponse.json({
-      success: true,
-      providers: availableProviders,
-      status,
-    });
-
-  } catch (error) {
-    console.error('Provider Status Error:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
-  }
-} 

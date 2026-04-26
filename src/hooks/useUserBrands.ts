@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuthContext } from '@/context/AuthContext';
-import { getUserBrands, UserBrand } from '@/firebase/firestore/getUserBrands';
+import type { UserBrand } from '@/firebase/firestore/getUserBrands';
 import { toIsoString } from '@/firebase/firestore/timestamps';
+import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
 
 interface UseUserBrandsReturn {
   brands: UserBrand[];
@@ -42,8 +43,21 @@ export function useUserBrands(): UseUserBrandsReturn {
     setError(null);
 
     try {
-      console.log('🚀 useUserBrands - Calling getUserBrands with UID:', requestUid);
-      const { result, error: fetchError } = await getUserBrands(requestUid);
+      console.log('🚀 useUserBrands - Calling /api/brands with UID:', requestUid);
+      const idToken = await getFirebaseIdTokenWithRetry(3, 500);
+      if (!idToken) {
+        throw new Error('Failed to get authentication token');
+      }
+
+      const response = await fetch('/api/brands', {
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+        },
+      });
+
+      const payload = await response.json();
+      const result = Array.isArray(payload?.brands) ? payload.brands : [];
+      const fetchError = !response.ok ? (payload?.error || 'Failed to load brands') : null;
 
       // If the user changed during the fetch, the response is for a stale
       // identity — drop it so the newer fetch's result wins.
@@ -61,7 +75,7 @@ export function useUserBrands(): UseUserBrandsReturn {
         // createdAt may be a Firestore Timestamp (serverTimestamp write), a
         // legacy ISO string, or a Date — normalise through toIsoString so
         // new Date(...).getTime() behaves consistently.
-        const sortedBrands = (result || []).slice().sort((a, b) => {
+        const sortedBrands = (result || []).slice().sort((a: UserBrand, b: UserBrand) => {
           const aIso = toIsoString((a as any).createdAt);
           const bIso = toIsoString((b as any).createdAt);
           const aTime = (a as any).timestamp || (aIso ? new Date(aIso).getTime() : 0);
@@ -70,7 +84,7 @@ export function useUserBrands(): UseUserBrandsReturn {
         });
         console.log('✅ useUserBrands - Successfully fetched brands:', {
           brandsCount: sortedBrands.length,
-          brands: sortedBrands.map(b => ({ id: b.id, name: b.companyName }))
+          brands: sortedBrands.map((brand: UserBrand) => ({ id: brand.id, name: brand.companyName }))
         });
         setBrands(sortedBrands);
       }

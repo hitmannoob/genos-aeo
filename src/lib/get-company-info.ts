@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-const CompanyInfoInputSchema = z.object({
+export const CompanyInfoInputSchema = z.object({
   domain: z.string().describe('The company domain name (e.g., "example.com" or "https://example.com").'),
 });
 export type CompanyInfoInput = z.infer<typeof CompanyInfoInputSchema>;

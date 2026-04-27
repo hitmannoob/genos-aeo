@@ -12,7 +12,6 @@ import {
   Download,
   RefreshCw,
   AlertCircle,
-  AlertTriangle,
   Globe,
   BarChart3,
   MessageSquare,
@@ -299,22 +298,6 @@ export default function CitationsPage(): React.ReactElement {
             </button>
           </div>
         </div>
-
-        {/* Cloud Storage truncation warning — surface stale/incomplete data so
-            users don't act on numbers that are silently missing ~everything. */}
-        {lifetimeAnalytics?.dataTruncated && (
-          <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900">
-            <AlertTriangle className="h-5 w-5 flex-shrink-0 mt-0.5" />
-            <div className="text-sm">
-              <div className="font-semibold">Citations are running on a partial dataset.</div>
-              <div className="mt-1">
-                We couldn't load the full query history from Cloud Storage, so the
-                citations below are extracted from the most recent ~50 queries only.
-                Reload the page to retry, or contact support if this persists.
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Data Source Info Banner */}
         <div className="bg-primary/5 border border-primary/20 rounded-lg p-4">

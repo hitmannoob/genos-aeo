@@ -44,13 +44,17 @@ export function useCompanyInfo(): UseCompanyInfoReturn {
         throw new Error('Authentication required');
       }
       
+      const clientRequestId = (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
       const response = await fetch('/api/get-company-info', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${idToken}`,
         },
-        body: JSON.stringify({ domain }),
+        body: JSON.stringify({ domain, clientRequestId }),
       });
 
       const data = await response.json();

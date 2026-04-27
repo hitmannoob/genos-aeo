@@ -80,7 +80,8 @@ That relationship is enforceable with foreign keys and unique indexes.
 
 7. Move dashboard reads to SQL.
    Use direct SQL rollups from `query_runs`, `provider_results`, and
-   `citations`. Cache only expensive summaries in `brand_daily_metrics`.
+   `citations`. The `brand_provider_daily_rollup` view aggregates these on
+   demand; add a materialized rollup only if measured latency requires it.
 
 8. Backfill Firestore data.
    Import existing users, brands, queries, historical query results, and credit
@@ -138,6 +139,6 @@ One entity should have one write owner at a time. For example, once credits move
 to SQL, Firestore credits become read-only legacy data and must not be updated
 by app code.
 
-If a temporary dual-write is unavoidable, write the primary database first and
-record an `outbox_events` row in the same transaction. A retry worker owns any
-secondary sync.
+If a future flow ever needs to commit DB state and notify an external system
+atomically, reintroduce a transactional outbox table at that point — there is
+no current consumer, so no outbox lives in the schema today.

@@ -118,8 +118,8 @@ export abstract class BaseAPIProvider {
     throw lastError!;
   }
 
-  // Per-user provider rate limiter. This is Firestore-backed so serverless
-  // instance count does not multiply effective limits.
+  // Per-user provider rate limiter. Backed by the rate_limit_buckets Postgres
+  // table so serverless instance count does not multiply effective limits.
   protected async checkRateLimit(userId?: string): Promise<boolean> {
     const key = userId && userId.trim() !== '' ? userId : GLOBAL_BUCKET_KEY;
     try {

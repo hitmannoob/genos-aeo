@@ -2,6 +2,8 @@ import { z } from 'zod';
 
 export const CompanyInfoInputSchema = z.object({
   domain: z.string().describe('The company domain name (e.g., "example.com" or "https://example.com").'),
+  clientRequestId: z.string().min(1).max(120).optional()
+    .describe('Stable per-request id from the client; used to dedupe credit deduction on retry.'),
 });
 export type CompanyInfoInput = z.infer<typeof CompanyInfoInputSchema>;
 

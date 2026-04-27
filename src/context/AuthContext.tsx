@@ -48,8 +48,8 @@ interface AuthContextProviderProps {
 }
 
 // One automatic retry with a short backoff. Profile creation can fail on
-// signup if the auth token hasn't propagated to Firestore yet (race window
-// is tens of ms); a single retry resolves nearly all of these.
+// signup if the Firebase Admin SDK hasn't picked up the just-issued token
+// yet (race window is tens of ms); a single retry resolves nearly all of these.
 async function fetchProfileFromServer(user: User, method: 'GET' | 'POST'): Promise<UserProfile> {
   const idToken = await user.getIdToken();
   const response = await fetch('/api/users/profile', {

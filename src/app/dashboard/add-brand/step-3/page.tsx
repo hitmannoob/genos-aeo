@@ -318,7 +318,7 @@ Output format (return ONLY valid JSON array):
 
       console.log('✅ Brand analytics generated:', brandsbasicData);
 
-      // Prepare complete brand data for Firestore
+      // Prepare the complete brand payload sent to /api/brands.
       const completeBrandData = {
         // User Information
         userId: user.uid,
@@ -452,7 +452,7 @@ Output format (return ONLY valid JSON array):
         return;
       }
 
-      console.log('✅ Brand data saved successfully to Firestore:', brandId);
+      console.log('✅ Brand data saved successfully:', brandId);
 
       // Sync the credit balance shown in the sidebar / UI now that the tx committed.
       await refreshUserProfile();

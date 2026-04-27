@@ -224,7 +224,13 @@ export async function POST(request: NextRequest) {
 
     // Parse the AI response
     const companyInfo = parseAIResponse(primaryResult.data.content, domain);
+    // Without a stable idempotency key a retried request gets charged twice.
+    // Prefer the client-supplied request id; fall back to a per-user/domain hour
+    // bucket so tight retries still dedupe even when the client omits the id.
+    const requestKey = parsedInput.data.clientRequestId
+      ?? `${domain}:hour:${Math.floor(Date.now() / 3_600_000)}`;
     const userCredits = await deductUserCreditsServer(authResult.uid, COMPANY_INFO_CREDIT_COST, {
+      idempotencyKey: `companyinfo:${authResult.uid}:${requestKey}`,
       reason: 'company info lookup',
       metadata: {
         domain,

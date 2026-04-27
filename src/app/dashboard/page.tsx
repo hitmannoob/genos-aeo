@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo } from "react";
 import { useAuthContext } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
-import { BarChart3, RefreshCw, AlertCircle, AlertTriangle } from 'lucide-react';
+import { BarChart3, RefreshCw, AlertCircle } from 'lucide-react';
 import Link from 'next/link';
 
 import DashboardLayout from '@/components/layout/DashboardLayout';
@@ -131,7 +131,6 @@ function Page(): React.ReactElement {
     // Clean up remaining session storage
     sessionStorage.removeItem('newBrandId');
     sessionStorage.removeItem('newBrandName');
-    sessionStorage.removeItem('firestoreDocId');
     sessionStorage.removeItem('brandsbasicData');
     sessionStorage.removeItem('generatedQueries');
     
@@ -149,7 +148,6 @@ function Page(): React.ReactElement {
     // Clean up session storage
     sessionStorage.removeItem('newBrandId');
     sessionStorage.removeItem('newBrandName');
-    sessionStorage.removeItem('firestoreDocId');
     sessionStorage.removeItem('brandsbasicData');
     sessionStorage.removeItem('generatedQueries');
   };
@@ -222,22 +220,6 @@ function Page(): React.ReactElement {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        {/* Cloud Storage retrieval failed and analytics fell back to the
-            Firestore-truncated copy. Surface it so users don't act on wrong numbers. */}
-        {lifetimeAnalytics?.dataTruncated && (
-          <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900">
-            <AlertTriangle className="h-5 w-5 flex-shrink-0 mt-0.5" />
-            <div className="text-sm">
-              <div className="font-semibold">Analytics are running on a partial dataset.</div>
-              <div className="mt-1">
-                We couldn't load the full query history from Cloud Storage, so the
-                numbers below are computed from the most recent ~50 queries only.
-                Reload the page to retry, or contact support if this persists.
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* --- Analytics Section (Full Tabbed Interface) --- */}
         {(hasLatestData || hasLifetimeData) ? (
           <BrandAnalyticsDisplay 

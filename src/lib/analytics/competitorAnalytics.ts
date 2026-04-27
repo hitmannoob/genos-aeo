@@ -8,9 +8,8 @@ export function calculateLiveCompetitorAnalyticsFromCorpus(
 ): {
   current: CompetitorAnalyticsData;
   previous: CompetitorAnalyticsData | null;
-  dataTruncated: boolean;
 } {
-  const { brand, dataTruncated, allResults } = corpus;
+  const { brand, allResults } = corpus;
 
   const competitors: Competitor[] = ((brand as any).competitors || []).map((name: string) => ({
     name,
@@ -59,5 +58,5 @@ export function calculateLiveCompetitorAnalyticsFromCorpus(
       )
     : null;
 
-  return { current, previous, dataTruncated };
+  return { current, previous };
 }

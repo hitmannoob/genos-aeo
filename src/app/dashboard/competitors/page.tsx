@@ -12,7 +12,6 @@ import {
   TrendingUp,
   RefreshCw,
   AlertCircle,
-  AlertTriangle,
   Eye,
   MessageSquare
 } from 'lucide-react';
@@ -137,21 +136,6 @@ export default function CompetitorsPage(): React.ReactElement {
             <span>Refresh</span>
           </button>
         </div>
-
-        {/* Surface Cloud Storage truncation so users don't act on silently-incomplete numbers. */}
-        {lifetimeAnalytics?.dataTruncated && (
-          <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900">
-            <AlertTriangle className="h-5 w-5 flex-shrink-0 mt-0.5" />
-            <div className="text-sm">
-              <div className="font-semibold">Competitor analytics are running on a partial dataset.</div>
-              <div className="mt-1">
-                We couldn't load the full query history from Cloud Storage, so the
-                numbers below are computed from the most recent ~50 queries only.
-                Reload the page to retry, or contact support if this persists.
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Data Source Info Banner */}
         <div className="bg-primary/5 border border-primary/20 rounded-lg p-4">

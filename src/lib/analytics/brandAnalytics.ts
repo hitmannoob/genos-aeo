@@ -191,8 +191,6 @@ export interface LifetimeBrandAnalytics {
 
   // Timestamps
   calculatedAt: any;
-
-  dataTruncated?: boolean;
 }
 
 function buildLifetimeTrendData(
@@ -323,7 +321,6 @@ export function calculateLifetimeBrandAnalyticsFromCorpus(
 ): LifetimeBrandAnalytics {
   const {
     brand,
-    dataTruncated,
     currentResults,
     historicalResults,
     allResults,
@@ -365,7 +362,6 @@ export function calculateLifetimeBrandAnalyticsFromCorpus(
         averageCitationsPerQuery: 0,
       },
       calculatedAt: new Date().toISOString(),
-      dataTruncated,
     };
   }
 
@@ -564,7 +560,6 @@ export function calculateLifetimeBrandAnalyticsFromCorpus(
       providerRankingDetails: sessionAnalytics.insights.providerRankingDetails,
     },
     calculatedAt: new Date().toISOString(),
-    dataTruncated,
   };
 }
 

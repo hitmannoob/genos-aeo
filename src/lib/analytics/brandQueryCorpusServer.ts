@@ -37,7 +37,6 @@ export async function loadBrandQueryCorpusServer(
     return {
       result: {
         brand,
-        dataTruncated: false,
         currentResults,
         historicalResults,
         allResults,

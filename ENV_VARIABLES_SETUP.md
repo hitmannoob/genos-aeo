@@ -21,6 +21,17 @@ FIREBASE_CLIENT_EMAIL=your_service_account_email@your_project_id.iam.gserviceacc
 FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nYOUR_PRIVATE_KEY_HERE\n-----END PRIVATE KEY-----\n"
 ```
 
+### AWS Postgres (Server-side App Data)
+```env
+DATABASE_URL=postgresql://username:password@your-rds-endpoint.amazonaws.com:5432/genos
+POSTGRES_SSL=true
+POSTGRES_POOL_MAX=5
+```
+
+Use `POSTGRES_SSL=false` only for a local Postgres instance. For AWS RDS or
+Lightsail managed Postgres, keep SSL enabled and keep `DATABASE_URL` server-side
+only.
+
 ### Azure OpenAI
 ```env
 AZURE_OPENAI_API_KEY=your_azure_openai_api_key
@@ -109,6 +120,8 @@ FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nYOUR_PRIVATE_KEY_CONTENT_HERE
 - [ ] `NEXT_PUBLIC_FIREBASE_DATABASE_URL`
 - [ ] `FIREBASE_CLIENT_EMAIL`
 - [ ] `FIREBASE_PRIVATE_KEY`
+- [ ] `DATABASE_URL`
+- [ ] `POSTGRES_SSL`
 - [ ] `AZURE_OPENAI_API_KEY`
 - [ ] `AZURE_OPENAI_ENDPOINT`
 - [ ] `AZURE_OPENAI_DEPLOYMENT_NAME`
@@ -126,7 +139,12 @@ FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nYOUR_PRIVATE_KEY_CONTENT_HERE
 curl http://localhost:3000/api/debug-providers
 ```
 
-### 2. Test Provider Availability
+### 2. Apply Postgres Schema
+```bash
+npm run db:migrate
+```
+
+### 3. Test Provider Availability
 The debug endpoint will show which providers are configured:
 ```json
 {
@@ -167,9 +185,9 @@ The debug endpoint will show which providers are configured:
 - Verify endpoint URLs are correct
 
 ### Credit System Issues
-- Confirm user profile exists in Firestore
-- Check that credits field is properly set
-- Verify credit deduction functions are working
+- Confirm user profile exists in `app_users`
+- Check that `credit_balance` is properly set
+- Verify credit debits/refunds are creating `credit_ledger` rows
 
 ## 📞 Support
 

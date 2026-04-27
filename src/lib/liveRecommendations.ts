@@ -1,8 +1,8 @@
-import type { UserBrand } from '@/firebase/firestore/getUserBrands';
+import type { UserBrand } from '@/types/userBrand';
 import type {
   BrandAnalyticsData,
   LifetimeBrandAnalytics,
-} from '@/firebase/firestore/brandAnalytics';
+} from '@/lib/analytics/brandAnalytics';
 import type { RecommendationData } from '@/lib/recommendation-types';
 
 interface BuildLiveRecommendationsOptions {

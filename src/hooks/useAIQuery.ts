@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { APIResponse } from '@/lib/api-providers/types';
 import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
+import { useAuthContext } from '@/context/AuthContext';
 
 export interface AIQueryResult {
   requestId: string;
@@ -20,6 +21,7 @@ export interface AIQueryState {
 }
 
 export function useAIQuery() {
+  const { refreshUserProfile } = useAuthContext();
   const [queryState, setQueryState] = useState<AIQueryState>({
     loading: false,
     result: null,
@@ -81,6 +83,8 @@ export function useAIQuery() {
         completedAt: new Date(data.completedAt),
         debug: data.debug,
       };
+
+      await refreshUserProfile();
 
       console.log('✅ AI Query Completed:', {
         requestId: result.requestId,

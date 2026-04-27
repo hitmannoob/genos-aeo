@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticateApiRequest } from '@/lib/serverAuth';
 import {
-  addKeywordToBrandServer,
-  addQueryToBrandServer,
-} from '@/firebase/firestore/brandQueryMutationsServer';
+  addKeywordToBrandSql,
+  addQueryToBrandSql,
+} from '@/lib/db/brands';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,14 +23,14 @@ export async function POST(
     const { action } = body || {};
 
     if (action === 'addKeyword') {
-      await addKeywordToBrandServer(brandId, authResult.uid, body.keyword || '');
+      await addKeywordToBrandSql(brandId, authResult.uid, body.keyword || '');
       return NextResponse.json({ success: true });
     }
 
     if (action === 'addQuery') {
-      await addQueryToBrandServer({
+      await addQueryToBrandSql({
         brandId,
-        userId: authResult.uid,
+        firebaseUid: authResult.uid,
         rawQuery: body.query || '',
         category: body.category || '',
         keyword: body.keyword || '',

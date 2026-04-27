@@ -4,7 +4,7 @@ import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
 import type {
   BrandAnalyticsData,
   LifetimeBrandAnalytics,
-} from '@/firebase/firestore/brandAnalytics';
+} from '@/lib/analytics/brandAnalytics';
 import type { RecommendationData } from '@/lib/recommendation-types';
 
 export interface BrandAnalyticsBundleResponse {

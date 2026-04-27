@@ -9,9 +9,6 @@ const nextConfig = {
 
   poweredByHeader: false,
 
-  typescript: {
-    ignoreBuildErrors: true,
-  },
 }
 
 // Sentry webpack plugin options.
@@ -41,14 +38,13 @@ let exportedConfig = nextConfig;
 try {
   // Lazy-require so the app still builds if @sentry/nextjs is not installed yet.
   // After `npm install`, this wraps the config with Sentry's build hooks.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires, global-require
   const { withSentryConfig } = require('@sentry/nextjs');
   exportedConfig = withSentryConfig(
     nextConfig,
     sentryWebpackPluginOptions,
     sentryBuildOptions
   );
-} catch (e) {
+} catch {
   // @sentry/nextjs not installed yet — fall back to the raw Next config.
   // This keeps `npm run dev` / `npm run build` working before `npm install`.
 }

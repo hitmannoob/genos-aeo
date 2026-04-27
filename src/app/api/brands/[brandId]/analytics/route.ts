@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticateApiRequest } from '@/lib/serverAuth';
-import { calculateBrandAnalyticsBundleServer } from '@/firebase/firestore/brandAnalyticsServer';
+import { calculateBrandAnalyticsBundleServer } from '@/lib/analytics/brandAnalyticsServer';
 
 export const dynamic = 'force-dynamic';
 

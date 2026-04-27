@@ -3,7 +3,7 @@ import { useEffect, useMemo } from 'react';
 import {
   type LifetimeBrandAnalytics,
   type LifetimeCitation,
-} from '@/firebase/firestore/brandAnalytics';
+} from '@/lib/analytics/brandAnalytics';
 import { useLifetimeBrandAnalytics } from './useBrandAnalytics';
 
 interface UseLifetimeCitationsOptions {

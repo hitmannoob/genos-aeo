@@ -2,7 +2,7 @@ import { Competitor, MatchResult, matchCompetitorsInText } from '@/lib/competito
 import {
   getCanonicalGoogleResult,
   getGoogleResultText,
-} from '@/firebase/firestore/queryResultUtils';
+} from '@/lib/queryResultUtils';
 
 export interface CompetitorAnalyticsData {
   id?: string;

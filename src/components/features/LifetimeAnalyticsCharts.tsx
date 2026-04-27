@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar } from 'recharts';
-import type { LifetimeBrandAnalytics } from '@/firebase/firestore/brandAnalytics';
+import type { LifetimeBrandAnalytics } from '@/lib/analytics/brandAnalytics';
 
 interface LifetimeAnalyticsChartsProps {
   lifetimeAnalytics: LifetimeBrandAnalytics;

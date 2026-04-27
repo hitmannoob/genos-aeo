@@ -1,7 +1,12 @@
 'use client'
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState, ReactNode } from 'react';
 import { useUserBrands } from '@/hooks/useUserBrands';
-import type { UserBrand } from '@/firebase/firestore/getUserBrands';
+import type { UserBrand } from '@/types/userBrand';
+
+// Module-level no-ops so the SSR fallback context value can stay referentially
+// stable across renders without recreating arrow functions.
+const NOOP_SET_BRAND_ID = (_brandId: string) => {};
+const NOOP_CLEAR = () => {};
 
 interface BrandContextType {
   selectedBrand: UserBrand | null;
@@ -113,62 +118,67 @@ export function BrandContextProvider({ children }: BrandContextProviderProps): R
     }
   }, [selectedBrandId, brands, isClient]);
 
-  const setSelectedBrandId = (brandId: string) => {
-    console.log('🎯 Setting selected brand:', { 
-      newBrandId: brandId, 
+  const setSelectedBrandId = useCallback((brandId: string) => {
+    console.log('🎯 Setting selected brand:', {
+      newBrandId: brandId,
       previousBrandId: selectedBrandId,
-      brandName: brands.find(b => b.id === brandId)?.companyName 
+      brandName: brands.find(b => b.id === brandId)?.companyName
     });
     setSelectedBrandIdState(brandId);
     if (isClient) {
       localStorage.setItem('selectedBrandId', brandId);
     }
-  };
+  }, [isClient, selectedBrandId, brands]);
 
-  const clearBrandContext = () => {
+  const clearBrandContext = useCallback(() => {
     console.log('🧹 Clearing brand context');
     setSelectedBrandIdState(null);
     if (isClient) {
       localStorage.removeItem('selectedBrandId');
     }
-  };
+  }, [isClient]);
 
-  const selectedBrand = selectedBrandId 
-    ? brands.find(brand => brand.id === selectedBrandId) || null 
-    : null;
+  const selectedBrand = useMemo(
+    () => (selectedBrandId ? brands.find(brand => brand.id === selectedBrandId) || null : null),
+    [selectedBrandId, brands]
+  );
+
+  const ssrValue = useMemo(() => ({
+    selectedBrand: null,
+    selectedBrandId: null,
+    brands,
+    setSelectedBrandId: NOOP_SET_BRAND_ID,
+    loading,
+    error,
+    refetch,
+    refetchBrands: refetch,
+    clearBrandContext: NOOP_CLEAR,
+  }), [brands, loading, error, refetch]);
+
+  const clientValue = useMemo(() => ({
+    selectedBrand,
+    selectedBrandId,
+    brands,
+    setSelectedBrandId,
+    loading,
+    error,
+    refetch,
+    refetchBrands: refetch,
+    clearBrandContext,
+  }), [selectedBrand, selectedBrandId, brands, setSelectedBrandId, loading, error, refetch, clearBrandContext]);
 
   // Prevent hydration mismatch by rendering consistent content initially
   if (!isClient) {
     return (
-      <BrandContext.Provider value={{
-        selectedBrand: null, // Keep this null to prevent hydration mismatch
-        selectedBrandId: null, // Keep this null to prevent hydration mismatch
-        brands, // Pass through actual brands data
-        setSelectedBrandId: () => {},
-        loading, // Pass through actual loading state
-        error, // Pass through actual error state
-        refetch, // Pass through refetch function
-        refetchBrands: refetch, // Alias for refetch
-        clearBrandContext: () => {}, // No-op for hydration mismatch
-      }}>
+      <BrandContext.Provider value={ssrValue}>
         {children}
       </BrandContext.Provider>
     );
   }
 
   return (
-    <BrandContext.Provider value={{
-      selectedBrand,
-      selectedBrandId,
-      brands,
-      setSelectedBrandId,
-      loading,
-              error,
-        refetch,
-        refetchBrands: refetch, // Alias for refetch
-        clearBrandContext,
-    }}>
+    <BrandContext.Provider value={clientValue}>
       {children}
     </BrandContext.Provider>
   );
-} 
+}

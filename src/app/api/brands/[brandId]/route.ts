@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticateApiRequest } from '@/lib/serverAuth';
-import { getBrandServer } from '@/firebase/firestore/getUserBrandsServer';
+import { getBrandSql } from '@/lib/db/brands';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,9 +15,9 @@ export async function GET(
 
   const { brandId } = await context.params;
   const includeQueryResults = request.nextUrl.searchParams.get('includeQueryResults') === 'true';
-  const { result, error } = await getBrandServer(brandId, authResult.uid, includeQueryResults);
+  const result = await getBrandSql(brandId, authResult.uid, includeQueryResults);
 
-  if (error || !result) {
+  if (!result) {
     return NextResponse.json({ error: 'Brand not found' }, { status: 404 });
   }
 

@@ -3,7 +3,7 @@ import { auth } from '@/firebase/firebase-admin';
 import {
   runDataSanityChecks,
   type DataSanityCheckOptions,
-} from '@/firebase/firestore/dataSanityServer';
+} from '@/lib/dataSanityServer';
 import { isAdminEmail } from '@/lib/adminEmails';
 
 interface AuthenticatedActor {

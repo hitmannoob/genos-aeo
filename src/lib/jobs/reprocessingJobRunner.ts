@@ -1,10 +1,11 @@
+import 'server-only';
+
 import {
   acquireReprocessingJobRunner,
   completeReprocessingJob,
   getReprocessingJob,
   updateReprocessingJobProgress,
 } from './reprocessingJobs';
-import { refreshLifetimeSnapshotServer } from './brandAnalyticsServer';
 import { executePersistedUserQueryServer } from '@/lib/userQueryExecutionServer';
 
 const MAX_ERROR_ITEMS = 25;
@@ -183,9 +184,6 @@ export async function runReprocessingJob(
       failedQueryIds,
       errors,
     });
-    if (successfulCount > 0) {
-      await refreshLifetimeSnapshotServer(job.brandId, job.userId);
-    }
     return;
   }
 
@@ -202,9 +200,6 @@ export async function runReprocessingJob(
       failedQueryIds,
       errors,
     });
-    if (successfulCount > 0) {
-      await refreshLifetimeSnapshotServer(job.brandId, job.userId);
-    }
     return;
   }
 
@@ -220,7 +215,4 @@ export async function runReprocessingJob(
     failedQueryIds,
     errors,
   });
-  if (successfulCount > 0) {
-    await refreshLifetimeSnapshotServer(job.brandId, job.userId);
-  }
 }

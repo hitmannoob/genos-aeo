@@ -5,7 +5,7 @@ import { useBrandContext } from '@/context/BrandContext';
 import { useLifetimeCitations } from '@/hooks/useLifetimeCitations';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import Card from '@/components/shared/Card';
-import type { LifetimeCitation } from '@/firebase/firestore/brandAnalytics';
+import type { LifetimeCitation } from '@/lib/analytics/brandAnalytics';
 import {
   ArrowLeft,
   ExternalLink,

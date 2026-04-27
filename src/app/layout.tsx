@@ -4,11 +4,8 @@ import { ThemeProvider } from '@/context/ThemeContext';
 import { BrandContextProvider } from '@/context/BrandContext';
 import { ToastProvider } from '@/context/ToastContext';
 import { QueryProvider } from '@/providers/QueryProvider';
-import { Inter } from 'next/font/google';
+import { JobSideEffectsObserver } from '@/components/JobSideEffectsObserver';
 import './globals.css';
-
-// Load the Inter font with 'latin' subset
-const inter = Inter( { subsets: [ 'latin' ] } );
 
 // Metadata for the application
 export const metadata = {
@@ -26,13 +23,14 @@ export default function RootLayout( { children }: { children: React.ReactNode } 
         Learn more at https://beta.nextjs.org/docs/api-reference/file-conventions/head
       */}
       <head />
-      <body className={`${inter.className} antialiased`} suppressHydrationWarning>
+      <body className="antialiased" suppressHydrationWarning>
         <QueryProvider>
           <ThemeProvider>
             <AuthContextProvider>
               <BrandContextProvider>
                 <ToastProvider>
-                {children}
+                  <JobSideEffectsObserver />
+                  {children}
                 </ToastProvider>
               </BrandContextProvider>
             </AuthContextProvider>

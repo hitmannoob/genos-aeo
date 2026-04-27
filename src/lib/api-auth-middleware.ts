@@ -1,6 +1,6 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { auth } from '@/firebase/firebase-admin';
-import { getUserProfile } from '@/firebase/firestore/userProfile';
+import { getAppUserProfileByFirebaseUid } from '@/lib/db/appUsers';
 
 // Extended request interface with user context
 export interface AuthenticatedRequest extends NextApiRequest {
@@ -62,11 +62,11 @@ export function withAuth(handler: AuthenticatedApiHandler) {
         });
       }
 
-      // Get user profile from Firestore
-      const { result: userProfile, error: profileError } = await getUserProfile(decodedToken.uid);
+      // Get user profile from Postgres.
+      const userProfile = await getAppUserProfileByFirebaseUid(decodedToken.uid);
       
-      if (profileError || !userProfile) {
-        console.error('❌ User profile fetch error:', profileError);
+      if (!userProfile) {
+        console.error('❌ User profile not found:', decodedToken.uid);
         return res.status(404).json({ 
           error: 'User profile not found.',
           code: 'USER_PROFILE_NOT_FOUND'

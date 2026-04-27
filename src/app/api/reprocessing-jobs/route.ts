@@ -1,13 +1,13 @@
 import { after, NextRequest, NextResponse } from 'next/server';
 import { authenticateApiRequest } from '@/lib/serverAuth';
-import { getBrandServer } from '@/firebase/firestore/getUserBrandsServer';
+import { getBrandSql } from '@/lib/db/brands';
 import {
   createReprocessingJob,
   findActiveReprocessingJobForBrand,
   shouldResumeReprocessingJob,
-} from '@/firebase/firestore/reprocessingJobs';
-import { buildTrackedQueryIdentity } from '@/firebase/firestore/queryResultUtils';
-import { runReprocessingJob } from '@/firebase/firestore/reprocessingJobRunner';
+} from '@/lib/jobs/reprocessingJobs';
+import { buildTrackedQueryIdentity } from '@/lib/queryResultUtils';
+import { runReprocessingJob } from '@/lib/jobs/reprocessingJobRunner';
 
 export const dynamic = 'force-dynamic';
 
@@ -56,8 +56,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'brandId is required' }, { status: 400 });
     }
 
-    const { result: brand, error } = await getBrandServer(brandId, authResult.uid);
-    if (error || !brand) {
+    const brand = await getBrandSql(brandId, authResult.uid);
+    if (!brand) {
       return NextResponse.json({ error: 'Brand not found' }, { status: 404 });
     }
 

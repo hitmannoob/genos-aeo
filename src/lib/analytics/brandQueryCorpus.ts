@@ -1,4 +1,4 @@
-import type { QueryProcessingResult } from './queryResultUtils';
+import type { QueryProcessingResult } from '@/lib/queryResultUtils';
 
 export interface BrandQueryCorpus {
   brand: any;

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuthContext } from '@/context/AuthContext';
-import type { UserBrand } from '@/firebase/firestore/getUserBrands';
-import { toIsoString } from '@/firebase/firestore/timestamps';
+import type { UserBrand } from '@/types/userBrand';
+import { toIsoString } from '@/lib/timestamps';
 import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
 
 interface UseUserBrandsReturn {
@@ -21,6 +21,18 @@ export function useUserBrands(): UseUserBrandsReturn {
   // (signout-then-signin, account switch) before a slow fetch resolves, we
   // discard the late response so it can't overwrite the new user's data.
   const activeFetchUidRef = useRef<string | null>(null);
+  // Tracks whether brands have ever loaded for the current user. Refetches
+  // run silently (loading stays false) so consumers that gate rendering on
+  // `loading` don't unmount their subtree mid-refresh — that was causing
+  // QueriesOverview to unmount/remount on every refetchBrands call, which
+  // re-fired its child fetches.
+  const hasLoadedRef = useRef(false);
+
+  // Reset the "has loaded" flag when the user changes so a new sign-in shows
+  // the loading state instead of reusing the previous account's flag.
+  useEffect(() => {
+    hasLoadedRef.current = false;
+  }, [user?.uid]);
 
   const fetchBrands = useCallback(async () => {
     const requestUid = user?.uid ?? null;
@@ -39,7 +51,9 @@ export function useUserBrands(): UseUserBrandsReturn {
       return;
     }
 
-    setLoading(true);
+    if (!hasLoadedRef.current) {
+      setLoading(true);
+    }
     setError(null);
 
     try {
@@ -87,6 +101,7 @@ export function useUserBrands(): UseUserBrandsReturn {
           brands: sortedBrands.map((brand: UserBrand) => ({ id: brand.id, name: brand.companyName }))
         });
         setBrands(sortedBrands);
+        hasLoadedRef.current = true;
       }
     } catch (err) {
       if (activeFetchUidRef.current !== requestUid) {

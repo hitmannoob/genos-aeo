@@ -10,7 +10,6 @@ import BrandTrackingModal from '@/components/shared/BrandTrackingModal';
 import QueriesOverview from '@/components/features/QueriesOverview';
 import RecommendationSection from '@/components/features/RecommendationSection';
 import { useBrandContext } from '@/context/BrandContext';
-import { useUserBrands } from '@/hooks/useUserBrands';
 import BrandAnalyticsDisplay from '@/components/features/BrandAnalyticsDisplay';
 import { useBrandAnalyticsCombined } from '@/hooks/useBrandAnalytics';
 import LifetimeAnalyticsCharts from '@/components/features/LifetimeAnalyticsCharts';
@@ -20,8 +19,7 @@ import CompetitorMentionsCard from '@/components/features/CompetitorMentionsCard
 function Page(): React.ReactElement {
   const { user, loading: authLoading } = useAuthContext();
   const router = useRouter();
-  const { selectedBrand, selectedBrandId, brands, loading: brandsLoading, setSelectedBrandId, clearBrandContext } = useBrandContext();
-  const { refetch: refetchBrands } = useUserBrands();
+  const { selectedBrand, selectedBrandId, brands, loading: brandsLoading, setSelectedBrandId, clearBrandContext, refetchBrands } = useBrandContext();
   const {
     latestAnalytics,
     lifetimeAnalytics,

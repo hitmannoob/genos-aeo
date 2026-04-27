@@ -1,6 +1,6 @@
 'use client'
 import React, { useState, useCallback } from 'react';
-import { BrandAnalyticsData, LifetimeBrandAnalytics } from '@/firebase/firestore/brandAnalytics';
+import { BrandAnalyticsData, LifetimeBrandAnalytics } from '@/lib/analytics/brandAnalytics';
 import { Award, Eye, MessageSquare, Calendar, Clock, BarChart3, Quote, Globe } from 'lucide-react';
 
 interface BrandAnalyticsDisplayProps {

@@ -1,16 +1,15 @@
-import { serverTimestamp } from "firebase/firestore";
 import { analyzeBrandMentions } from '@/lib/brand-mentions';
 import { extractChatGPTCitations } from '@/lib/citations/chatgpt';
 import { extractGoogleAIOverviewCitations } from '@/lib/citations/googleAIOverview';
 import { extractPerplexityCitations } from '@/lib/citations/perplexity';
 import { matchesWord } from '@/lib/competitor-matching';
-import { toIsoString } from './timestamps';
+import { toIsoString } from '@/lib/timestamps';
 import {
   buildTrackedQueryIdentity,
   getCanonicalGoogleResult,
   getGoogleResultText,
   type QueryProcessingResult,
-} from './queryResultUtils';
+} from '@/lib/queryResultUtils';
 import type { BrandQueryCorpus } from './brandQueryCorpus';
 
 // Interface for brand analytics data
@@ -20,18 +19,18 @@ export interface BrandAnalyticsData {
   brandId: string;
   brandName: string;
   brandDomain: string;
-  
+
   // Processing session information
   processingSessionId: string;
   processingSessionTimestamp: string;
   totalQueriesProcessed: number;
-  
+
   // Cumulative metrics across all queries in this session
   totalBrandMentions: number;
   brandVisibilityScore: number; // Calculated as (providers with brand mentions / total providers) across all queries
   totalCitations: number;
   totalDomainCitations: number;
-  
+
   // Provider-specific aggregated data
   providerStats: {
     chatgpt: {
@@ -56,7 +55,7 @@ export interface BrandAnalyticsData {
       averageResponseTime?: number;
     };
   };
-  
+
   // Additional insights
   insights: {
     topPerformingProvider: string; // Provider(s) with best performance (brand mentions -> domain citations ratio -> total citations)
@@ -121,7 +120,7 @@ export interface LifetimeBrandAnalytics {
   brandId: string;
   brandName: string;
   brandDomain: string;
-  
+
   // Lifetime aggregated metrics
   totalQueriesProcessed: number;
   totalProcessingSessions: number;
@@ -129,7 +128,7 @@ export interface LifetimeBrandAnalytics {
   brandVisibilityScore: number;
   totalCitations: number;
   totalDomainCitations: number;
-  
+
   // Individual citation data for detailed analysis
   allCitations: LifetimeCitation[];
 
@@ -140,7 +139,7 @@ export interface LifetimeBrandAnalytics {
     brandMentions: number;
     citations: number;
   }>;
-  
+
   // Provider-specific lifetime data
   providerStats: {
     chatgpt: {
@@ -165,7 +164,7 @@ export interface LifetimeBrandAnalytics {
       averageResponseTime?: number;
     };
   };
-  
+
   // Lifetime insights
   insights: {
     topPerformingProvider: string;
@@ -189,13 +188,10 @@ export interface LifetimeBrandAnalytics {
       };
     };
   };
-  
+
   // Timestamps
   calculatedAt: any;
 
-  // Set when Cloud Storage retrieval failed and analytics fell back to the
-  // truncated Firestore copy (~50 queries). Callers should surface a warning
-  // so users don't act on silently-incomplete numbers.
   dataTruncated?: boolean;
 }
 
@@ -368,7 +364,7 @@ export function calculateLifetimeBrandAnalyticsFromCorpus(
         averageBrandMentionsPerQuery: 0,
         averageCitationsPerQuery: 0,
       },
-      calculatedAt: serverTimestamp(),
+      calculatedAt: new Date().toISOString(),
       dataTruncated,
     };
   }
@@ -567,7 +563,7 @@ export function calculateLifetimeBrandAnalyticsFromCorpus(
       lastQueryProcessed,
       providerRankingDetails: sessionAnalytics.insights.providerRankingDetails,
     },
-    calculatedAt: serverTimestamp(),
+    calculatedAt: new Date().toISOString(),
     dataTruncated,
   };
 }
@@ -582,7 +578,7 @@ export function calculateCumulativeAnalytics(
   processingSessionTimestamp: string,
   queryResults: any[]
 ): BrandAnalyticsData {
-  
+
   const providerStats = {
     chatgpt: { queriesProcessed: 0, brandMentions: 0, citations: 0, domainCitations: 0, totalResponseTime: 0 },
     google: { queriesProcessed: 0, brandMentions: 0, citations: 0, domainCitations: 0, totalResponseTime: 0 },
@@ -595,13 +591,11 @@ export function calculateCumulativeAnalytics(
   let totalProvidersWithBrandMentions = 0;
   let totalProviders = 0;
 
-  // Process each query result
   queryResults.forEach(queryResult => {
     const canonicalGoogleResult = getCanonicalGoogleResult(queryResult.results);
     const googleOverview = getGoogleResultText(canonicalGoogleResult);
 
-    // Extract citations for each provider
-    const chatgptCitations = queryResult.results?.chatgpt ? 
+    const chatgptCitations = queryResult.results?.chatgpt ?
       extractChatGPTCitations(queryResult.results.chatgpt.response || '') : [];
     const googleCitations = canonicalGoogleResult
       ? extractGoogleAIOverviewCitations(googleOverview, {
@@ -609,10 +603,9 @@ export function calculateCumulativeAnalytics(
           aiOverview: googleOverview,
         })
       : [];
-    const perplexityCitations = queryResult.results?.perplexity ? 
+    const perplexityCitations = queryResult.results?.perplexity ?
       extractPerplexityCitations(queryResult.results.perplexity.response || '', queryResult.results.perplexity) : [];
 
-    // Analyze brand mentions for this query
     const analysis = analyzeBrandMentions(brandName, brandDomain, {
       chatgpt: queryResult.results?.chatgpt ? {
         response: queryResult.results.chatgpt.response || '',
@@ -628,14 +621,12 @@ export function calculateCumulativeAnalytics(
       } : undefined
     });
 
-    // Accumulate totals
     totalBrandMentions += analysis.totals.totalBrandMentions;
     totalCitations += analysis.totals.totalCitations;
     totalDomainCitations += analysis.totals.totalDomainCitations;
     totalProvidersWithBrandMentions += analysis.totals.providersWithBrandMention;
     totalProviders += Object.keys(analysis.results).length;
 
-    // Update provider-specific stats
     Object.entries(analysis.results).forEach(([providerKey, result]) => {
       if (result) {
         const provider = providerKey as keyof typeof providerStats;
@@ -643,8 +634,7 @@ export function calculateCumulativeAnalytics(
         providerStats[provider].brandMentions += result.brandMentionCount;
         providerStats[provider].citations += result.citationCount;
         providerStats[provider].domainCitations += result.domainCitationCount;
-        
-        // Add response time if available
+
         const responseTime = provider === 'google'
           ? canonicalGoogleResult?.responseTime
           : queryResult.results?.[provider]?.responseTime;
@@ -655,33 +645,23 @@ export function calculateCumulativeAnalytics(
     });
   });
 
-  // Calculate averages and insights
   const brandVisibilityScore = totalProviders > 0 ? (totalProvidersWithBrandMentions / totalProviders) * 100 : 0;
-  // Per-response averages: totalBrandMentions and totalCitations are summed
-  // across all returning provider responses, so dividing by totalProviders gives
-  // a per-response figure that matches the "response" unit in brandVisibilityScore.
   const averageBrandMentionsPerResponse = totalProviders > 0 ? totalBrandMentions / totalProviders : 0;
   const averageCitationsPerResponse = totalProviders > 0 ? totalCitations / totalProviders : 0;
-  // Legacy per-query aggregate (summed across providers for each query); retained
-  // for backwards compatibility only — new readers should use the per-response fields.
   const averageBrandMentionsPerQuery = queryResults.length > 0 ? totalBrandMentions / queryResults.length : 0;
   const averageCitationsPerQuery = queryResults.length > 0 ? totalCitations / queryResults.length : 0;
 
-  // Determine top performing provider with sophisticated ranking
   let topPerformingProvider = 'none';
   let topProviders: string[] = [];
-  
-  // Check if there's any meaningful brand performance to measure
+
   const hasBrandPerformance = totalBrandMentions > 0 || totalDomainCitations > 0;
-  
+
   if (!hasBrandPerformance) {
-    // No brand mentions or domain citations - no meaningful performance to rank
     topPerformingProvider = 'none';
     topProviders = [];
   } else {
-    // Create array of providers with their performance metrics
     const providerRankings = Object.entries(providerStats)
-      .filter(([_, stats]) => stats.queriesProcessed > 0) // Only consider providers that processed queries
+      .filter(([_, stats]) => stats.queriesProcessed > 0)
       .map(([provider, stats]) => ({
         provider,
         brandMentions: stats.brandMentions,
@@ -694,44 +674,36 @@ export function calculateCumulativeAnalytics(
       topPerformingProvider = 'none';
       topProviders = [];
     } else {
-      // Sort by: 1) Brand mentions (desc), 2) Domain citations ratio (desc), 3) Total citations (desc)
       providerRankings.sort((a, b) => {
-        // Primary: Brand mentions
         if (a.brandMentions !== b.brandMentions) {
           return b.brandMentions - a.brandMentions;
         }
-        
-        // Secondary: Domain citations ratio
-        if (Math.abs(a.domainCitationsRatio - b.domainCitationsRatio) > 0.001) { // Use small epsilon for float comparison
+
+        if (Math.abs(a.domainCitationsRatio - b.domainCitationsRatio) > 0.001) {
           return b.domainCitationsRatio - a.domainCitationsRatio;
         }
-        
-        // Tertiary: Total citations
+
         return b.totalCitations - a.totalCitations;
       });
 
       const topProvider = providerRankings[0];
-      
-      // Additional check: Top provider must have at least 1 brand mention OR domain citation
+
       const topProviderHasPerformance = topProvider.brandMentions > 0 || topProvider.domainCitations > 0;
-      
+
       if (!topProviderHasPerformance) {
         topPerformingProvider = 'none';
         topProviders = [];
       } else {
-        // Check for ties - find all providers with same brand mentions and domain citations ratio
-        const tiedProviders = providerRankings.filter(p => 
-          p.brandMentions === topProvider.brandMentions && 
+        const tiedProviders = providerRankings.filter(p =>
+          p.brandMentions === topProvider.brandMentions &&
           Math.abs(p.domainCitationsRatio - topProvider.domainCitationsRatio) < 0.001 &&
-          (p.brandMentions > 0 || p.domainCitations > 0) // Only include providers with actual performance
+          (p.brandMentions > 0 || p.domainCitations > 0)
         );
 
         if (tiedProviders.length > 1) {
-          // Multiple providers tied - show all of them
           topPerformingProvider = tiedProviders.map(p => p.provider).join(' & ');
           topProviders = tiedProviders.map(p => p.provider);
         } else {
-          // Single top performer
           topPerformingProvider = topProvider.provider;
           topProviders = [topProvider.provider];
         }
@@ -739,7 +711,6 @@ export function calculateCumulativeAnalytics(
     }
   }
 
-  // Calculate average response times (Firebase doesn't allow undefined values)
   const finalProviderStats = {
     chatgpt: {
       ...providerStats.chatgpt,
@@ -761,12 +732,10 @@ export function calculateCumulativeAnalytics(
     }
   };
 
-  // Remove totalResponseTime from final stats
   Object.values(finalProviderStats).forEach(stats => {
     delete (stats as any).totalResponseTime;
   });
 
-  // Create provider ranking details for insights
   const providerRankingDetails: { [provider: string]: { rank: number; brandMentions: number; domainCitationsRatio: number; totalCitations: number; } } = {};
   const providerRankings = Object.entries(providerStats)
     .filter(([_, stats]) => stats.queriesProcessed > 0)
@@ -782,15 +751,17 @@ export function calculateCumulativeAnalytics(
       if (Math.abs(a.domainCitationsRatio - b.domainCitationsRatio) > 0.001) return b.domainCitationsRatio - a.domainCitationsRatio;
       return b.totalCitations - a.totalCitations;
     });
-    
+
   providerRankings.forEach((ranking, index) => {
     providerRankingDetails[ranking.provider] = {
       rank: index + 1,
       brandMentions: ranking.brandMentions,
-      domainCitationsRatio: Math.round(ranking.domainCitationsRatio * 10000) / 100, // Convert to percentage with 2 decimal places
+      domainCitationsRatio: Math.round(ranking.domainCitationsRatio * 10000) / 100,
       totalCitations: ranking.totalCitations
     };
   });
+
+  const nowIso = new Date().toISOString();
 
   return {
     userId,
@@ -801,22 +772,22 @@ export function calculateCumulativeAnalytics(
     processingSessionTimestamp,
     totalQueriesProcessed: queryResults.length,
     totalBrandMentions,
-    brandVisibilityScore: Math.round(brandVisibilityScore * 100) / 100, // Round to 2 decimal places
+    brandVisibilityScore: Math.round(brandVisibilityScore * 100) / 100,
     totalCitations,
     totalDomainCitations,
     providerStats: finalProviderStats,
     insights: {
       topPerformingProvider,
       topProviders,
-      brandVisibilityTrend: 'stable', // Will be calculated by comparing with previous data
+      brandVisibilityTrend: 'stable',
       averageBrandMentionsPerResponse: Math.round(averageBrandMentionsPerResponse * 100) / 100,
       averageCitationsPerResponse: Math.round(averageCitationsPerResponse * 100) / 100,
       averageBrandMentionsPerQuery: Math.round(averageBrandMentionsPerQuery * 100) / 100,
       averageCitationsPerQuery: Math.round(averageCitationsPerQuery * 100) / 100,
-      competitorMentionsDetected: 0, // Future feature
+      competitorMentionsDetected: 0,
       providerRankingDetails
     },
-    lastUpdated: serverTimestamp(),
-    createdAt: serverTimestamp()
+    lastUpdated: nowIso,
+    createdAt: nowIso
   };
 }

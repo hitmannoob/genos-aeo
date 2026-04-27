@@ -4,8 +4,8 @@ import {
   getReprocessingJobForUser,
   requestReprocessingJobCancellation,
   shouldResumeReprocessingJob,
-} from '@/firebase/firestore/reprocessingJobs';
-import { runReprocessingJob } from '@/firebase/firestore/reprocessingJobRunner';
+} from '@/lib/jobs/reprocessingJobs';
+import { runReprocessingJob } from '@/lib/jobs/reprocessingJobRunner';
 
 export const dynamic = 'force-dynamic';
 

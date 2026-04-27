@@ -2,9 +2,9 @@
 import React from 'react';
 import { useBrandContext } from '@/context/BrandContext';
 import { Activity, Eye, ArrowRight, Clock } from 'lucide-react';
-import type { UserBrand } from '@/firebase/firestore/getUserBrands';
+import type { UserBrand } from '@/types/userBrand';
 import { useBrandQueries } from '@/hooks/useBrandQueries';
-import { buildTrackedQueryIdentity } from '@/firebase/firestore/queryResultUtils';
+import { buildTrackedQueryIdentity } from '@/lib/queryResultUtils';
 
 interface QueriesWidgetProps {
   brandOverride?: UserBrand;

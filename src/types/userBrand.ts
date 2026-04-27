@@ -1,4 +1,4 @@
-import type { QueryProcessingResult } from './queryResultUtils';
+import type { QueryProcessingResult } from '@/lib/queryResultUtils';
 
 export interface BrandBasicData {
   brandMentions: number;
@@ -51,4 +51,4 @@ export interface UserBrand {
   lastProcessedAt?: any;
 }
 
-export type { QueryProcessingResult } from './queryResultUtils';
+export type { QueryProcessingResult } from '@/lib/queryResultUtils';

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { CompanyInfo } from '@/lib/get-company-info';
 import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
+import { useAuthContext } from '@/context/AuthContext';
 
 interface CompanyInfoState {
   loading: boolean;
@@ -19,6 +20,7 @@ interface UseCompanyInfoReturn {
 }
 
 export function useCompanyInfo(): UseCompanyInfoReturn {
+  const { refreshUserProfile } = useAuthContext();
   const [companyState, setCompanyState] = useState<CompanyInfoState>({
     loading: false,
     result: null,
@@ -62,6 +64,8 @@ export function useCompanyInfo(): UseCompanyInfoReturn {
       if (!data.success) {
         throw new Error(data.error || 'Company info fetch was not successful');
       }
+
+      await refreshUserProfile();
 
       console.log('✅ Company info fetched successfully:', {
         companyName: data.data.companyName,

@@ -3,7 +3,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { ArrowLeft, Check, Search, Sparkles, RefreshCw, Eye, Tag, TrendingUp, ShoppingCart, Lightbulb, Target, X, Plus, AlertCircle } from 'lucide-react';
-import { serverTimestamp } from 'firebase/firestore';
 import WebLogo from '@/components/shared/WebLogo';
 import { CompanyInfo } from '@/lib/get-company-info';
 import { useAIQuery } from '@/hooks/useAIQuery';
@@ -369,8 +368,8 @@ Output format (return ONLY valid JSON array):
         brandsbasicData,
 
         // Metadata — server-authoritative audit timestamps.
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
         // `timestamp` (ms-since-epoch) is kept for legacy sort fallbacks in
         // useUserBrands; new readers should prefer createdAt.
         timestamp: Date.now(),
@@ -379,14 +378,14 @@ Output format (return ONLY valid JSON array):
         currentStep: 3,
 
         // Credit usage tracking. creditTransaction.timestamp lives inside a
-        // nested map (not an array), so serverTimestamp() is allowed and
+        // nested map (not an array), so new Date().toISOString() is allowed and
         // matches the audit-timestamp policy for the rest of this doc.
         creditsUsed: 100,
         creditTransaction: {
           amount: 100,
           type: 'deduction',
           reason: 'Brand setup completion',
-          timestamp: serverTimestamp()
+          timestamp: new Date().toISOString()
         }
       };
 
@@ -414,7 +413,6 @@ Output format (return ONLY valid JSON array):
         body: JSON.stringify({
           brandId,
           brandData: completeBrandData,
-          creditCost: 100,
         }),
       });
 

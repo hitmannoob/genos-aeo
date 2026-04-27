@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { auth } from '@/firebase/firebase-admin';
-import { getUserProfileServer } from '@/firebase/firestore/userProfileServer';
+import { getAppUserProfileByFirebaseUid } from '@/lib/db/appUsers';
 
 export interface AuthenticatedApiRequest {
   uid: string;
@@ -39,8 +39,8 @@ export async function authenticateApiRequest(
       };
     }
 
-    const { result: profile, error } = await getUserProfileServer(decodedToken.uid);
-    if (error || !profile) {
+    const profile = await getAppUserProfileByFirebaseUid(decodedToken.uid);
+    if (!profile) {
       return null;
     }
 

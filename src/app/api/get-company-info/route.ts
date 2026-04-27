@@ -11,6 +11,12 @@ import {
   DomainValidationError,
   normalizePublicDomain,
 } from '@/lib/domainValidation';
+import {
+  COMPANY_INFO_CREDIT_COST,
+  deductUserCreditsServer,
+  requireSufficientCreditsServer,
+} from '@/lib/billing/serverCredits';
+import { consumeRateLimit } from '@/lib/rateLimit/rateLimit';
 
 function generateCompanyInfoPrompt(domain: string, websiteData?: { title?: string; description?: string; siteName?: string }): string {
   const hasWebsiteData = websiteData && (websiteData.title || websiteData.description);
@@ -117,6 +123,42 @@ export async function POST(request: NextRequest) {
     }
 
     const domain = normalizePublicDomain(parsedInput.data.domain);
+
+    const rateLimit = await consumeRateLimit({
+      bucketId: `endpoint:/api/get-company-info:user:${authResult.uid}`,
+      limit: 12,
+      windowMs: 60_000,
+    });
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Too many company-info requests. Please retry shortly.',
+          code: 'RATE_LIMITED',
+          retryAfterSeconds: rateLimit.retryAfterSeconds,
+        },
+        {
+          status: 429,
+          headers: {
+            'Retry-After': String(rateLimit.retryAfterSeconds),
+          },
+        }
+      );
+    }
+
+    try {
+      await requireSufficientCreditsServer(authResult.uid, COMPANY_INFO_CREDIT_COST);
+    } catch {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Insufficient credits',
+          code: 'INSUFFICIENT_CREDITS',
+          requiredCredits: COMPANY_INFO_CREDIT_COST,
+        },
+        { status: 402 }
+      );
+    }
     
     console.log('🚀 Starting company info fetch for domain:', domain);
     
@@ -182,6 +224,13 @@ export async function POST(request: NextRequest) {
 
     // Parse the AI response
     const companyInfo = parseAIResponse(primaryResult.data.content, domain);
+    const userCredits = await deductUserCreditsServer(authResult.uid, COMPANY_INFO_CREDIT_COST, {
+      reason: 'company info lookup',
+      metadata: {
+        domain,
+        provider: primaryResult.providerId,
+      },
+    });
     
     console.log('✅ Company info extracted:', {
       companyName: companyInfo.companyName,
@@ -198,6 +247,7 @@ export async function POST(request: NextRequest) {
         source: primaryResult.providerId,
         responseTime: primaryResult.responseTime,
         cost: primaryResult.cost,
+        userCredits,
         websiteMetadata: websiteMetadata ? {
           title: websiteMetadata.title,
           description: websiteMetadata.description,

@@ -8,7 +8,7 @@ import {
   getCanonicalGoogleResult,
   getGoogleResultText,
   type QueryProcessingResult,
-} from '@/firebase/firestore/queryResultUtils';
+} from '@/lib/queryResultUtils';
 import { 
   Search, 
   Eye,
@@ -21,7 +21,7 @@ import {
   X
 } from 'lucide-react';
 import ProcessQueriesButton from './ProcessQueriesButton';
-import type { UserBrand } from '@/firebase/firestore/getUserBrands';
+import type { UserBrand } from '@/types/userBrand';
 import { extractChatGPTCitations } from './ChatGPTResponseRenderer';
 import { extractGoogleAIOverviewCitations } from './GoogleAIOverviewRenderer';
 import { extractPerplexityCitations } from './PerplexityResponseRenderer';
@@ -63,7 +63,7 @@ export default function QueriesOverview({
   onViewAll,
   onQueryClick
 }: QueriesOverviewProps): React.ReactElement {
-  const { selectedBrand, refetchBrands } = useBrandContext();
+  const { selectedBrand } = useBrandContext();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [processingQueries, setProcessingQueries] = useState<Set<string>>(new Set()); // Track which queries are being processed
@@ -326,20 +326,17 @@ export default function QueriesOverview({
                     Array.from(batchQueriesRef.current).filter(q => !completedQueries.has(q))
                   );
                   setProcessingQueries(stillProcessing);
-
-                  if (job.attemptedCount > lastAttemptedCountRef.current) {
-                    lastAttemptedCountRef.current = job.attemptedCount;
-                    void refetchQueryResults();
-                  }
+                  lastAttemptedCountRef.current = job.attemptedCount;
                 }}
-                onComplete={async (result) => {
-                  // Clear processing states immediately
+                onComplete={async () => {
+                  // Clear local batch tracking. Brand list + user profile
+                  // refresh is handled globally by JobSideEffectsObserver;
+                  // here we only need to refetch the per-brand query results
+                  // (different endpoint).
                   batchQueriesRef.current = new Set();
                   lastAttemptedCountRef.current = 0;
                   setProcessingQueries(new Set());
-
-                  // Refresh brands to get updated data
-                  await Promise.all([refetchBrands(), refetchQueryResults()]);
+                  await refetchQueryResults();
                 }}
               />
             )}
@@ -622,9 +619,6 @@ export default function QueriesOverview({
                                 brandId={brand.id}
                                 queriesFilter={[buildTrackedQueryIdentity(query)]}
                                 iconOnly
-                                onComplete={async () => {
-                                  await Promise.all([refetchBrands(), refetchQueryResults()]);
-                                }}
                               />
                             )}
                           </div>
@@ -708,9 +702,6 @@ export default function QueriesOverview({
                           brandId={brand.id}
                           queriesFilter={[buildTrackedQueryIdentity(query)]}
                           iconOnly
-                          onComplete={async () => {
-                            await Promise.all([refetchBrands(), refetchQueryResults()]);
-                          }}
                         />
                       )}
                     </div>

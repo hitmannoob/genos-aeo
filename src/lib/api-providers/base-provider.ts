@@ -1,4 +1,5 @@
 import { APIResponse, ProviderConfig } from './types';
+import { consumeRateLimit } from '@/lib/rateLimit/rateLimit';
 
 // Sentinel userId used when no per-user identity is provided. All such
 // callers share a single "global" bucket — convenient for health checks
@@ -81,7 +82,7 @@ export abstract class BaseAPIProvider {
               errorDetails = errorBody.substring(0, 500); // Limit error message length
             }
           }
-        } catch (e) {
+        } catch {
           // If we can't read the body, just use statusText
         }
         throw new Error(`HTTP ${response.status}: ${response.statusText} - ${errorDetails}`);
@@ -117,49 +118,28 @@ export abstract class BaseAPIProvider {
     throw lastError!;
   }
 
-  // Per-user token-bucket rate limiter.
-  // Returns true and decrements a token if one is available; returns false
-  // when the bucket is empty. Tokens refill continuously at
-  // `rateLimitPerMinute / 60_000` per ms, capped at `rateLimitPerMinute`.
-  //
-  // Pass the request's userId so the bucket is keyed per user; callers with
-  // no userId (health checks, test endpoints) fall back to a shared global
-  // bucket.
-  //
-  // NOTE: single-process in-memory only. If deployed to multiple instances,
-  // swap for a Redis or Firestore-backed limiter so state is shared.
-  // TODO: Implement Redis-based rate limiting for multi-instance deploys.
+  // Per-user provider rate limiter. This is Firestore-backed so serverless
+  // instance count does not multiply effective limits.
   protected async checkRateLimit(userId?: string): Promise<boolean> {
     const key = userId && userId.trim() !== '' ? userId : GLOBAL_BUCKET_KEY;
-    const now = Date.now();
-
-    let bucket = this.buckets.get(key);
-    if (!bucket) {
-      bucket = { tokens: this.rateLimitCapacity, lastRefillMs: now };
-      this.buckets.set(key, bucket);
-    } else {
-      const elapsed = now - bucket.lastRefillMs;
-      if (elapsed > 0) {
-        bucket.tokens = Math.min(
-          this.rateLimitCapacity,
-          bucket.tokens + elapsed * this.rateLimitRefillPerMs
-        );
-        bucket.lastRefillMs = now;
-      }
-    }
-
-    if (bucket.tokens < 1) {
+    try {
+      const result = await consumeRateLimit({
+        bucketId: `provider:${this.name}:user:${key}`,
+        limit: this.rateLimitPerMinute,
+        windowMs: 60_000,
+      });
+      return result.allowed;
+    } catch (error) {
+      console.error(`❌ Provider rate-limit check failed for ${this.name}:`, error);
       return false;
     }
-
-    bucket.tokens -= 1;
-    return true;
   }
 
   // Cost calculation — providers override this with whatever signature makes
   // sense for their API (token counts, raw response objects, etc.). The
   // default implementation returns a minimal flat fee.
-  protected calculateCost(..._args: any[]): number {
+  protected calculateCost(...args: any[]): number {
+    void args;
     return 0.001; // Default minimal cost
   }
 

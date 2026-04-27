@@ -1,12 +1,12 @@
 'use client'
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuthContext } from '@/context/AuthContext';
-import { toIsoString } from '@/firebase/firestore/timestamps';
+import { toIsoString } from '@/lib/timestamps';
 import {
   getCanonicalGoogleResult,
   hasProviderContent,
   type QueryProcessingResult,
-} from '@/firebase/firestore/queryResultUtils';
+} from '@/lib/queryResultUtils';
 import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
 
 // Canonical processed-query shape stored on brand documents.

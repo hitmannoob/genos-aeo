@@ -4,6 +4,11 @@ import { ChatGPTSearchProvider } from './chatgptsearch-provider';
 import { GoogleAIOverviewProvider } from './google-ai-overview-provider';
 import { PerplexityProvider } from './perplexity-provider';
 import { APIRequest, APIResponse, JobResult } from './types';
+import {
+  buildProviderResponseCacheKey,
+  getCachedProviderResponse,
+  setCachedProviderResponse,
+} from '@/lib/cache/providerResponseCache';
 
 export class ProviderManager {
   private providers: Map<string, BaseAPIProvider> = new Map();
@@ -142,7 +147,7 @@ export class ProviderManager {
       return this.activeJobs.get(jobId)!;
     }
 
-    const jobPromise = this.processRequest(request);
+    const jobPromise = this.processRequestWithCache(request);
     this.activeJobs.set(jobId, jobPromise);
 
     try {
@@ -153,14 +158,62 @@ export class ProviderManager {
     }
   }
 
+  private getProviderNamesForRequest(request: APIRequest): string[] {
+    return request.providers.length > 0
+      ? request.providers
+      : Array.from(this.providers.keys());
+  }
+
+  private remapCachedResult(request: APIRequest, cached: JobResult): JobResult {
+    return {
+      ...cached,
+      requestId: request.id,
+      results: cached.results.map((result) => ({
+        ...result,
+        requestId: request.id,
+        timestamp: result.timestamp instanceof Date
+          ? result.timestamp
+          : new Date(result.timestamp),
+      })),
+      completedAt: cached.completedAt instanceof Date
+        ? cached.completedAt
+        : new Date(cached.completedAt),
+    };
+  }
+
+  private async processRequestWithCache(request: APIRequest): Promise<JobResult> {
+    const providerNames = this.getProviderNamesForRequest(request);
+    const cacheTtlMs = request.metadata?.cacheTtlMs;
+    const cacheDisabled = cacheTtlMs === 0 || request.metadata?.cache === false;
+
+    if (!cacheDisabled) {
+      const cacheKey = buildProviderResponseCacheKey({
+        prompt: request.prompt,
+        providers: providerNames,
+        purpose: request.metadata?.type,
+      });
+      const cached = await getCachedProviderResponse(cacheKey);
+      if (cached) {
+        return this.remapCachedResult(request, cached);
+      }
+
+      const result = await this.processRequest(request);
+      const hasSuccess = result.results.some((providerResult) => providerResult.status === 'success');
+      if (hasSuccess) {
+        await setCachedProviderResponse(cacheKey, result, typeof cacheTtlMs === 'number' ? cacheTtlMs : undefined);
+      }
+      return result;
+    }
+
+    return this.processRequest(request);
+  }
+
   private async processRequest(request: APIRequest): Promise<JobResult> {
     const startTime = Date.now();
     const results: APIResponse[] = [];
     
     // Get requested providers or use all available
-    const providerNames = request.providers.length > 0 
-      ? request.providers 
-      : Array.from(this.providers.keys());
+    const providerNames = this.getProviderNamesForRequest(request);
 
     console.log('🔄 ProviderManager Processing Request:', {
       requestId: request.id,
@@ -295,7 +348,6 @@ export class ProviderManager {
   }
 
   private transformRequestForProvider(request: APIRequest, provider: BaseAPIProvider): any {
-    const providerType = provider.getType();
     const providerName = provider.getName();
 
     // Pull locale / device overrides from the request's metadata bag. These

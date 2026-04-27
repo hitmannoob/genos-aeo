@@ -1,8 +1,19 @@
 'use client'
-import React, { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState, ReactNode, useCallback } from 'react';
 import { getAuth, onAuthStateChanged, User } from 'firebase/auth';
 import firebase_app from '@/firebase/config';
-import { createUserProfile, getUserProfile, UserProfile } from '@/firebase/firestore/userProfile';
+import type { UserProfile } from '@/types/userProfile';
+
+// Module-level no-ops so the SSR fallback context value is referentially stable.
+const NOOP_ASYNC = async () => {};
+const SSR_AUTH_VALUE: AuthContextType = {
+  user: null,
+  userProfile: null,
+  loading: true,
+  profileError: null,
+  refreshUserProfile: NOOP_ASYNC,
+  retryProfileLoad: NOOP_ASYNC,
+};
 
 // Initialize Firebase auth instance
 const auth = getAuth( firebase_app );
@@ -39,29 +50,30 @@ interface AuthContextProviderProps {
 // One automatic retry with a short backoff. Profile creation can fail on
 // signup if the auth token hasn't propagated to Firestore yet (race window
 // is tens of ms); a single retry resolves nearly all of these.
-async function loadOrCreateProfile(user: User): Promise<UserProfile> {
-  const attempt = async (markNewIfMissing: boolean): Promise<UserProfile> => {
-    const { result: existing } = await getUserProfile(user.uid);
-    if (existing && !markNewIfMissing) {
-      // Existing user — refresh login metadata, but if the createUserProfile
-      // helper errors, fall back to the raw doc we just read so the caller
-      // still gets a profile.
-      const { result: updated } = await createUserProfile(user, false);
-      return updated ?? existing;
-    }
-    const { result: created, error } = await createUserProfile(user, !existing);
-    if (!created) {
-      throw error instanceof Error ? error : new Error(String(error ?? 'createUserProfile returned null'));
-    }
-    return created;
-  };
+async function fetchProfileFromServer(user: User, method: 'GET' | 'POST'): Promise<UserProfile> {
+  const idToken = await user.getIdToken();
+  const response = await fetch('/api/users/profile', {
+    method,
+    headers: {
+      Authorization: `Bearer ${idToken}`,
+    },
+  });
 
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data?.profile) {
+    throw new Error(data?.error || 'Failed to load user profile');
+  }
+
+  return data.profile as UserProfile;
+}
+
+async function loadOrCreateProfile(user: User): Promise<UserProfile> {
   try {
-    return await attempt(false);
+    return await fetchProfileFromServer(user, 'POST');
   } catch (firstError) {
     console.warn('⚠️ Profile load failed, retrying once:', firstError);
     await new Promise((r) => setTimeout(r, 600));
-    return attempt(false);
+    return fetchProfileFromServer(user, 'POST');
   }
 }
 
@@ -76,10 +88,8 @@ export function AuthContextProvider( { children }: AuthContextProviderProps ): R
   // Function to refresh user profile data
   const refreshUserProfile = useCallback(async () => {
     if (user) {
-      const { result, error } = await getUserProfile(user.uid);
-      if (result && !error) {
-        setUserProfile(result);
-      }
+      const profile = await fetchProfileFromServer(user, 'GET');
+      setUserProfile(profile);
     }
   }, [user]);
 
@@ -140,10 +150,15 @@ export function AuthContextProvider( { children }: AuthContextProviderProps ): R
     return () => unsubscribe();
   }, [] );
 
+  const contextValue = useMemo<AuthContextType>(
+    () => ({ user, userProfile, loading, profileError, refreshUserProfile, retryProfileLoad }),
+    [user, userProfile, loading, profileError, refreshUserProfile, retryProfileLoad]
+  );
+
   // Prevent hydration mismatch by rendering same content on server and client initially
   if ( !isClient ) {
     return (
-      <AuthContext.Provider value={{ user: null, userProfile: null, loading: true, profileError: null, refreshUserProfile: async () => {}, retryProfileLoad: async () => {} }}>
+      <AuthContext.Provider value={SSR_AUTH_VALUE}>
         {children}
       </AuthContext.Provider>
     );
@@ -151,7 +166,7 @@ export function AuthContextProvider( { children }: AuthContextProviderProps ): R
 
   // Provide the authentication context to child components
   return (
-    <AuthContext.Provider value={{ user, userProfile, loading, profileError, refreshUserProfile, retryProfileLoad }}>
+    <AuthContext.Provider value={contextValue}>
       {loading ? (
         <div className="min-h-screen bg-background flex items-center justify-center">
           <div className="text-foreground">Loading...</div>

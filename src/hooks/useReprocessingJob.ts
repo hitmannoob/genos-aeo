@@ -77,7 +77,7 @@ export interface UseReprocessingJobReturn {
   cancelJob: () => Promise<ReprocessingJob | null>;
 }
 
-const JOB_POLL_INTERVAL_MS = 2000;
+const JOB_POLL_INTERVAL_MS = 1000;
 
 export function reprocessingJobQueryKey(brandId: string | undefined) {
   return ['reprocessing-job', brandId] as const;

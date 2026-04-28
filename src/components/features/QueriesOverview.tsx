@@ -23,6 +23,7 @@ import {
 import ProcessQueriesButton from './ProcessQueriesButton';
 import ProcessSingleQueryButton from './ProcessSingleQueryButton';
 import type { UserBrand } from '@/types/userBrand';
+import { useReprocessingJob } from '@/hooks/useReprocessingJob';
 import { getCategoryPillClasses } from '@/lib/queryCategories';
 import { extractChatGPTCitations } from './ChatGPTResponseRenderer';
 import { extractGoogleAIOverviewCitations } from './GoogleAIOverviewRenderer';
@@ -73,9 +74,38 @@ export default function QueriesOverview({
   // Single-query processing set (per-row button kicks off independent runs that
   // don't go through the brand-wide reprocessing job).
   const [singleProcessingQueries, setSingleProcessingQueries] = useState<Set<string>>(new Set());
+
+  // Server-derived processing set: queries that the active reprocessing job
+  // is still working on. This is the cross-mount source of truth — when the
+  // user navigates away and back, the local Sets reset but the active job is
+  // cached by TanStack Query, so we can show "Processing" without waiting
+  // for the next poll round-trip to repopulate local state.
+  const brandIdForJob = (brandOverride || selectedBrand)?.id;
+  const { job: activeJob } = useReprocessingJob(brandIdForJob);
+  const serverProcessingQueries = useMemo<Set<string>>(() => {
+    if (
+      !activeJob ||
+      (activeJob.status !== 'queued' && activeJob.status !== 'processing')
+    ) {
+      return new Set();
+    }
+    const finished = new Set([
+      ...activeJob.completedQueryIds,
+      ...activeJob.failedQueryIds,
+    ]);
+    return new Set(
+      activeJob.queries.map((q) => q.queryId).filter((qid) => !finished.has(qid))
+    );
+  }, [activeJob]);
+
   const processingQueries = useMemo(
-    () => new Set([...bulkProcessingQueries, ...singleProcessingQueries]),
-    [bulkProcessingQueries, singleProcessingQueries],
+    () =>
+      new Set([
+        ...bulkProcessingQueries,
+        ...singleProcessingQueries,
+        ...serverProcessingQueries,
+      ]),
+    [bulkProcessingQueries, singleProcessingQueries, serverProcessingQueries],
   );
   // Queries in the current bulk batch — populated by ProcessQueriesButton's
   // onStart. Held in a ref so the onProgress closure always sees the latest
@@ -329,10 +359,6 @@ export default function QueriesOverview({
                   );
                   setBulkProcessingQueries(stillProcessing);
 
-                  // When new queries finish mid-job, refetch results so rows that
-                  // just dropped out of the processing set immediately render as
-                  // "Processed on …" instead of briefly flashing "Unprocessed"
-                  // until onComplete fires (or the user reloads).
                   if (job.attemptedCount > lastAttemptedCountRef.current) {
                     lastAttemptedCountRef.current = job.attemptedCount;
                     void refetchQueryResults();

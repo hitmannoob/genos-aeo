@@ -61,11 +61,14 @@ function normalizeDomainString(domain: string): string {
     .trim();
 }
 
+// Apex or any subdomain. The leading-dot check on endsWith prevents
+// "fake-acme.com" from matching "acme.com" while still allowing
+// "help.acme.com" / "blog.acme.com" to count.
 function hostMatches(url: string, domain: string): boolean {
   const host = getHostname(url);
   const normalizedDomain = normalizeDomainString(domain);
   if (!host || !normalizedDomain) return false;
-  return host === normalizedDomain;
+  return host === normalizedDomain || host.endsWith(`.${normalizedDomain}`);
 }
 
 // Brand vs. competitor detection uses the same matcher so SOV is symmetric.
@@ -75,15 +78,13 @@ function isBrandMentioned(text: string, brandName: string, brandDomain?: string)
   return matchCompetitorsInText(text, [entity]).length > 0;
 }
 
+// Extract URLs from the response text and check each one against the brand
+// domain via hostMatches, so the boolean uses the same apex-or-subdomain
+// definition as the citation-array count.
 function isDomainCited(text: string, brandDomain: string): boolean {
   if (!text || !brandDomain) return false;
-  const lowerText = text.toLowerCase();
-  const lowerDomain = brandDomain.toLowerCase();
-  const httpsWwwDomain = `https://www.${lowerDomain}`;
-  if (lowerText.includes(httpsWwwDomain)) return true;
-  const httpsDomain = `https://${lowerDomain}`;
-  if (lowerText.includes(httpsDomain)) return true;
-  return false;
+  const urls = text.match(/https?:\/\/[^\s<>"'`)\]]+/gi) || [];
+  return urls.some((url) => hostMatches(url, brandDomain));
 }
 
 function countBrandMentions(text: string, brandName: string, brandDomain?: string): number {

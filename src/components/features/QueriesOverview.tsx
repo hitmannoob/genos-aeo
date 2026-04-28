@@ -24,6 +24,7 @@ import ProcessQueriesButton from './ProcessQueriesButton';
 import ProcessSingleQueryButton from './ProcessSingleQueryButton';
 import type { UserBrand } from '@/types/userBrand';
 import { useReprocessingJob } from '@/hooks/useReprocessingJob';
+import { usePendingSingleQueries } from '@/context/PendingSingleQueriesContext';
 import { getCategoryPillClasses } from '@/lib/queryCategories';
 import { extractChatGPTCitations } from './ChatGPTResponseRenderer';
 import { extractGoogleAIOverviewCitations } from './GoogleAIOverviewRenderer';
@@ -71,9 +72,6 @@ export default function QueriesOverview({
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   // Bulk-job-driven processing set (populated by ProcessQueriesButton callbacks).
   const [bulkProcessingQueries, setBulkProcessingQueries] = useState<Set<string>>(new Set());
-  // Single-query processing set (per-row button kicks off independent runs that
-  // don't go through the brand-wide reprocessing job).
-  const [singleProcessingQueries, setSingleProcessingQueries] = useState<Set<string>>(new Set());
 
   // Server-derived processing set: queries that the active reprocessing job
   // is still working on. This is the cross-mount source of truth — when the
@@ -97,6 +95,11 @@ export default function QueriesOverview({
       activeJob.queries.map((q) => q.queryId).filter((qid) => !finished.has(qid))
     );
   }, [activeJob]);
+
+  // Single-query in-flight set lives in a root-level context now, so it
+  // survives navigation just like the bulk job cache does.
+  const { getPending: getPendingSingleQueries } = usePendingSingleQueries();
+  const singleProcessingQueries = getPendingSingleQueries(brandIdForJob);
 
   const processingQueries = useMemo(
     () =>
@@ -692,21 +695,6 @@ export default function QueriesOverview({
                                 brandId={brand.id}
                                 query={query}
                                 isProcessing={statusInfo.showLoader}
-                                onStart={(qid) => {
-                                  setSingleProcessingQueries((prev) => {
-                                    const next = new Set(prev);
-                                    next.add(qid);
-                                    return next;
-                                  });
-                                }}
-                                onComplete={async (qid) => {
-                                  setSingleProcessingQueries((prev) => {
-                                    const next = new Set(prev);
-                                    next.delete(qid);
-                                    return next;
-                                  });
-                                  await refetchQueryResults();
-                                }}
                               />
                             )}
                           </div>
@@ -790,21 +778,6 @@ export default function QueriesOverview({
                           brandId={brand.id}
                           query={query}
                           isProcessing={statusInfo.showLoader}
-                          onStart={(qid) => {
-                            setSingleProcessingQueries((prev) => {
-                              const next = new Set(prev);
-                              next.add(qid);
-                              return next;
-                            });
-                          }}
-                          onComplete={async (qid) => {
-                            setSingleProcessingQueries((prev) => {
-                              const next = new Set(prev);
-                              next.delete(qid);
-                              return next;
-                            });
-                            await refetchQueryResults();
-                          }}
                         />
                       )}
                     </div>

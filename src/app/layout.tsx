@@ -3,6 +3,7 @@ import { AuthContextProvider } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
 import { BrandContextProvider } from '@/context/BrandContext';
 import { ToastProvider } from '@/context/ToastContext';
+import { PendingSingleQueriesProvider } from '@/context/PendingSingleQueriesContext';
 import { QueryProvider } from '@/providers/QueryProvider';
 import { JobSideEffectsObserver } from '@/components/JobSideEffectsObserver';
 import './globals.css';
@@ -29,8 +30,10 @@ export default function RootLayout( { children }: { children: React.ReactNode } 
             <AuthContextProvider>
               <BrandContextProvider>
                 <ToastProvider>
-                  <JobSideEffectsObserver />
-                  {children}
+                  <PendingSingleQueriesProvider>
+                    <JobSideEffectsObserver />
+                    {children}
+                  </PendingSingleQueriesProvider>
                 </ToastProvider>
               </BrandContextProvider>
             </AuthContextProvider>

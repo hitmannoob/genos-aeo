@@ -1,11 +1,14 @@
 'use client'
 import React, { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Play, RefreshCw, AlertCircle } from 'lucide-react';
 import { useAuthContext } from '@/context/AuthContext';
 import { useBrandContext } from '@/context/BrandContext';
 import { useToast } from '@/context/ToastContext';
+import { usePendingSingleQueries } from '@/context/PendingSingleQueriesContext';
 import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
 import { buildTrackedQueryIdentity } from '@/lib/queryResultUtils';
+import { brandQueriesQueryKey } from '@/hooks/useBrandQueries';
 
 const REQUIRED_CREDITS = 10;
 
@@ -38,14 +41,20 @@ export default function ProcessSingleQueryButton({
   const { user, userProfile, refreshUserProfile } = useAuthContext();
   const { brands, refetchBrands } = useBrandContext();
   const { showError } = useToast();
-  const [processing, setProcessing] = useState(false);
+  const { addPending, removePending, getPending } = usePendingSingleQueries();
+  const queryClient = useQueryClient();
   const [errored, setErrored] = useState(false);
 
   const queryId = buildTrackedQueryIdentity(query);
   const targetBrand = brands.find((b) => b.id === brandId);
   const available = userProfile?.credits ?? 0;
   const hasEnoughCredits = available >= REQUIRED_CREDITS;
-  const busy = processing || isProcessing;
+  // The shared pending set lives in context, so even if this exact button
+  // unmounts mid-fetch (user navigated away and a sibling instance now
+  // renders the row), the "is in flight" signal survives.
+  const pendingForBrand = getPending(brandId);
+  const inFlight = pendingForBrand.has(queryId);
+  const busy = inFlight || isProcessing;
   const disabled = busy || !user || !hasEnoughCredits || !targetBrand;
 
   const tooltip = !user
@@ -64,7 +73,7 @@ export default function ProcessSingleQueryButton({
     e.stopPropagation();
     if (disabled || !targetBrand) return;
 
-    setProcessing(true);
+    addPending(brandId, queryId);
     setErrored(false);
     onStart?.(queryId);
 
@@ -107,13 +116,21 @@ export default function ProcessSingleQueryButton({
       }
 
       success = true;
+      // Invalidate the shared brand-queries cache BEFORE clearing the pending
+      // flag — that way wherever the table is rendered (including a remount
+      // on another mounting of QueriesOverview), it pulls the freshly
+      // persisted result and never sees a "Unprocessed" gap between flag
+      // clearing and result landing.
+      await queryClient.invalidateQueries({
+        queryKey: brandQueriesQueryKey(user?.uid, brandId),
+      });
       await Promise.all([refreshUserProfile(), refetchBrands()]);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to process query';
       showError('Processing failed', message);
       setErrored(true);
     } finally {
-      setProcessing(false);
+      removePending(brandId, queryId);
       onComplete?.(queryId, success);
     }
   };

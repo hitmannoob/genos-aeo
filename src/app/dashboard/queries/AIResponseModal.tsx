@@ -636,7 +636,10 @@ function AIResponseModal({ selectedQuery, onClose }: AIResponseModalProps) {
             
             {renderSubTabs()}
             {activeSubTab === 'response' ? 
-              <ChatGPTResponse response={selectedQuery.results.chatgpt.response} /> : 
+              <ChatGPTResponse
+                response={selectedQuery.results.chatgpt.response}
+                webSearchUsed={selectedQuery.results.chatgpt.webSearchUsed}
+              /> :
               <ChatGPTCitations response={selectedQuery.results.chatgpt.response} />
             }
           </div>

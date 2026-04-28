@@ -105,13 +105,14 @@ export class ChatGPTSearchProvider extends BaseAPIProvider {
 
   transformResponse(rawResponse: any): any {
     const annotations = ChatGPTSearchProvider.collectAnnotations(rawResponse);
+    const webSearchUsed = ChatGPTSearchProvider.detectWebSearchUsage(rawResponse, annotations);
 
     return {
       content: rawResponse.output_text || '',
       model: rawResponse.model || 'gpt-5.4-mini',
       usage: rawResponse.usage,
       searchEnabled: true,
-      webSearchUsed: true,
+      webSearchUsed,
       tools: ['web_search'],
       // Include annotations (sources, citations, etc.)
       annotations,
@@ -128,6 +129,25 @@ export class ChatGPTSearchProvider extends BaseAPIProvider {
       // Raw response for debugging (optional)
       rawResponse: rawResponse
     };
+  }
+
+  // True iff the response carries evidence the model actually invoked web
+  // search: either a `web_search_call` item in the output array, or any
+  // url-citation annotation. Hardcoding to true was a lie — `tool_choice:
+  // "required"` makes invocation likely but the response is the source of
+  // truth.
+  private static detectWebSearchUsage(rawResponse: any, annotations: any[]): boolean {
+    const output = rawResponse?.output;
+    if (Array.isArray(output)) {
+      const hasWebSearchCall = output.some(
+        (item: any) => typeof item?.type === 'string' && item.type === 'web_search_call',
+      );
+      if (hasWebSearchCall) return true;
+    }
+    return annotations.some((ann: any) => {
+      const type = typeof ann?.type === 'string' ? ann.type.toLowerCase() : '';
+      return type === 'url_citation' || type.includes('citation') || type.includes('url');
+    });
   }
 
   // OpenAI's responses API nests annotations under each output item's content

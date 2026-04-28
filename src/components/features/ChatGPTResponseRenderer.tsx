@@ -91,9 +91,10 @@ function ChatGPTMarkdownRenderer({ content }: { content: string }) {
 // ChatGPT Response Component
 interface ChatGPTResponseProps {
   response: string;
+  webSearchUsed?: boolean;
 }
 
-export function ChatGPTResponse({ response }: ChatGPTResponseProps) {
+export function ChatGPTResponse({ response, webSearchUsed }: ChatGPTResponseProps) {
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
       <div className="px-6 py-4 border-b border-gray-100">
@@ -102,10 +103,18 @@ export function ChatGPTResponse({ response }: ChatGPTResponseProps) {
             <div className="w-2 h-2 bg-green-500 rounded-full"></div>
             <span className="text-sm font-semibold text-gray-700">ChatGPT Response</span>
           </div>
-          <div className="flex items-center space-x-2">
-            <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-            <span className="text-sm font-semibold text-gray-700">Web Search Disabled in Starter & Trial Plan</span>
-          </div>
+          {typeof webSearchUsed === 'boolean' && (
+            <div className="flex items-center space-x-2">
+              <div
+                className={`w-2 h-2 rounded-full ${
+                  webSearchUsed ? 'bg-blue-500' : 'bg-gray-400'
+                }`}
+              ></div>
+              <span className="text-sm font-semibold text-gray-700">
+                {webSearchUsed ? 'Web Search Used' : 'Web Search Not Used'}
+              </span>
+            </div>
+          )}
         </div>
       </div>
       <div className="p-6">

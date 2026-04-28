@@ -58,13 +58,13 @@ export default function QueriesWidget({
     <div className={`bg-card border border-border rounded-lg p-3 ${className}`}>
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center space-x-2">
-          <Activity className="h-4 w-4 text-[#000C60]" />
+          <Activity className="h-4 w-4 text-primary" />
           <span className="text-xs font-medium text-foreground">Queries</span>
         </div>
         {onViewAll && (
           <button
             onClick={onViewAll}
-            className="text-xs text-[#000C60] hover:text-[#000C60]/80 transition-colors"
+            className="text-xs text-primary hover:text-primary/80 transition-colors"
           >
             <ArrowRight className="h-3 w-3" />
           </button>
@@ -75,11 +75,11 @@ export default function QueriesWidget({
         {/* Stats */}
         <div className="grid grid-cols-2 gap-2">
           <div className="text-center">
-            <p className="text-lg font-bold text-[#000C60]">{totalQueries}</p>
+            <p className="text-lg font-bold text-primary">{totalQueries}</p>
             <p className="text-xs text-muted-foreground">Total</p>
           </div>
           <div className="text-center">
-            <p className="text-lg font-bold text-[#00B087]">{processedCount}</p>
+            <p className="text-lg font-bold text-success">{processedCount}</p>
             <p className="text-xs text-muted-foreground">Processed</p>
           </div>
         </div>
@@ -92,7 +92,7 @@ export default function QueriesWidget({
           </div>
           <div className="w-full bg-muted rounded-full h-1.5">
             <div 
-              className="bg-[#00B087] h-1.5 rounded-full transition-all duration-300" 
+              className="bg-success h-1.5 rounded-full transition-all duration-300" 
               style={{width: `${processingRate}%`}}
             />
           </div>
@@ -120,7 +120,7 @@ export default function QueriesWidget({
                     <span className="text-xs text-muted-foreground truncate flex-1 mr-2">
                       {query.query.length > 25 ? `${query.query.substring(0, 25)}...` : query.query}
                     </span>
-                    {hasResult && <Eye className="h-3 w-3 text-[#00B087]" />}
+                    {hasResult && <Eye className="h-3 w-3 text-success" />}
                   </div>
                 );
               })}

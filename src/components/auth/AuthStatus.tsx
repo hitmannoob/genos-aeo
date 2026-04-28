@@ -42,7 +42,7 @@ export default function AuthStatus({ showSignOut = true, className = '' }: AuthS
   return (
     <div className={`flex items-center justify-between space-x-3 ${className}`}>
       <div className="flex items-center space-x-2">
-        <User className="h-4 w-4 text-[#000C60]" />
+        <User className="h-4 w-4 text-primary" />
         <div className="flex flex-col">
           <span className="text-sm font-medium text-foreground">
             {user.displayName || user.email}

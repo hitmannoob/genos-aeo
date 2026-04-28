@@ -26,6 +26,7 @@ export default function AddBrandStep2(): React.ReactElement {
   const [tempCompetitors, setTempCompetitors] = useState<string[]>([]);
   const [newKeyword, setNewKeyword] = useState('');
   const [newCompetitor, setNewCompetitor] = useState('');
+  const [showAllProducts, setShowAllProducts] = useState(false);
   
   const { queryState, executeQuery, clearQuery } = useAIQuery();
 
@@ -591,6 +592,7 @@ export default function AddBrandStep2(): React.ReactElement {
                                   type="text"
                                   value={product}
                                   onChange={(e) => updateProduct(index, e.target.value)}
+                                  maxLength={50}
                                   className="flex-1 p-2 border border-border rounded-lg bg-background text-foreground text-sm"
                                   placeholder="Enter product or service..."
                                 />
@@ -628,15 +630,24 @@ export default function AddBrandStep2(): React.ReactElement {
                           <div className="space-y-2">
                             {(companyData.productsAndServices && companyData.productsAndServices.length > 0) ? (
                               <>
-                                {companyData.productsAndServices.slice(0, 6).map((item: string, index: number) => (
-                                  <div key={index} className="text-sm text-muted-foreground">
+                                {(showAllProducts
+                                  ? companyData.productsAndServices
+                                  : companyData.productsAndServices.slice(0, 6)
+                                ).map((item: string, index: number) => (
+                                  <div key={index} className="text-sm text-muted-foreground break-words">
                                     • {item}
                                   </div>
                                 ))}
                                 {companyData.productsAndServices.length > 6 && (
-                                  <div className="text-sm text-muted-foreground font-medium">
-                                    + {companyData.productsAndServices.length - 6} more offerings
-                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowAllProducts((v) => !v)}
+                                    className="text-sm text-primary font-medium hover:text-primary/80 transition-colors"
+                                  >
+                                    {showAllProducts
+                                      ? 'Show less'
+                                      : `+ ${companyData.productsAndServices.length - 6} more offerings`}
+                                  </button>
                                 )}
                               </>
                             ) : (
@@ -671,7 +682,7 @@ export default function AddBrandStep2(): React.ReactElement {
                               {tempKeywords.map((keyword, index) => (
                                 <span
                                   key={index}
-                                  className="inline-flex items-center gap-1 px-3 py-1 bg-card border border-border text-foreground text-sm rounded-md"
+                                  className="inline-flex items-center gap-1 px-3 py-1 bg-card border border-border text-foreground text-sm rounded-md max-w-full break-all"
                                 >
                                   {keyword}
                                   <button
@@ -690,6 +701,7 @@ export default function AddBrandStep2(): React.ReactElement {
                                 onChange={(e) => setNewKeyword(e.target.value)}
                                 onKeyPress={(e) => e.key === 'Enter' && addKeyword()}
                                 disabled={tempKeywords.length >= 10}
+                                maxLength={50}
                                 className="flex-1 p-2 border border-border rounded-lg bg-background text-foreground text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                                 placeholder={tempKeywords.length >= 10 ? "Maximum 10 keywords reached" : "Add keyword..."}
                               />
@@ -725,7 +737,7 @@ export default function AddBrandStep2(): React.ReactElement {
                               companyData.keywords.map((keyword: string, index: number) => (
                                 <span
                                   key={index}
-                                  className="px-3 py-1 bg-card border border-border text-foreground text-sm rounded-md"
+                                  className="inline-block max-w-full px-3 py-1 bg-card border border-border text-foreground text-sm rounded-md break-all"
                                 >
                                   {keyword}
                                 </span>
@@ -762,7 +774,7 @@ export default function AddBrandStep2(): React.ReactElement {
                               {tempCompetitors.map((competitor, index) => (
                                 <span
                                   key={index}
-                                  className="inline-flex items-center gap-1 px-3 py-1 bg-card border border-border text-foreground text-sm rounded-md"
+                                  className="inline-flex items-center gap-1 px-3 py-1 bg-card border border-border text-foreground text-sm rounded-md max-w-full break-all"
                                 >
                                   {competitor}
                                   <button
@@ -781,6 +793,7 @@ export default function AddBrandStep2(): React.ReactElement {
                                 onChange={(e) => setNewCompetitor(e.target.value)}
                                 onKeyPress={(e) => e.key === 'Enter' && addCompetitor()}
                                 disabled={tempCompetitors.length >= 10}
+                                maxLength={50}
                                 className="flex-1 p-2 border border-border rounded-lg bg-background text-foreground text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                                 placeholder={tempCompetitors.length >= 10 ? "Maximum 10 competitors reached" : "Add competitor..."}
                               />
@@ -816,7 +829,7 @@ export default function AddBrandStep2(): React.ReactElement {
                               companyData.competitors.map((competitor: string, index: number) => (
                                 <span
                                   key={index}
-                                  className="px-3 py-1 bg-card border border-border text-foreground text-sm rounded-md"
+                                  className="inline-block max-w-full px-3 py-1 bg-card border border-border text-foreground text-sm rounded-md break-all"
                                 >
                                   {competitor}
                                 </span>

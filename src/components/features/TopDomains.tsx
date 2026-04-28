@@ -41,8 +41,8 @@ export default function TopDomains({
   };
 
   const getProgressColor = (progress: number) => {
-    if (progress >= 80) return 'from-[#00B087] to-[#00A078]';
-    if (progress >= 60) return 'from-[#000C60] to-[#000C60]';
+    if (progress >= 80) return 'from-success to-[#00A078]';
+    if (progress >= 60) return 'from-primary to-primary';
     if (progress >= 40) return 'from-[#764F94] to-[#764F94]';
     return 'from-muted-foreground to-muted-foreground';
   };
@@ -51,7 +51,7 @@ export default function TopDomains({
     <Card variant="elevated" className="overflow-hidden">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center space-x-3">
-          <div className="p-2 bg-[#00B087] rounded-lg">
+          <div className="p-2 bg-success rounded-lg">
             <Globe className="h-5 w-5 text-white" />
           </div>
           <div>
@@ -94,7 +94,7 @@ export default function TopDomains({
 
       {/* Footer */}
       <div className="mt-6 pt-4 border-t border-border">
-        <button className="text-[#000C60] hover:text-[#000C60] text-sm font-medium transition-colors">
+        <button className="text-primary hover:text-primary text-sm font-medium transition-colors">
           View all domains →
         </button>
       </div>

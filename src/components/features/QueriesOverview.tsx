@@ -23,6 +23,7 @@ import {
 import ProcessQueriesButton from './ProcessQueriesButton';
 import ProcessSingleQueryButton from './ProcessSingleQueryButton';
 import type { UserBrand } from '@/types/userBrand';
+import { getCategoryPillClasses } from '@/lib/queryCategories';
 import { extractChatGPTCitations } from './ChatGPTResponseRenderer';
 import { extractGoogleAIOverviewCitations } from './GoogleAIOverviewRenderer';
 import { extractPerplexityCitations } from './PerplexityResponseRenderer';
@@ -156,15 +157,7 @@ export default function QueriesOverview({
     }
   };
 
-  const getCategoryColor = (category: string) => {
-    switch (category) {
-      case 'Awareness': return 'bg-blue-100 text-blue-700 border-blue-200';
-      case 'Interest': return 'bg-yellow-100 text-yellow-700 border-yellow-200';
-      case 'Consideration': return 'bg-purple-100 text-purple-700 border-purple-200';
-      case 'Purchase': return 'bg-green-100 text-green-700 border-green-200';
-      default: return 'bg-gray-100 text-gray-700 border-gray-200';
-    }
-  };
+  const getCategoryColor = getCategoryPillClasses;
 
   // Helper function to get query status.
   // `processingQueries` is now scoped to the active batch only (set by
@@ -179,7 +172,7 @@ export default function QueriesOverview({
     if (processingQueries.has(queryIdentity)) {
       return {
         status: 'Processing',
-        color: 'bg-blue-500 text-white',
+        color: 'bg-primary text-primary-foreground',
         description: queryResult ? 'Re-processing query...' : 'Query is being processed...',
         showLoader: true
       };
@@ -282,7 +275,7 @@ export default function QueriesOverview({
       <div className="p-4 border-b border-border">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <Activity className="h-5 w-5 text-[#000C60]" />
+            <Activity className="h-5 w-5 text-primary" />
             <div>
               <h3 className="text-sm font-semibold text-foreground">
                 {variant === 'minimal' ? 'Queries' : 'Queries Overview'}
@@ -306,9 +299,9 @@ export default function QueriesOverview({
           
           <div className="flex items-center space-x-3">
             {showProcessButton && (
-              <ProcessQueriesButton 
+              <ProcessQueriesButton
                 brandId={brand.id}
-                variant="ghost"
+                variant="primary"
                 size="sm"
                 onStart={(batchQueryIds) => {
                   // Scope the processing set to the current batch only. Queries
@@ -335,7 +328,15 @@ export default function QueriesOverview({
                     Array.from(batchQueriesRef.current).filter(q => !completedQueries.has(q))
                   );
                   setBulkProcessingQueries(stillProcessing);
-                  lastAttemptedCountRef.current = job.attemptedCount;
+
+                  // When new queries finish mid-job, refetch results so rows that
+                  // just dropped out of the processing set immediately render as
+                  // "Processed on …" instead of briefly flashing "Unprocessed"
+                  // until onComplete fires (or the user reloads).
+                  if (job.attemptedCount > lastAttemptedCountRef.current) {
+                    lastAttemptedCountRef.current = job.attemptedCount;
+                    void refetchQueryResults();
+                  }
                 }}
                 onComplete={async () => {
                   // Clear local batch tracking. Brand list + user profile
@@ -353,7 +354,7 @@ export default function QueriesOverview({
             {onViewAll && displayQueries.length > 0 && (
               <button
                 onClick={onViewAll}
-                className="flex items-center space-x-1 text-xs text-[#000C60] hover:text-[#000C60]/80 transition-colors"
+                className="flex items-center space-x-1 text-xs text-primary hover:text-primary/80 transition-colors"
               >
                 <span>View All</span>
                 <ArrowRight className="h-3 w-3" />
@@ -373,7 +374,7 @@ export default function QueriesOverview({
                   placeholder="Search queries..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-8 pr-3 py-1.5 text-xs border border-border rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-[#000C60]/20 focus:border-[#000C60]"
+                  className="w-full pl-8 pr-3 py-1.5 text-xs border border-border rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/20 focus:border-primary"
                 />
               </div>
             )}
@@ -627,6 +628,7 @@ export default function QueriesOverview({
                               <ProcessSingleQueryButton
                                 brandId={brand.id}
                                 query={query}
+                                isProcessing={statusInfo.showLoader}
                                 onStart={(qid) => {
                                   setSingleProcessingQueries((prev) => {
                                     const next = new Set(prev);
@@ -714,7 +716,7 @@ export default function QueriesOverview({
                             e.stopPropagation(); // Prevent row click when button is clicked
                             onQueryClick && onQueryClick(query, queryResult);
                           }}
-                          className="px-3 py-1.5 text-xs font-medium text-[#000C60] bg-[#000C60]/10 hover:bg-[#000C60]/20 rounded-md transition-colors duration-200 group-hover:bg-[#000C60] group-hover:text-white"
+                          className="px-3 py-1.5 text-xs font-medium text-primary bg-primary/10 hover:bg-primary/20 rounded-md transition-colors duration-200 group-hover:bg-primary group-hover:text-white"
                           title="View detailed AI responses"
                         >
                           More Details
@@ -724,6 +726,7 @@ export default function QueriesOverview({
                         <ProcessSingleQueryButton
                           brandId={brand.id}
                           query={query}
+                          isProcessing={statusInfo.showLoader}
                           onStart={(qid) => {
                             setSingleProcessingQueries((prev) => {
                               const next = new Set(prev);

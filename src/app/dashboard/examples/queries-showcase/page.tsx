@@ -32,7 +32,7 @@ export default function QueriesShowcase(): React.ReactElement {
         {/* Full Variant */}
         <section>
           <div className="flex items-center space-x-2 mb-4">
-            <Code className="h-5 w-5 text-[#000C60]" />
+            <Code className="h-5 w-5 text-primary" />
             <h2 className="text-xl font-semibold text-foreground">Full Variant</h2>
           </div>
           <p className="text-sm text-muted-foreground mb-4">
@@ -52,7 +52,7 @@ export default function QueriesShowcase(): React.ReactElement {
         {/* Compact and Minimal Variants */}
         <section>
           <div className="flex items-center space-x-2 mb-4">
-            <Code className="h-5 w-5 text-[#000C60]" />
+            <Code className="h-5 w-5 text-primary" />
             <h2 className="text-xl font-semibold text-foreground">Compact & Minimal Variants</h2>
           </div>
           <p className="text-sm text-muted-foreground mb-4">
@@ -94,7 +94,7 @@ export default function QueriesShowcase(): React.ReactElement {
         {/* Widget Showcase */}
         <section>
           <div className="flex items-center space-x-2 mb-4">
-            <Code className="h-5 w-5 text-[#000C60]" />
+            <Code className="h-5 w-5 text-primary" />
             <h2 className="text-xl font-semibold text-foreground">Queries Widget</h2>
           </div>
           <p className="text-sm text-muted-foreground mb-4">
@@ -119,7 +119,7 @@ export default function QueriesShowcase(): React.ReactElement {
         {/* Configuration Examples */}
         <section>
           <div className="flex items-center space-x-2 mb-4">
-            <Code className="h-5 w-5 text-[#000C60]" />
+            <Code className="h-5 w-5 text-primary" />
             <h2 className="text-xl font-semibold text-foreground">Configuration Examples</h2>
           </div>
           <p className="text-sm text-muted-foreground mb-4">
@@ -160,7 +160,7 @@ export default function QueriesShowcase(): React.ReactElement {
         {/* Code Examples */}
         <section>
           <div className="flex items-center space-x-2 mb-4">
-            <Code className="h-5 w-5 text-[#000C60]" />
+            <Code className="h-5 w-5 text-primary" />
             <h2 className="text-xl font-semibold text-foreground">Usage Examples</h2>
           </div>
           

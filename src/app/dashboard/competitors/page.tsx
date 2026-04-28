@@ -92,7 +92,7 @@ export default function CompetitorsPage(): React.ReactElement {
           <p className="text-muted-foreground mb-4">
             Add your first brand to start analyzing competitors.
           </p>
-          <Link href="/dashboard/add-brand/step-1" className="bg-[#000C60] text-white px-4 py-2 rounded-lg hover:bg-[#000C60]/90 transition-colors">
+          <Link href="/dashboard/add-brand/step-1" className="bg-primary text-white px-4 py-2 rounded-lg hover:bg-primary/90 transition-colors">
             Add Brand
           </Link>
         </div>
@@ -183,7 +183,7 @@ export default function CompetitorsPage(): React.ReactElement {
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
               <Card>
                 <div className="text-center">
-                  <Users className="h-8 w-8 text-[#000C60] mx-auto mb-2" />
+                  <Users className="h-8 w-8 text-primary mx-auto mb-2" />
                   <p className="text-2xl font-bold text-foreground">{competitors.length}</p>
                   <p className="text-muted-foreground text-sm">Competitors Tracking</p>
                 </div>
@@ -191,7 +191,7 @@ export default function CompetitorsPage(): React.ReactElement {
               
               <Card>
                 <div className="text-center">
-                  <MessageSquare className="h-8 w-8 text-[#00B087] mx-auto mb-2" />
+                  <MessageSquare className="h-8 w-8 text-success mx-auto mb-2" />
                   <p className="text-2xl font-bold text-foreground">
                     {competitors.reduce((sum, comp) => sum + comp.mentions, 0)}
                   </p>
@@ -230,7 +230,7 @@ export default function CompetitorsPage(): React.ReactElement {
               </div>
               
               <div className="space-y-4">
-                {competitors.map((competitor, index) => (
+                {[...competitors].sort((a, b) => b.mentions - a.mentions).map((competitor, index) => (
                   <div key={competitor.id} className="border border-border rounded-lg p-4 hover:bg-muted/20 transition-colors">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-4">
@@ -375,7 +375,7 @@ export default function CompetitorsPage(): React.ReactElement {
               <div className="flex flex-col sm:flex-row gap-3 justify-center">
                 <Link 
                   href="/dashboard/queries" 
-                  className="bg-[#000C60] text-white px-4 py-2 rounded-lg hover:bg-[#000C60]/90 transition-colors"
+                  className="bg-primary text-white px-4 py-2 rounded-lg hover:bg-primary/90 transition-colors"
                 >
                   Process Queries
                 </Link>

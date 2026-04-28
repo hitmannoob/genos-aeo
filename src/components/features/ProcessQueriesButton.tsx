@@ -201,22 +201,15 @@ export default function ProcessQueriesButton({
   const getVariantStyles = () => {
     if (!hasEnoughCredits && requiredCredits > 0) {
       return {
-        primary: 'bg-red-600 text-white cursor-not-allowed opacity-70',
-        secondary: 'bg-white text-red-600 border border-red-600 cursor-not-allowed opacity-70',
-        ghost: 'text-red-600 cursor-not-allowed opacity-70',
-      };
-    }
-    if (hasProcessedQueries && displayStatus === 'idle') {
-      return {
-        primary: 'bg-orange-600 text-white hover:bg-orange-700 focus:ring-orange-600',
-        secondary: 'bg-white text-orange-600 border border-orange-600 hover:bg-orange-50 focus:ring-orange-600',
-        ghost: 'text-orange-600 hover:bg-orange-100 focus:ring-orange-600',
+        primary: 'bg-destructive text-destructive-foreground cursor-not-allowed opacity-70',
+        secondary: 'bg-background text-destructive border border-destructive cursor-not-allowed opacity-70',
+        ghost: 'text-destructive cursor-not-allowed opacity-70',
       };
     }
     return {
-      primary: 'bg-[#000C60] text-white hover:bg-[#000C60]/90 focus:ring-[#000C60]',
-      secondary: 'bg-white text-[#000C60] border border-[#000C60] hover:bg-gray-50 focus:ring-[#000C60]',
-      ghost: 'text-[#000C60] hover:bg-gray-100 focus:ring-[#000C60]',
+      primary: 'bg-primary text-primary-foreground hover:bg-primary/90 focus:ring-primary',
+      secondary: 'bg-background text-primary border border-primary hover:bg-primary/5 focus:ring-primary',
+      ghost: 'text-primary hover:bg-primary/10 focus:ring-primary',
     };
   };
 
@@ -231,9 +224,9 @@ export default function ProcessQueriesButton({
   const statusStyles = {
     idle: '',
     processing: 'opacity-80 cursor-not-allowed',
-    success: 'bg-green-600 hover:bg-green-700 text-white',
-    error: 'bg-red-600 hover:bg-red-700 text-white',
-    cancelled: 'bg-yellow-600 hover:bg-yellow-700 text-white',
+    success: 'bg-success hover:bg-success/90 text-white',
+    error: 'bg-destructive hover:bg-destructive/90 text-destructive-foreground',
+    cancelled: 'bg-warning hover:bg-warning/90 text-foreground',
   };
 
   const iconSize = size === 'sm' ? 'h-3.5 w-3.5' : size === 'lg' ? 'h-5 w-5' : 'h-4 w-4';
@@ -308,7 +301,7 @@ export default function ProcessQueriesButton({
             onClick={handleStopProcessing}
             className={`
               ${baseStyles}
-              bg-red-600 text-white hover:bg-red-700 focus:ring-red-600
+              bg-destructive text-destructive-foreground hover:bg-destructive/90 focus:ring-destructive
               ${sizeStyles[size]}
               animate-fade-in
             `}
@@ -321,7 +314,7 @@ export default function ProcessQueriesButton({
       </div>
 
       {processing && (
-        <p className="text-xs text-green-600 mt-1 font-medium text-center">
+        <p className="text-xs text-success mt-1 font-medium text-center">
           Processing continues on the server if you leave this page.
         </p>
       )}

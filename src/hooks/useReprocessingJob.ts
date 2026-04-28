@@ -309,7 +309,13 @@ export function useReprocessingJob(
       startNotifiedJobIdRef.current = job.id;
       completionNotifiedJobIdRef.current = null;
       lastQueryIdRef.current = null;
-      cb?.onStart?.(job.queries.map((q) => q.queryId));
+      // Only the still-in-flight ids — on a fresh mount of an in-progress
+      // job, already-completed/failed queries shouldn't be marked "Processing".
+      const finishedIds = new Set([...job.completedQueryIds, ...job.failedQueryIds]);
+      const inFlightIds = job.queries
+        .map((q) => q.queryId)
+        .filter((qid) => !finishedIds.has(qid));
+      cb?.onStart?.(inFlightIds);
     }
 
     if (job.currentQueryId && lastQueryIdRef.current !== job.currentQueryId) {

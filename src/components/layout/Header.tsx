@@ -188,7 +188,7 @@ export default function Header({ title }: HeaderProps): React.ReactElement {
                     onClick={() => setIsBrandDropdownOpen(false)}
                     className="w-full flex items-center space-x-3 p-3 hover:bg-accent transition-colors text-left"
                   >
-                    <div className="w-5 h-5 bg-[#000C60] rounded-full flex items-center justify-center flex-shrink-0">
+                    <div className="w-5 h-5 bg-primary rounded-full flex items-center justify-center flex-shrink-0">
                       <Plus className="h-3 w-3 text-white" />
                     </div>
                     <div className="flex-1 min-w-0">
@@ -210,7 +210,7 @@ export default function Header({ title }: HeaderProps): React.ReactElement {
             </Link>
 
             {/* Download button - COMMENTED OUT (replaced with Your Brands) */}
-            {/* <button className="flex items-center space-x-2 bg-gradient-to-r from-[#000C60] to-[#000C60] text-white px-4 py-2 rounded-lg hover:from-[#000C60] hover:to-[#000C60] transition-all shadow-lg shadow-[#000C60]/20">
+            {/* <button className="flex items-center space-x-2 bg-gradient-to-r from-primary to-primary text-white px-4 py-2 rounded-lg hover:from-primary hover:to-primary transition-all shadow-lg shadow-primary/20">
               <Download className="h-4 w-4" />
               <span className="text-sm hidden sm:inline">Export</span>
             </button> */}

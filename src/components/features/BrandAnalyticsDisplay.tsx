@@ -307,7 +307,7 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
               onClick={() => setActiveTab('lifetime')}
               className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 ${
                 activeTab === 'lifetime'
-                  ? 'bg-white text-[#000C60] shadow-sm'
+                  ? 'bg-white text-primary shadow-sm'
                   : 'text-gray-600 hover:text-gray-900'
               }`}
             >
@@ -322,7 +322,7 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
               onClick={() => setActiveTab('latest')}
               className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 ${
                 activeTab === 'latest'
-                  ? 'bg-white text-[#000C60] shadow-sm'
+                  ? 'bg-white text-primary shadow-sm'
                   : 'text-gray-600 hover:text-gray-900'
               }`}
             >

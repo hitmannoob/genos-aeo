@@ -10,6 +10,10 @@ import AIResponseModal from './AIResponseModal';
 import WebLogo from '@/components/shared/WebLogo';
 import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
 import {
+  getCategoryAccentClasses,
+  getCategorySolidClass,
+} from '@/lib/queryCategories';
+import {
   Search,
   RefreshCw,
   AlertCircle,
@@ -226,7 +230,7 @@ export default function QueriesContent(): React.ReactElement {
           <p className="text-muted-foreground mb-4">
             Add your first brand to start tracking queries.
           </p>
-          <Link href="/dashboard/add-brand/step-1" className="bg-[#000C60] text-white px-4 py-2 rounded-lg hover:bg-[#000C60]/90 transition-colors">
+          <Link href="/dashboard/add-brand/step-1" className="bg-primary text-white px-4 py-2 rounded-lg hover:bg-primary/90 transition-colors">
             Add Brand
           </Link>
         </div>
@@ -343,7 +347,7 @@ export default function QueriesContent(): React.ReactElement {
                     onChange={(e) => setNewQuery(e.target.value)}
                     onKeyDown={handleQueryKeyDown}
                     placeholder="e.g. what is the best tool for GEO? FYI it's Genos 😊"
-                    className="w-full px-4 py-3 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#000C60] focus:border-transparent bg-background text-foreground"
+                    className="w-full px-4 py-3 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent bg-background text-foreground"
                     autoFocus
                   />
                 </div>
@@ -367,7 +371,7 @@ export default function QueriesContent(): React.ReactElement {
                             key={topic}
                             type="button"
                             onClick={() => setSelectedTopic(topic)}
-                            className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
+                            className={`px-3 py-1.5 rounded-full text-sm border transition-colors max-w-full break-words text-left ${
                               selected
                                 ? 'border-blue-300 bg-blue-50 text-blue-700'
                                 : 'border-border hover:bg-muted/30'
@@ -403,8 +407,9 @@ export default function QueriesContent(): React.ReactElement {
                               void handleConfirmNewTopic();
                             }
                           }}
+                          maxLength={50}
                           placeholder="e.g. LLM Observability"
-                          className="flex-1 px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#000C60] focus:border-transparent bg-background text-foreground"
+                          className="flex-1 px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent bg-background text-foreground"
                           autoFocus
                         />
                         <button
@@ -442,93 +447,46 @@ export default function QueriesContent(): React.ReactElement {
                     Category
                   </label>
                   <div className="space-y-3">
-                    {/* Awareness */}
-                    <div 
-                      onClick={() => setSelectedCategory('Awareness')}
-                      className={`p-4 rounded-lg border cursor-pointer transition-colors ${
-                        selectedCategory === 'Awareness' 
-                          ? 'border-blue-300 bg-blue-50' 
-                          : 'border-border hover:bg-muted/30'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="flex items-center space-x-2">
-                            <div className="w-3 h-3 rounded bg-blue-500"></div>
-                            <span className="font-medium text-foreground">Awareness</span>
+                    {[
+                      {
+                        category: 'Awareness' as const,
+                        description: 'Brand discovery, "What is [brand]?", company mentions',
+                      },
+                      {
+                        category: 'Interest' as const,
+                        description: 'Product features, comparisons, "How does it work?"',
+                      },
+                      {
+                        category: 'Consideration' as const,
+                        description: 'Evaluating options, comparisons, reviews, decision-making',
+                      },
+                      {
+                        category: 'Purchase' as const,
+                        description: 'Pricing, "Where to buy?", purchase decisions',
+                      },
+                    ].map(({ category, description }) => (
+                      <div
+                        key={category}
+                        onClick={() => setSelectedCategory(category)}
+                        className={`p-4 rounded-lg border cursor-pointer transition-colors ${
+                          selectedCategory === category
+                            ? getCategoryAccentClasses(category)
+                            : 'border-border hover:bg-muted/30'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="flex items-center space-x-2">
+                              <div className={`w-3 h-3 rounded ${getCategorySolidClass(category)}`}></div>
+                              <span className="font-medium text-foreground">{category}</span>
+                            </div>
+                            <p className="text-sm text-muted-foreground mt-1">
+                              {description}
+                            </p>
                           </div>
-                          <p className="text-sm text-muted-foreground mt-1">
-                            Brand discovery, "What is [brand]?", company mentions
-                          </p>
                         </div>
                       </div>
-                    </div>
-
-                    {/* Interest */}
-                    <div 
-                      onClick={() => setSelectedCategory('Interest')}
-                      className={`p-4 rounded-lg border cursor-pointer transition-colors ${
-                        selectedCategory === 'Interest' 
-                          ? 'border-purple-300 bg-purple-50' 
-                          : 'border-border hover:bg-muted/30'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="flex items-center space-x-2">
-                            <div className="w-3 h-3 rounded bg-purple-500"></div>
-                            <span className="font-medium text-foreground">Interest</span>
-                          </div>
-                          <p className="text-sm text-muted-foreground mt-1">
-                            Product features, comparisons, "How does it work?"
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Consideration */}
-                    <div 
-                      onClick={() => setSelectedCategory('Consideration')}
-                      className={`p-4 rounded-lg border cursor-pointer transition-colors ${
-                        selectedCategory === 'Consideration' 
-                          ? 'border-pink-300 bg-pink-50' 
-                          : 'border-border hover:bg-muted/30'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="flex items-center space-x-2">
-                            <div className="w-3 h-3 rounded bg-pink-500"></div>
-                            <span className="font-medium text-foreground">Consideration</span>
-                          </div>
-                          <p className="text-sm text-muted-foreground mt-1">
-                            Evaluating options, comparisons, reviews, decision-making
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Purchase */}
-                    <div 
-                      onClick={() => setSelectedCategory('Purchase')}
-                      className={`p-4 rounded-lg border cursor-pointer transition-colors ${
-                        selectedCategory === 'Purchase' 
-                          ? 'border-orange-300 bg-orange-50' 
-                          : 'border-border hover:bg-muted/30'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="flex items-center space-x-2">
-                            <div className="w-3 h-3 rounded bg-orange-500"></div>
-                            <span className="font-medium text-foreground">Purchase</span>
-                          </div>
-                          <p className="text-sm text-muted-foreground mt-1">
-                            Pricing, "Where to buy?", purchase decisions
-                          </p>
-                        </div>
-                      </div>
-                    </div>
+                    ))}
                   </div>
                 </div>
               </div>

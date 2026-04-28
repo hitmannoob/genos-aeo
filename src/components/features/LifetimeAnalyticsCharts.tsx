@@ -7,7 +7,7 @@ interface LifetimeAnalyticsChartsProps {
   brandId: string;
 }
 
-const COLORS = ['#000C60', '#764F94', '#E5E7EB'];
+const COLORS = ['#0D9488', '#764F94', '#E5E7EB'];
 
 export default function LifetimeAnalyticsCharts({ lifetimeAnalytics, brandId }: LifetimeAnalyticsChartsProps) {
   void brandId;
@@ -67,7 +67,7 @@ export default function LifetimeAnalyticsCharts({ lifetimeAnalytics, brandId }: 
               <YAxis />
               <Tooltip />
               <Legend />
-              <Line type="monotone" dataKey="mentions" stroke="#000C60" name="Mentions" strokeWidth={2} />
+              <Line type="monotone" dataKey="mentions" stroke="#0D9488" name="Mentions" strokeWidth={2} />
             </LineChart>
           </ResponsiveContainer>
         )}
@@ -92,17 +92,17 @@ export default function LifetimeAnalyticsCharts({ lifetimeAnalytics, brandId }: 
               innerRadius={60}
               outerRadius={100}
               fill="#8884d8"
-              label={({ name, percent }) => `${name}: ${(((percent ?? 0) * 100)).toFixed(0)}%`}
+              labelLine={false}
             >
               {donutData.map((entry, idx) => (
-                <Cell key={`cell-${idx}`} fill={idx === 0 ? '#000C60' : '#E5E7EB'} />
+                <Cell key={`cell-${idx}`} fill={idx === 0 ? '#0D9488' : '#E5E7EB'} />
               ))}
             </Pie>
             <Tooltip />
           </PieChart>
         </ResponsiveContainer>
         <div className="mt-4 text-center">
-          <span className="text-2xl font-bold text-[#000C60]">{donutData[0].value}%</span>
+          <span className="text-2xl font-bold text-primary">{donutData[0].value}%</span>
           <span className="ml-2 text-gray-600">Visible</span>
         </div>
       </div>
@@ -117,7 +117,7 @@ export default function LifetimeAnalyticsCharts({ lifetimeAnalytics, brandId }: 
             <YAxis />
             <Tooltip />
             <Legend />
-            <Bar dataKey="mentions" fill="#000C60" name="Mentions" />
+            <Bar dataKey="mentions" fill="#0D9488" name="Mentions" />
             <Bar dataKey="citations" fill="#764F94" name="Citations" />
           </BarChart>
         </ResponsiveContainer>

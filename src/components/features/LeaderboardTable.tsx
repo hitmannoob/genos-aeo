@@ -29,9 +29,9 @@ export default function LeaderboardTable({
   const getSentimentColor = (sentiment: string) => {
     switch (sentiment) {
       case 'positive':
-        return 'text-[#00B087] bg-[#00B087]/10';
+        return 'text-success bg-success/10';
       case 'negative':
-        return 'text-[#FF4D4D] bg-[#FF4D4D]/10';
+        return 'text-destructive bg-destructive/10';
       default:
         return 'text-muted-foreground bg-muted/50';
     }
@@ -136,7 +136,7 @@ export default function LeaderboardTable({
                     <div className="flex-1">
                       <div className="w-20 bg-muted rounded-full h-2 overflow-hidden">
                         <div 
-                          className="bg-gradient-to-r from-[#000C60] to-[#000C60] h-2 rounded-full transition-all duration-300" 
+                          className="bg-gradient-to-r from-primary to-primary h-2 rounded-full transition-all duration-300" 
                           style={{ width: `${entry.visibility}%` }}
                         />
                       </div>
@@ -147,9 +147,9 @@ export default function LeaderboardTable({
                 <td className="py-4 px-3">
                   <div className={`inline-flex items-center space-x-1 px-2 py-1 rounded-full text-xs font-medium ${
                     entry.change > 0 
-                      ? 'bg-[#00B087]/10 text-[#00B087]' 
+                      ? 'bg-success/10 text-success' 
                       : entry.change < 0 
-                      ? 'bg-[#FF4D4D]/10 text-[#FF4D4D]' 
+                      ? 'bg-destructive/10 text-destructive' 
                       : 'bg-muted/50 text-muted-foreground'
                   }`}>
                     {entry.change > 0 && <ChevronUp className="h-3 w-3" />}

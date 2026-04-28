@@ -98,7 +98,7 @@ const ToastComponent: React.FC<ToastProps> = ({
             <div className="mt-3">
               <button
                 onClick={action.onClick}
-                className="text-sm font-medium text-[#000C60] hover:text-[#000C60]/80 transition-colors"
+                className="text-sm font-medium text-primary hover:text-primary/80 transition-colors"
               >
                 {action.label}
               </button>

@@ -27,19 +27,19 @@ export default function MetricCard({
 
   const colorClasses = {
     blue: {
-      bg: 'bg-gradient-to-br from-[#000C60] to-[#000C60]',
-      text: 'text-[#000C60]',
-      accent: 'bg-[#000C60]/10'
+      bg: 'bg-gradient-to-br from-primary to-primary',
+      text: 'text-primary',
+      accent: 'bg-primary/10'
     },
     green: {
-      bg: 'bg-gradient-to-br from-[#00B087] to-[#00A078]',
-      text: 'text-[#00B087]',
-      accent: 'bg-[#00B087]/10'
+      bg: 'bg-gradient-to-br from-success to-[#00A078]',
+      text: 'text-success',
+      accent: 'bg-success/10'
     },
     red: {
-      bg: 'bg-gradient-to-br from-[#FF4D4D] to-[#E63946]',
-      text: 'text-[#FF4D4D]',
-      accent: 'bg-[#FF4D4D]/10'
+      bg: 'bg-gradient-to-br from-destructive to-[#E63946]',
+      text: 'text-destructive',
+      accent: 'bg-destructive/10'
     },
     yellow: {
       bg: 'bg-gradient-to-br from-[#764F94] to-[#764F94]',
@@ -99,9 +99,9 @@ export default function MetricCard({
           <div className="flex items-center justify-between">
             <div className={`flex items-center space-x-2 px-3 py-1 rounded-full ${
               isPositiveChange 
-                ? 'bg-[#00B087]/10 text-[#00B087]' 
+                ? 'bg-success/10 text-success' 
                 : isNegativeChange 
-                ? 'bg-[#FF4D4D]/10 text-[#FF4D4D]' 
+                ? 'bg-destructive/10 text-destructive' 
                 : 'bg-muted/50 text-muted-foreground'
             }`}>
               {isPositiveChange && <TrendingUp className="h-4 w-4" />}

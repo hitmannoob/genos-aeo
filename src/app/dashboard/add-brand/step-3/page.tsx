@@ -12,6 +12,11 @@ import { generateRealisticAnalytics } from '@/utils/generateBrandData';
 import { useBrandContext } from '@/context/BrandContext';
 import { useToast } from '@/context/ToastContext';
 import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
+import {
+  QUERY_CATEGORIES,
+  getCategoryPillClasses,
+  getCategorySolidClass,
+} from '@/lib/queryCategories';
 
 interface GeneratedQuery {
   keyword: string;
@@ -515,15 +520,7 @@ Output format (return ONLY valid JSON array):
     }
   };
 
-  const getCategoryColor = (category: string) => {
-    switch (category) {
-      case 'Awareness': return 'bg-blue-100 text-blue-700 border-blue-200';
-      case 'Interest': return 'bg-yellow-100 text-yellow-700 border-yellow-200';
-      case 'Consideration': return 'bg-purple-100 text-purple-700 border-purple-200';
-      case 'Purchase': return 'bg-green-100 text-green-700 border-green-200';
-      default: return 'bg-gray-100 text-foreground border-gray-200';
-    }
-  };
+  const getCategoryColor = getCategoryPillClasses;
 
   // Group queries by keyword
   const queriesByKeyword = generatedQueries.reduce((acc, query) => {
@@ -1001,21 +998,20 @@ Output format (return ONLY valid JSON array):
                   
                   {/* Intent Distribution Bar */}
                   <div className="relative h-8 bg-muted rounded-lg overflow-hidden mb-4">
-                    {['Awareness', 'Interest', 'Consideration', 'Purchase'].map((category, index) => {
+                    {QUERY_CATEGORIES.map((category, index) => {
                       const count = filteredQueries.filter(q => q.category === category).length;
                       const percentage = filteredQueries.length > 0 ? (count / filteredQueries.length) * 100 : 0;
-                      const colors = ['bg-green-500', 'bg-blue-500', 'bg-yellow-500', 'bg-purple-500'];
-                      const previousPercentages = ['Awareness', 'Interest', 'Consideration', 'Purchase']
+                      const previousPercentages = QUERY_CATEGORIES
                         .slice(0, index)
                         .reduce((sum, cat) => {
                           const catCount = filteredQueries.filter(q => q.category === cat).length;
                           return sum + (filteredQueries.length > 0 ? (catCount / filteredQueries.length) * 100 : 0);
                         }, 0);
-                      
+
                       return percentage > 0 ? (
                         <div
                           key={category}
-                          className={`absolute top-0 h-full ${colors[index]}`}
+                          className={`absolute top-0 h-full ${getCategorySolidClass(category)}`}
                           style={{
                             left: `${previousPercentages}%`,
                             width: `${percentage}%`
@@ -1024,17 +1020,16 @@ Output format (return ONLY valid JSON array):
                       ) : null;
                     })}
                   </div>
-                  
+
                   {/* Intent Legend */}
                   <div className="flex flex-wrap gap-6 text-sm text-foreground">
-                    {['Awareness', 'Interest', 'Consideration', 'Purchase'].map((category, index) => {
+                    {QUERY_CATEGORIES.map((category) => {
                       const count = filteredQueries.filter(q => q.category === category).length;
                       const percentage = filteredQueries.length > 0 ? Math.round((count / filteredQueries.length) * 100) : 0;
-                      const colors = ['bg-green-500', 'bg-blue-500', 'bg-yellow-500', 'bg-purple-500'];
-                      
+
                       return (
                         <div key={category} className="flex items-center space-x-2">
-                          <div className={`w-3 h-3 rounded-full ${colors[index]}`}></div>
+                          <div className={`w-3 h-3 rounded-full ${getCategorySolidClass(category)}`}></div>
                           <span>
                             {category} - <span className="font-medium">{percentage}%</span>
                           </span>
@@ -1051,11 +1046,11 @@ Output format (return ONLY valid JSON array):
                       Prompts <span className="text-foreground">({filteredQueries.length})</span>
                     </h3>
                     <div className="flex items-center space-x-2">
-                      <button className="flex items-center space-x-2 text-foreground hover:text-primary transition-colors">
+                      <button className="flex items-center space-x-2 text-foreground hover:text-primary transition-colors rounded-md px-2 py-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary">
                         <span>🎯 Intents</span>
                         <span className="text-xs">▼</span>
                       </button>
-                      <button className="flex items-center space-x-2 text-foreground hover:text-primary transition-colors">
+                      <button className="flex items-center space-x-2 text-foreground hover:text-primary transition-colors rounded-md px-2 py-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary">
                         <span># Topics</span>
                         <span className="text-xs">▼</span>
                       </button>
@@ -1266,6 +1261,7 @@ Output format (return ONLY valid JSON array):
                   value={newTopicName}
                   onChange={(e) => setNewTopicName(e.target.value)}
                   onKeyDown={handleKeyDown}
+                  maxLength={50}
                   placeholder="e.g. Vegan products, Eco-friendly bags"
                   className="w-full px-4 py-3 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent bg-background text-foreground"
                   autoFocus
@@ -1362,7 +1358,7 @@ Output format (return ONLY valid JSON array):
                           key={topic}
                           type="button"
                           onClick={() => setNewQueryTopic(topic)}
-                          className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
+                          className={`px-3 py-1.5 rounded-full text-sm border transition-colors max-w-full break-words text-left ${
                             selected
                               ? 'border-blue-300 bg-blue-50 text-blue-700'
                               : 'border-border hover:bg-muted/30'
@@ -1404,6 +1400,7 @@ Output format (return ONLY valid JSON array):
                             handleConfirmNewTopic();
                           }
                         }}
+                        maxLength={50}
                         placeholder="e.g. LLM Observability"
                         className="flex-1 px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent bg-background text-foreground"
                         autoFocus

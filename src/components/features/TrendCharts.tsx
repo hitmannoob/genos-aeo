@@ -121,18 +121,18 @@ export default function TrendCharts({
 
           {/* Chart lines */}
           {createPath(data.map(d => d.chatgpt), '#00B087')}
-          {createPath(data.map(d => d.googleAio), '#000C60')}
+          {createPath(data.map(d => d.googleAio), '#0D9488')}
           {createPath(data.map(d => d.perplexity), '#764F94')}
         </svg>
 
         {/* Legend */}
         <div className="flex items-center justify-center space-x-6 mt-4">
           <div className="flex items-center space-x-2">
-            <div className="w-3 h-3 rounded-full bg-[#00B087]"></div>
+            <div className="w-3 h-3 rounded-full bg-success"></div>
             <span className="text-xs text-muted-foreground">ChatGPT</span>
           </div>
           <div className="flex items-center space-x-2">
-            <div className="w-3 h-3 rounded-full bg-[#000C60]"></div>
+            <div className="w-3 h-3 rounded-full bg-primary"></div>
             <span className="text-xs text-muted-foreground">Google AIO</span>
           </div>
           <div className="flex items-center space-x-2">

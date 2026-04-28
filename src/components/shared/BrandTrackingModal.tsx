@@ -35,7 +35,7 @@ export default function BrandTrackingModal({
         {/* Content */}
         <div className="space-y-4">
           <div className="text-center">
-            <div className="w-16 h-16 bg-gradient-to-br from-[#000C60] to-[#00B087] rounded-full flex items-center justify-center mx-auto mb-4">
+            <div className="w-16 h-16 bg-gradient-to-br from-primary to-success rounded-full flex items-center justify-center mx-auto mb-4">
               <span className="text-2xl">🎯</span>
             </div>
             
@@ -45,7 +45,7 @@ export default function BrandTrackingModal({
             
             <p className="text-gray-600 dark:text-gray-300 leading-relaxed">
               Looks like the brand {brandName && (
-                <span className="font-semibold text-[#000C60] dark:text-[#00B087]">"{brandName}"</span>
+                <span className="font-semibold text-primary dark:text-success">"{brandName}"</span>
               )} is flying under our radar, for now. So, we don't have any historical data (yet), but don't worry—we're on the case and will start monitoring it from today.
             </p>
           </div>
@@ -54,7 +54,7 @@ export default function BrandTrackingModal({
           <div className="pt-4">
             <button
               onClick={onStartTracking}
-              className="w-full bg-gradient-to-r from-[#000C60] to-[#00B087] text-white font-semibold py-3 px-6 rounded-xl hover:shadow-lg hover:scale-[1.02] transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-[#000C60]/50"
+              className="w-full bg-gradient-to-r from-primary to-success text-white font-semibold py-3 px-6 rounded-xl hover:shadow-lg hover:scale-[1.02] transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary/50"
             >
               Great, Start Tracking!
             </button>

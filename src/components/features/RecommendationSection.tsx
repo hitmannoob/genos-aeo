@@ -24,11 +24,11 @@ export default function RecommendationSection({
   const getPriorityColor = (priority: string) => {
     switch (priority) {
       case 'high':
-        return 'bg-[#FF4D4D]/10 text-[#FF4D4D] border-[#FF4D4D]/20';
+        return 'bg-destructive/10 text-destructive border-destructive/20';
       case 'medium':
         return 'bg-[#764F94]/10 text-[#764F94] border-[#764F94]/20';
       case 'low':
-        return 'bg-[#00B087]/10 text-[#00B087] border-[#00B087]/20';
+        return 'bg-success/10 text-success border-success/20';
       default:
         return 'bg-muted/50 text-muted-foreground border-border';
     }
@@ -101,7 +101,7 @@ export default function RecommendationSection({
                   {/* Footer */}
                   <div className="flex items-center justify-between text-xs">
                     <div className="flex items-center space-x-2">
-                      <span className="text-[#000C60] font-medium">{rec.category}</span>
+                      <span className="text-primary font-medium">{rec.category}</span>
                       {rec.readTime && (
                         <>
                           <span className="text-muted-foreground">•</span>
@@ -112,7 +112,7 @@ export default function RecommendationSection({
                         </>
                       )}
                     </div>
-                    <ArrowRight className="h-3 w-3 text-muted-foreground group-hover:text-[#000C60] transition-colors" />
+                    <ArrowRight className="h-3 w-3 text-muted-foreground group-hover:text-primary transition-colors" />
                   </div>
                 </div>
               ))}

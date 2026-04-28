@@ -11,6 +11,7 @@ import {
   ShoppingCart,
 } from 'lucide-react';
 import WebLogo from '@/components/shared/WebLogo';
+import { getCategoryPillClasses } from '@/lib/queryCategories';
 
 interface Citation {
   id: string;
@@ -51,15 +52,8 @@ const getIntentIcon = (category?: string) => {
   }
 };
 
-const getIntentColor = (category?: string) => {
-  switch (category) {
-    case 'Awareness': return 'bg-blue-100 text-blue-700 border-blue-200';
-    case 'Interest': return 'bg-yellow-100 text-yellow-700 border-yellow-200';
-    case 'Consideration': return 'bg-purple-100 text-purple-700 border-purple-200';
-    case 'Purchase': return 'bg-green-100 text-green-700 border-green-200';
-    default: return 'bg-muted text-muted-foreground border-border';
-  }
-};
+const getIntentColor = (category?: string) =>
+  category ? getCategoryPillClasses(category) : 'bg-muted text-muted-foreground border-border';
 
 const truncate = (s: string, n = 60) => (s && s.length > n ? s.slice(0, n - 1) + '…' : s);
 

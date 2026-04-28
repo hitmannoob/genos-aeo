@@ -20,6 +20,10 @@ interface ProcessSingleQueryButtonProps {
   query: SingleQueryDescriptor;
   onStart?: (queryId: string) => void;
   onComplete?: (queryId: string, success: boolean) => void;
+  // True while the row is being processed by *any* flow (bulk job or another
+  // single-query run). Lets the parent disable the button for queries that
+  // didn't initiate processing from this button instance.
+  isProcessing?: boolean;
   className?: string;
 }
 
@@ -28,6 +32,7 @@ export default function ProcessSingleQueryButton({
   query,
   onStart,
   onComplete,
+  isProcessing = false,
   className = '',
 }: ProcessSingleQueryButtonProps): React.ReactElement {
   const { user, userProfile, refreshUserProfile } = useAuthContext();
@@ -40,7 +45,8 @@ export default function ProcessSingleQueryButton({
   const targetBrand = brands.find((b) => b.id === brandId);
   const available = userProfile?.credits ?? 0;
   const hasEnoughCredits = available >= REQUIRED_CREDITS;
-  const disabled = processing || !user || !hasEnoughCredits || !targetBrand;
+  const busy = processing || isProcessing;
+  const disabled = busy || !user || !hasEnoughCredits || !targetBrand;
 
   const tooltip = !user
     ? 'Sign in to process'
@@ -48,6 +54,8 @@ export default function ProcessSingleQueryButton({
     ? 'Brand not loaded'
     : !hasEnoughCredits
     ? `Needs ${REQUIRED_CREDITS} credits (you have ${available})`
+    : busy
+    ? 'Processing…'
     : errored
     ? 'Failed — click to retry'
     : 'Process this query';
@@ -123,10 +131,10 @@ export default function ProcessSingleQueryButton({
             ? 'bg-muted text-muted-foreground cursor-not-allowed'
             : 'bg-primary/10 text-primary hover:bg-primary/20'
         }
-        ${processing ? 'opacity-70 cursor-not-allowed' : ''}
+        ${busy ? 'opacity-70 cursor-not-allowed' : ''}
         ${className}`}
     >
-      {processing ? (
+      {busy ? (
         <RefreshCw className="h-4 w-4 animate-spin" />
       ) : errored ? (
         <AlertCircle className="h-4 w-4" />

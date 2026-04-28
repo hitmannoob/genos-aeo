@@ -1,5 +1,6 @@
 'use client'
 import React from 'react';
+import Link from 'next/link';
 import { Users, BarChart3, Award, AlertTriangle, Eye, Target, Shield, ArrowUp, ArrowDown, Minus } from 'lucide-react';
 import Card from '@/components/shared/Card';
 import { useCompetitors } from '@/hooks/useCompetitors';
@@ -85,7 +86,7 @@ function Legend({ data }: LegendProps) {
           <div className="flex items-center space-x-3">
             {/* Market position indicator */}
                          <div className={`flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold text-white ${
-               index === 0 ? 'bg-gradient-to-r from-[#000C60] to-[#6d8ead]' : 
+               index === 0 ? 'bg-gradient-to-r from-primary to-[#6d8ead]' : 
                index === 1 ? 'bg-gradient-to-r from-[#4D568E] to-[#657AC4]' : 
                index === 2 ? 'bg-gradient-to-r from-[#764F94] to-[#9F52A3]' :
                'bg-gradient-to-r from-[#8B95E8] to-[#A64FB8]'
@@ -161,7 +162,7 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
 
   // Generate colors for competitors using brand palette
       const competitorColors = [
-      '#000C60', '#4D568E', '#764F94', '#6d8ead', 
+      '#0D9488', '#4D568E', '#764F94', '#6d8ead', 
     '#5A6BC7', '#8B95E8', '#A64FB8', '#2A3572',
     '#657AC4', '#9F52A3', '#1F2A5C', '#6E5BA7'
   ];
@@ -171,7 +172,7 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
     {
       name: selectedBrand?.companyName || 'Your Brand',
       value: realBrandMentions,
-      color: '#000C60',
+      color: '#0D9488',
       // brandShareOfVoice is null when totalMarketMentions === 0, but in that
       // case realBrandMentions is also 0 so this entry is stripped by the
       // `filter(item => item.value > 0)` below before rendering.
@@ -304,7 +305,7 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
               <div className="text-xs text-muted-foreground">Competitor Mentions</div>
             </div>
             <div className="text-right">
-              <div className="text-lg font-bold text-[#000C60]">{realBrandMentions}</div>
+              <div className="text-lg font-bold text-primary">{realBrandMentions}</div>
               <div className="text-xs text-muted-foreground">Your Brand Mentions</div>
             </div>
           </div>
@@ -414,7 +415,7 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
                 <div key={competitor.id} className="flex items-center justify-between p-4 bg-[#F8F8F8] rounded-lg border border-gray-100 hover:shadow-md transition-shadow">
                   <div className="flex items-center space-x-3">
                     <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm font-bold text-white ${
-                      index === 0 ? 'bg-gradient-to-r from-[#000C60] to-[#6d8ead]' : 
+                      index === 0 ? 'bg-gradient-to-r from-primary to-[#6d8ead]' : 
                       index === 1 ? 'bg-gradient-to-r from-[#4D568E] to-[#657AC4]' : 
                       'bg-gradient-to-r from-[#764F94] to-[#9F52A3]'
                     }`}>
@@ -462,9 +463,12 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
           {/* Show more competitors indicator */}
           {competitors.length > 3 && (
             <div className="text-center mt-4">
-              <span className="text-xs text-muted-foreground bg-[#F8F8F8] px-3 py-1 rounded-full">
+              <Link
+                href="/dashboard/competitors"
+                className="inline-block text-xs text-muted-foreground bg-[#F8F8F8] px-3 py-1 rounded-full hover:bg-gray-200 hover:text-foreground transition-colors"
+              >
                 + {competitors.length - 3} more competitors tracked
-              </span>
+              </Link>
             </div>
           )}
         </div>

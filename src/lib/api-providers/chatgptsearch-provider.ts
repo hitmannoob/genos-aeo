@@ -29,7 +29,8 @@ export class ChatGPTSearchProvider extends BaseAPIProvider {
       const response = await this.retryRequest(async () => {
         return await this.client.responses.create({
           model: request.model || "gpt-5.4-mini",
-          tools: [{ type: "web_search_preview" }],
+          tools: [{ type: "web_search" }],
+          tool_choice: "required",
           input: request.input,
           temperature: request.temperature,
           // Note: max_tokens might not be available in responses API
@@ -111,7 +112,7 @@ export class ChatGPTSearchProvider extends BaseAPIProvider {
       usage: rawResponse.usage,
       searchEnabled: true,
       webSearchUsed: true,
-      tools: ['web_search_preview'],
+      tools: ['web_search'],
       // Include annotations (sources, citations, etc.)
       annotations,
       annotationsCount: annotations.length,

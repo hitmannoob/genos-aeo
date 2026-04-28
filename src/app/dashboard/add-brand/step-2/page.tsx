@@ -194,11 +194,20 @@ export default function AddBrandStep2(): React.ReactElement {
   };
 
   const saveKeywords = () => {
+    // Commit any pending input the user typed but didn't click + on yet —
+    // otherwise hitting Save discards their typed value.
+    const draft = newKeyword.trim();
+    const finalKeywords = (
+      draft && !tempKeywords.includes(draft) && tempKeywords.length < 10
+        ? [...tempKeywords, draft]
+        : tempKeywords
+    );
     if (companyData) {
-      const updatedData = { ...companyData, keywords: tempKeywords };
+      const updatedData = { ...companyData, keywords: finalKeywords };
       setCompanyData(updatedData);
       sessionStorage.setItem('companyInfo', JSON.stringify(updatedData));
     }
+    setNewKeyword('');
     setEditingKeywords(false);
   };
 
@@ -225,11 +234,18 @@ export default function AddBrandStep2(): React.ReactElement {
   };
 
   const saveCompetitors = () => {
+    const draft = newCompetitor.trim();
+    const finalCompetitors = (
+      draft && !tempCompetitors.includes(draft) && tempCompetitors.length < 10
+        ? [...tempCompetitors, draft]
+        : tempCompetitors
+    );
     if (companyData) {
-      const updatedData = { ...companyData, competitors: tempCompetitors };
+      const updatedData = { ...companyData, competitors: finalCompetitors };
       setCompanyData(updatedData);
       sessionStorage.setItem('companyInfo', JSON.stringify(updatedData));
     }
+    setNewCompetitor('');
     setEditingCompetitors(false);
   };
 
@@ -699,13 +715,19 @@ export default function AddBrandStep2(): React.ReactElement {
                                 type="text"
                                 value={newKeyword}
                                 onChange={(e) => setNewKeyword(e.target.value)}
-                                onKeyPress={(e) => e.key === 'Enter' && addKeyword()}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    addKeyword();
+                                  }
+                                }}
                                 disabled={tempKeywords.length >= 10}
                                 maxLength={50}
                                 className="flex-1 p-2 border border-border rounded-lg bg-background text-foreground text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                                 placeholder={tempKeywords.length >= 10 ? "Maximum 10 keywords reached" : "Add keyword..."}
                               />
                               <button
+                                type="button"
                                 onClick={addKeyword}
                                 disabled={tempKeywords.length >= 10 || !newKeyword.trim()}
                                 className="p-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -791,13 +813,19 @@ export default function AddBrandStep2(): React.ReactElement {
                                 type="text"
                                 value={newCompetitor}
                                 onChange={(e) => setNewCompetitor(e.target.value)}
-                                onKeyPress={(e) => e.key === 'Enter' && addCompetitor()}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    addCompetitor();
+                                  }
+                                }}
                                 disabled={tempCompetitors.length >= 10}
                                 maxLength={50}
                                 className="flex-1 p-2 border border-border rounded-lg bg-background text-foreground text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                                 placeholder={tempCompetitors.length >= 10 ? "Maximum 10 competitors reached" : "Add competitor..."}
                               />
                               <button
+                                type="button"
                                 onClick={addCompetitor}
                                 disabled={tempCompetitors.length >= 10 || !newCompetitor.trim()}
                                 className="p-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"

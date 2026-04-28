@@ -1,5 +1,5 @@
 'use client'
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useBrandContext } from '@/context/BrandContext';
 import Card from '@/components/shared/Card';
 import { useBrandQueries } from '@/hooks/useBrandQueries';
@@ -117,6 +117,31 @@ export default function QueriesOverview({
   // Use brand override if provided, otherwise use selected brand
   const brand = brandOverride || selectedBrand;
   const { queries: fetchedQueryResults, refetch: refetchQueryResults } = useBrandQueries({ brandId: brand?.id });
+
+  // When the active job's attempted count grows, brand-queries is probably
+  // stale — refetch it. Covers two cases:
+  //   1. Mid-job progress on this mount (between bulk-job onProgress callbacks).
+  //   2. Discovering on remount that queries finished server-side while the
+  //      user was on another page (the cached snapshot lags reality).
+  const lastSeenAttemptedRef = useRef<number>(0);
+  useEffect(() => {
+    const attempted = activeJob?.attemptedCount ?? 0;
+    if (attempted > lastSeenAttemptedRef.current) {
+      lastSeenAttemptedRef.current = attempted;
+      void refetchQueryResults();
+    }
+  }, [activeJob?.attemptedCount, refetchQueryResults]);
+
+  // Set of queries the job claims are finished but the brand-queries cache
+  // hasn't caught up to yet. We treat these as still "Processing" so they
+  // don't briefly flash "Unprocessed" between the job poll and the refetch.
+  const finishedJobIds = useMemo<Set<string>>(() => {
+    if (!activeJob) return new Set();
+    return new Set([
+      ...activeJob.completedQueryIds,
+      ...activeJob.failedQueryIds,
+    ]);
+  }, [activeJob]);
   
   // Safely get queries and results (with fallbacks)
   const queries = brand?.queries || [];
@@ -204,6 +229,18 @@ export default function QueriesOverview({
         status: 'Processing',
         color: 'bg-primary text-primary-foreground',
         description: queryResult ? 'Re-processing query...' : 'Query is being processed...',
+        showLoader: true
+      };
+    }
+
+    // Job says this one finished but the brand-queries cache hasn't caught
+    // up yet — keep "Processing" until the refetch lands so we don't flash
+    // "Unprocessed" between the job poll and the result fetch.
+    if (!queryResult && finishedJobIds.has(queryIdentity)) {
+      return {
+        status: 'Processing',
+        color: 'bg-primary text-primary-foreground',
+        description: 'Query is being processed...',
         showLoader: true
       };
     }

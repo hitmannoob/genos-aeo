@@ -37,6 +37,9 @@ export default function AddBrandStep3(): React.ReactElement {
   const [generatedQueries, setGeneratedQueries] = useState<GeneratedQuery[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [selectedTopic, setSelectedTopic] = useState<string>('all');
+  const [intentFilter, setIntentFilter] = useState<'all' | 'Awareness' | 'Interest' | 'Consideration' | 'Purchase'>('all');
+  const [openFilter, setOpenFilter] = useState<'intent' | 'topic' | null>(null);
+  const filterMenuRef = useRef<HTMLDivElement | null>(null);
   const [showAddTopicModal, setShowAddTopicModal] = useState(false);
   const [newTopicName, setNewTopicName] = useState('');
   const [additionalTopics, setAdditionalTopics] = useState<string[]>([]);
@@ -156,6 +159,18 @@ Output format (return ONLY valid JSON array):
       setIsGenerating(false);
     }
   };
+
+  // Close the prompt-table filter dropdown when clicking outside.
+  useEffect(() => {
+    if (!openFilter) return;
+    const handler = (e: MouseEvent) => {
+      if (filterMenuRef.current && !filterMenuRef.current.contains(e.target as Node)) {
+        setOpenFilter(null);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [openFilter]);
 
   // Watch for query results
   useEffect(() => {
@@ -531,10 +546,14 @@ Output format (return ONLY valid JSON array):
     return acc;
   }, {} as Record<string, GeneratedQuery[]>);
 
-  // Filter queries based on selected topic
-  const filteredQueries = selectedTopic === 'all' 
-    ? generatedQueries 
-    : generatedQueries.filter(q => q.keyword === selectedTopic);
+  // Filter queries based on selected topic AND intent
+  const filteredQueries = generatedQueries.filter(
+    (q) =>
+      (selectedTopic === 'all' || q.keyword === selectedTopic) &&
+      (intentFilter === 'all' || q.category === intentFilter),
+  );
+
+  const availableTopics = Array.from(new Set(generatedQueries.map((q) => q.keyword)));
 
   const filteredQueriesByKeyword = selectedTopic === 'all' 
     ? queriesByKeyword 
@@ -1045,15 +1064,80 @@ Output format (return ONLY valid JSON array):
                     <h3 className="text-lg font-semibold text-foreground">
                       Prompts <span className="text-foreground">({filteredQueries.length})</span>
                     </h3>
-                    <div className="flex items-center space-x-2">
-                      <button className="flex items-center space-x-2 text-foreground hover:text-primary transition-colors rounded-md px-2 py-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary">
-                        <span>🎯 Intents</span>
-                        <span className="text-xs">▼</span>
-                      </button>
-                      <button className="flex items-center space-x-2 text-foreground hover:text-primary transition-colors rounded-md px-2 py-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary">
-                        <span># Topics</span>
-                        <span className="text-xs">▼</span>
-                      </button>
+                    <div className="flex items-center space-x-2 relative" ref={filterMenuRef}>
+                      {/* Intents filter */}
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setOpenFilter(openFilter === 'intent' ? null : 'intent')}
+                          className="flex items-center space-x-2 text-foreground hover:text-primary transition-colors rounded-md px-2 py-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        >
+                          <span>🎯 Intents{intentFilter !== 'all' ? `: ${intentFilter}` : ''}</span>
+                          <span className="text-xs">▼</span>
+                        </button>
+                        {openFilter === 'intent' && (
+                          <div className="absolute right-0 mt-1 bg-card border border-border rounded-md shadow-lg z-10 min-w-[160px] py-1">
+                            {(['all', 'Awareness', 'Interest', 'Consideration', 'Purchase'] as const).map((option) => (
+                              <button
+                                key={option}
+                                type="button"
+                                onClick={() => {
+                                  setIntentFilter(option);
+                                  setOpenFilter(null);
+                                }}
+                                className={`w-full text-left px-3 py-2 text-sm hover:bg-muted/50 ${
+                                  intentFilter === option ? 'bg-muted/30 font-medium text-primary' : 'text-foreground'
+                                }`}
+                              >
+                                {option === 'all' ? 'All Intents' : option}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Topics filter */}
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setOpenFilter(openFilter === 'topic' ? null : 'topic')}
+                          className="flex items-center space-x-2 text-foreground hover:text-primary transition-colors rounded-md px-2 py-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        >
+                          <span># Topics{selectedTopic !== 'all' ? `: ${selectedTopic}` : ''}</span>
+                          <span className="text-xs">▼</span>
+                        </button>
+                        {openFilter === 'topic' && (
+                          <div className="absolute right-0 mt-1 bg-card border border-border rounded-md shadow-lg z-10 min-w-[180px] max-h-64 overflow-y-auto py-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedTopic('all');
+                                setOpenFilter(null);
+                              }}
+                              className={`w-full text-left px-3 py-2 text-sm hover:bg-muted/50 ${
+                                selectedTopic === 'all' ? 'bg-muted/30 font-medium text-primary' : 'text-foreground'
+                              }`}
+                            >
+                              All Topics
+                            </button>
+                            {availableTopics.map((topic) => (
+                              <button
+                                key={topic}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedTopic(topic);
+                                  setOpenFilter(null);
+                                }}
+                                className={`w-full text-left px-3 py-2 text-sm hover:bg-muted/50 truncate ${
+                                  selectedTopic === topic ? 'bg-muted/30 font-medium text-primary' : 'text-foreground'
+                                }`}
+                              >
+                                {topic}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                   

@@ -21,6 +21,7 @@ import {
   X
 } from 'lucide-react';
 import ProcessQueriesButton from './ProcessQueriesButton';
+import ProcessSingleQueryButton from './ProcessSingleQueryButton';
 import type { UserBrand } from '@/types/userBrand';
 import { extractChatGPTCitations } from './ChatGPTResponseRenderer';
 import { extractGoogleAIOverviewCitations } from './GoogleAIOverviewRenderer';
@@ -66,10 +67,18 @@ export default function QueriesOverview({
   const { selectedBrand } = useBrandContext();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [processingQueries, setProcessingQueries] = useState<Set<string>>(new Set()); // Track which queries are being processed
-  // Queries in the current batch — populated by ProcessQueriesButton's onStart.
-  // Held in a ref so the onProgress closure always sees the latest batch
-  // scope without stale-state bugs.
+  // Bulk-job-driven processing set (populated by ProcessQueriesButton callbacks).
+  const [bulkProcessingQueries, setBulkProcessingQueries] = useState<Set<string>>(new Set());
+  // Single-query processing set (per-row button kicks off independent runs that
+  // don't go through the brand-wide reprocessing job).
+  const [singleProcessingQueries, setSingleProcessingQueries] = useState<Set<string>>(new Set());
+  const processingQueries = useMemo(
+    () => new Set([...bulkProcessingQueries, ...singleProcessingQueries]),
+    [bulkProcessingQueries, singleProcessingQueries],
+  );
+  // Queries in the current bulk batch — populated by ProcessQueriesButton's
+  // onStart. Held in a ref so the onProgress closure always sees the latest
+  // batch scope without stale-state bugs.
   const batchQueriesRef = useRef<Set<string>>(new Set());
   const lastAttemptedCountRef = useRef(0);
   // const processButtonRef = React.useRef<any>(null); // Removed as per edit hint
@@ -307,7 +316,7 @@ export default function QueriesOverview({
                   // Due, Unprocessed) and don't get the "Processing" badge.
                   batchQueriesRef.current = new Set(batchQueryIds);
                   lastAttemptedCountRef.current = 0;
-                  setProcessingQueries(new Set(batchQueryIds));
+                  setBulkProcessingQueries(new Set(batchQueryIds));
                 }}
                 onQueryStart={(queryId) => {
                   // Defensive: ensure the active query is in the set even if
@@ -315,7 +324,7 @@ export default function QueriesOverview({
                   // the batch after start — currently doesn't happen but
                   // cheap to be safe).
                   batchQueriesRef.current.add(queryId);
-                  setProcessingQueries(prev => new Set(Array.from(prev).concat(queryId)));
+                  setBulkProcessingQueries(prev => new Set(Array.from(prev).concat(queryId)));
                 }}
                 onProgress={(job) => {
                   const completedQueries = new Set([
@@ -325,7 +334,7 @@ export default function QueriesOverview({
                   const stillProcessing = new Set(
                     Array.from(batchQueriesRef.current).filter(q => !completedQueries.has(q))
                   );
-                  setProcessingQueries(stillProcessing);
+                  setBulkProcessingQueries(stillProcessing);
                   lastAttemptedCountRef.current = job.attemptedCount;
                 }}
                 onComplete={async () => {
@@ -335,7 +344,7 @@ export default function QueriesOverview({
                   // (different endpoint).
                   batchQueriesRef.current = new Set();
                   lastAttemptedCountRef.current = 0;
-                  setProcessingQueries(new Set());
+                  setBulkProcessingQueries(new Set());
                   await refetchQueryResults();
                 }}
               />
@@ -615,10 +624,24 @@ export default function QueriesOverview({
                               </button>
                             )}
                             {!hasResults && brand?.id && (
-                              <ProcessQueriesButton
+                              <ProcessSingleQueryButton
                                 brandId={brand.id}
-                                queriesFilter={[buildTrackedQueryIdentity(query)]}
-                                iconOnly
+                                query={query}
+                                onStart={(qid) => {
+                                  setSingleProcessingQueries((prev) => {
+                                    const next = new Set(prev);
+                                    next.add(qid);
+                                    return next;
+                                  });
+                                }}
+                                onComplete={async (qid) => {
+                                  setSingleProcessingQueries((prev) => {
+                                    const next = new Set(prev);
+                                    next.delete(qid);
+                                    return next;
+                                  });
+                                  await refetchQueryResults();
+                                }}
                               />
                             )}
                           </div>
@@ -698,10 +721,24 @@ export default function QueriesOverview({
                         </button>
                       )} */}
                       {!hasResults && brand?.id && (
-                        <ProcessQueriesButton
+                        <ProcessSingleQueryButton
                           brandId={brand.id}
-                          queriesFilter={[buildTrackedQueryIdentity(query)]}
-                          iconOnly
+                          query={query}
+                          onStart={(qid) => {
+                            setSingleProcessingQueries((prev) => {
+                              const next = new Set(prev);
+                              next.add(qid);
+                              return next;
+                            });
+                          }}
+                          onComplete={async (qid) => {
+                            setSingleProcessingQueries((prev) => {
+                              const next = new Set(prev);
+                              next.delete(qid);
+                              return next;
+                            });
+                            await refetchQueryResults();
+                          }}
                         />
                       )}
                     </div>

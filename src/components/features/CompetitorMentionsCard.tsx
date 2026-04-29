@@ -3,6 +3,7 @@ import React from 'react';
 import Link from 'next/link';
 import { Users, BarChart3, Award, AlertTriangle, Eye, Target, Shield, ArrowUp, ArrowDown, Minus } from 'lucide-react';
 import Card from '@/components/shared/Card';
+import InfoTooltip from '@/components/shared/InfoTooltip';
 import { useCompetitors } from '@/hooks/useCompetitors';
 import { useBrandContext } from '@/context/BrandContext';
 import { useLifetimeBrandAnalytics } from '@/hooks/useBrandAnalytics';
@@ -303,11 +304,21 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
           <div className="flex items-center space-x-4">
             <div className="text-right">
               <div className="text-2xl font-bold text-red-600">{totalCompetitorMentions}</div>
-              <div className="text-xs text-muted-foreground">Competitor Mentions</div>
+              <div className="text-xs text-muted-foreground inline-flex items-center justify-end">
+                Competitor Mentions
+                <InfoTooltip side="top">
+                  Total mentions of all tracked competitors across the AI responses for this brand's queries.
+                </InfoTooltip>
+              </div>
             </div>
             <div className="text-right">
               <div className="text-lg font-bold text-primary">{realBrandMentions}</div>
-              <div className="text-xs text-muted-foreground">Your Brand Mentions</div>
+              <div className="text-xs text-muted-foreground inline-flex items-center justify-end">
+                Your Brand Mentions
+                <InfoTooltip side="top">
+                  Total mentions of your brand across the AI responses, drawn from the same lifetime corpus used for the competitor count above.
+                </InfoTooltip>
+              </div>
             </div>
           </div>
         </div>
@@ -320,9 +331,15 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
             <h4 className="text-sm font-semibold text-foreground flex items-center">
               <BarChart3 className="h-4 w-4 mr-2" />
               Share of Voice Analysis
+              <InfoTooltip>
+                Each player's percentage of total market mentions: (their mentions ÷ all brand + competitor mentions). Sums to 100% across the donut.
+              </InfoTooltip>
             </h4>
-            <span className="text-sm text-muted-foreground">
+            <span className="text-sm text-muted-foreground inline-flex items-center">
               Total Market: {totalMarketMentions} mentions
+              <InfoTooltip side="top">
+                Sum of your brand's mentions plus all competitor mentions across the lifetime corpus. The denominator for every Share of Voice number on this card.
+              </InfoTooltip>
             </span>
           </div>
           
@@ -354,22 +371,40 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           <div className="text-center p-3 bg-red-50 rounded-lg border border-red-100">
             <div className="text-lg font-bold text-red-600">{competitors.length}</div>
-            <div className="text-xs text-muted-foreground">Active Competitors</div>
+            <div className="text-xs text-muted-foreground inline-flex items-center justify-center">
+              Active Competitors
+              <InfoTooltip>
+                Number of competitors you've added that received at least one mention in the AI responses for this brand's queries.
+              </InfoTooltip>
+            </div>
           </div>
           <div className="text-center p-3 bg-orange-50 rounded-lg border border-orange-100">
             <div className="text-lg font-bold text-orange-600">{averageVisibility}%</div>
-            <div className="text-xs text-muted-foreground">Avg Visibility</div>
+            <div className="text-xs text-muted-foreground inline-flex items-center justify-center">
+              Avg Visibility
+              <InfoTooltip>
+                Average of each competitor's visibility score (the share of analyzed queries where that competitor was mentioned at least once), averaged across all active competitors.
+              </InfoTooltip>
+            </div>
           </div>
           <div className="text-center p-3 bg-purple-50 rounded-lg border border-purple-100">
             <div className="text-lg font-bold text-purple-600">{topCompetitor?.mentions || 0}</div>
-            <div className="text-xs text-muted-foreground">Highest Mentions</div>
+            <div className="text-xs text-muted-foreground inline-flex items-center justify-center">
+              Highest Mentions
+              <InfoTooltip>
+                Mention count of the single most-referenced competitor. A useful "ceiling" — what your top rival is achieving.
+              </InfoTooltip>
+            </div>
           </div>
           <div className="text-center p-3 bg-blue-50 rounded-lg border border-blue-100">
             <div className="text-lg font-bold text-blue-600">
               {competitorShareOfVoice === null ? '—' : `${competitorShareOfVoice}%`}
             </div>
-            <div className="text-xs text-muted-foreground">
+            <div className="text-xs text-muted-foreground inline-flex items-center justify-center">
               {competitorShareOfVoice === null ? 'Competitor SOV (no data yet)' : 'Competitor SOV'}
+              <InfoTooltip>
+                The combined Share of Voice held by every competitor (= 100% − your brand's SOV). Higher means the AI references competitors more often than you.
+              </InfoTooltip>
             </div>
           </div>
         </div>

@@ -2,6 +2,7 @@
 import React, { useState, useCallback } from 'react';
 import { BrandAnalyticsData, LifetimeBrandAnalytics } from '@/lib/analytics/brandAnalytics';
 import { Award, Eye, MessageSquare, Calendar, Clock, BarChart3, Quote, Globe } from 'lucide-react';
+import InfoTooltip from '@/components/shared/InfoTooltip';
 
 interface BrandAnalyticsDisplayProps {
   latestAnalytics?: BrandAnalyticsData | null;
@@ -147,7 +148,12 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
                   <Quote className="h-4 w-4 text-blue-600" />
                 </div>
                 <div>
-                  <p className="text-blue-600 text-xs font-medium">Total Citations</p>
+                  <p className="text-blue-600 text-xs font-medium inline-flex items-center">
+                    Total Citations
+                    <InfoTooltip>
+                      Every external link or source the AI cited across all processed queries for this brand. Counts each citation once per query response.
+                    </InfoTooltip>
+                  </p>
                   <p className="text-blue-900 text-lg font-bold">{citationData.totalCitations}</p>
                 </div>
               </div>
@@ -159,7 +165,12 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
                   <Globe className="h-4 w-4 text-purple-600" />
                 </div>
                 <div>
-                  <p className="text-purple-600 text-xs font-medium">Domain Citations</p>
+                  <p className="text-purple-600 text-xs font-medium inline-flex items-center">
+                    Domain Citations
+                    <InfoTooltip>
+                      Citations whose linked URL belongs to your brand's own domain. Indicates how often the AI sends users back to your site versus third-party sources.
+                    </InfoTooltip>
+                  </p>
                   <p className="text-purple-900 text-lg font-bold">{citationData.domainCitations}</p>
                   <p className="text-purple-600 text-xs">{citationData.domainCitationRate.toFixed(1)}% of total</p>
                 </div>
@@ -172,7 +183,12 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
                   <MessageSquare className="h-4 w-4 text-yellow-600" />
                 </div>
                 <div>
-                  <p className="text-yellow-600 text-xs font-medium">Brand Mentions</p>
+                  <p className="text-yellow-600 text-xs font-medium inline-flex items-center">
+                    Brand Mentions
+                    <InfoTooltip>
+                      Citations where your brand's name appears in the AI's response or in the cited source's title. Different from Domain Citations: a competitor's blog mentioning you still counts here.
+                    </InfoTooltip>
+                  </p>
                   <p className="text-yellow-900 text-lg font-bold">{citationData.brandMentions}</p>
                   <p className="text-yellow-600 text-xs">{citationData.brandMentionRate.toFixed(1)}% of total</p>
                 </div>
@@ -185,7 +201,12 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
                   <BarChart3 className="h-4 w-4 text-orange-600" />
                 </div>
                 <div>
-                  <p className="text-orange-600 text-xs font-medium">Unique Domains</p>
+                  <p className="text-orange-600 text-xs font-medium inline-flex items-center">
+                    Unique Domains
+                    <InfoTooltip>
+                      The number of distinct websites the AI cited across all your queries. A higher count means the AI is drawing from a broader source base.
+                    </InfoTooltip>
+                  </p>
                   <p className="text-orange-900 text-lg font-bold">{citationData.uniqueDomains}</p>
                 </div>
               </div>
@@ -237,12 +258,22 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
                     <span className="text-xs font-medium">{analytics.totalQueriesProcessed}</span>
                         </div>
 
-                  <div className="flex justify-between">
-                    <span className="text-xs text-gray-500">Avg Mentions/Response:</span>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-gray-500 inline-flex items-center">
+                      Avg Mentions/Response:
+                      <InfoTooltip>
+                        Total brand mentions divided by total AI responses processed. Higher values mean the AI tends to reference your brand multiple times within a single answer.
+                      </InfoTooltip>
+                    </span>
                     <span className="text-xs font-medium">{analytics.insights.averageBrandMentionsPerResponse}</span>
                   </div>
-                          <div className="flex justify-between">
-                    <span className="text-xs text-gray-500">Avg Citations/Response:</span>
+                          <div className="flex justify-between items-center">
+                    <span className="text-xs text-gray-500 inline-flex items-center">
+                      Avg Citations/Response:
+                      <InfoTooltip>
+                        Total citations divided by total AI responses. Indicates how source-heavy the AI's answers are for your queries.
+                      </InfoTooltip>
+                    </span>
                     <span className="text-xs font-medium">{analytics.insights.averageCitationsPerResponse}</span>
                   </div>
                           </div>

@@ -160,11 +160,12 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
     ? null
     : 100 - brandShareOfVoice;
 
-  // Generate colors for competitors using brand palette
-      const competitorColors = [
-      '#0D9488', '#4D568E', '#764F94', '#6d8ead', 
-    '#5A6BC7', '#8B95E8', '#A64FB8', '#2A3572',
-    '#657AC4', '#9F52A3', '#1F2A5C', '#6E5BA7'
+  // Competitor palette — deliberately excludes the brand teal (#0D9488)
+  // so a competitor never blends into "Your Brand" on the donut.
+  const competitorColors = [
+    '#4D568E', '#764F94', '#6d8ead', '#5A6BC7',
+    '#8B95E8', '#A64FB8', '#2A3572', '#657AC4',
+    '#9F52A3', '#1F2A5C', '#6E5BA7', '#E07856',
   ];
 
   // Prepare donut chart data with real analytics

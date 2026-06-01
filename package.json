@@ -19,7 +19,7 @@
     "@radix-ui/react-slot": "^1.2.4",
     "@sentry/nextjs": "^10.55.0",
     "@tanstack/react-query": "^5.100.6",
-    "@tanstack/react-query-devtools": "^5.100.6",
+    "@tanstack/react-query-devtools": "^5.100.14",
     "@types/jsdom": "^21.1.7",
     "@types/node": "25.9.1",
     "@types/pg": "^8.20.0",

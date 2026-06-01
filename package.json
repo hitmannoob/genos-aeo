@@ -47,6 +47,6 @@
     "zod": "^4.1.12"
   },
   "devDependencies": {
-    "tailwindcss": "^4.2.4"
+    "tailwindcss": "^4.3.0"
   }
 }

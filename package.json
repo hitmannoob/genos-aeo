@@ -42,7 +42,7 @@
     "postcss": "8.5.16",
     "react": "19.2.6",
     "react-dom": "19.2.7",
-    "recharts": "^3.8.1",
+    "recharts": "^3.9.1",
     "typescript": "6.0.3",
     "zod": "^4.4.3"
   },

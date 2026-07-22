@@ -1,5 +1,5 @@
 'use client'
-import React, { useState, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import Link from 'next/link';
 import { useBrandContext } from '@/context/BrandContext';
 import { useLifetimeCitations } from '@/hooks/useLifetimeCitations';
@@ -11,33 +11,12 @@ import {
   ExternalLink,
   Download,
   RefreshCw,
-  AlertCircle,
   Globe,
   BarChart3,
   MessageSquare,
 } from 'lucide-react';
 import CitationsTable from '@/components/features/CitationsTable';
-
-// Citation interface
-interface Citation {
-  id: string;
-  url: string;
-  text: string;
-  source: string;
-  provider: 'chatgpt' | 'perplexity' | 'googleAI';
-  query: string;
-  queryId: string;
-  brandName: string;
-  domain?: string;
-  timestamp: string;
-  type?: string;
-  isBrandMention?: boolean;
-  isDomainCitation?: boolean;
-}
-
-// Sort options
-type SortField = 'timestamp' | 'provider' | 'source' | 'domain' | 'query';
-type SortDirection = 'asc' | 'desc';
+import { buildCsv, safeDownloadStem } from '@/lib/csv';
 
 export default function CitationsPage(): React.ReactElement {
   const { selectedBrand, brands, loading: brandLoading } = useBrandContext();
@@ -47,90 +26,17 @@ export default function CitationsPage(): React.ReactElement {
   // get citations, analytics, and the truncation flag from one fetch.
   const {
     citations: lifetimeCitations,
-    analytics: lifetimeAnalytics,
     loading: queriesLoading,
     error: queriesError,
     refetch,
   } = useLifetimeCitations({ brandId: selectedBrand?.id });
   
-  // State for filtering and sorting
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedProvider, setSelectedProvider] = useState<string>('all');
-  const [selectedSource, setSelectedSource] = useState<string>('all');
-  const [sortField, setSortField] = useState<SortField>('timestamp');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
-  const [showBrandMentionsOnly, setShowBrandMentionsOnly] = useState(false);
-
   // Use lifetime citations from the hook
   const allCitations = useMemo(() => {
     if (!lifetimeCitations || !selectedBrand) return [];
     
-    console.log('🔍 Citations page - using lifetime citations:', {
-      citationsCount: lifetimeCitations.length,
-      selectedBrand: selectedBrand.companyName
-    });
-
     return lifetimeCitations;
   }, [lifetimeCitations, selectedBrand]);
-
-  // Filter and sort citations
-  const filteredAndSortedCitations = useMemo(() => {
-    let filtered = allCitations;
-
-    // Apply search filter
-    if (searchTerm) {
-      const term = searchTerm.toLowerCase();
-      filtered = filtered.filter(citation => 
-        citation.text.toLowerCase().includes(term) ||
-        citation.url.toLowerCase().includes(term) ||
-        citation.query.toLowerCase().includes(term) ||
-        citation.source.toLowerCase().includes(term) ||
-        citation.domain?.toLowerCase().includes(term)
-      );
-    }
-
-    // Apply platform filter
-    if (selectedProvider !== 'all') {
-      filtered = filtered.filter(citation => citation.provider === selectedProvider);
-    }
-
-    // Apply source filter
-    if (selectedSource !== 'all') {
-      filtered = filtered.filter(citation => citation.source === selectedSource);
-    }
-
-    // Apply brand mentions filter
-    if (showBrandMentionsOnly) {
-      filtered = filtered.filter(citation => citation.isBrandMention || citation.isDomainCitation);
-    }
-
-    // Apply sorting
-    filtered.sort((a, b) => {
-      let comparison = 0;
-      
-      switch (sortField) {
-        case 'timestamp':
-          comparison = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
-          break;
-        case 'provider':
-          comparison = a.provider.localeCompare(b.provider);
-          break;
-        case 'source':
-          comparison = a.source.localeCompare(b.source);
-          break;
-        case 'domain':
-          comparison = (a.domain || '').localeCompare(b.domain || '');
-          break;
-        case 'query':
-          comparison = a.query.localeCompare(b.query);
-          break;
-      }
-      
-      return sortDirection === 'asc' ? comparison : -comparison;
-    });
-
-    return filtered;
-  }, [allCitations, searchTerm, selectedProvider, selectedSource, showBrandMentionsOnly, sortField, sortDirection]);
 
   // Analytics calculations
   const analytics = useMemo(() => {
@@ -180,40 +86,31 @@ export default function CitationsPage(): React.ReactElement {
       domainCitationRate: totalCitations > 0 ? (domainCitations / totalCitations * 100) : 0,
       brandMentionRate: totalCitations > 0 ? (brandMentions / totalCitations * 100) : 0
     };
-  }, [allCitations, lifetimeAnalytics]);
-
-  // Handle sorting
-  const handleSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortField(field);
-      setSortDirection('desc');
-    }
-  };
+  }, [allCitations]);
 
   // Export citations
   const handleExport = () => {
-    const csvContent = [
-              ['Query', 'Platform', 'Source', 'Citation Text', 'URL', 'Domain', 'Brand Mention', 'Domain Citation', 'Timestamp'].join(','),
-      ...filteredAndSortedCitations.map(citation => [
-        `"${citation.query.replace(/"/g, '""')}"`,
+    const csvContent = buildCsv([
+      ['Query', 'Platform', 'Source', 'Citation Text', 'URL', 'Domain', 'Brand Mention', 'Domain Citation', 'Timestamp'],
+      ...allCitations.filter((citation) => citation.domain).map(citation => [
+        citation.query,
         citation.provider,
-        `"${citation.source.replace(/"/g, '""')}"`,
-        `"${citation.text.replace(/"/g, '""')}"`,
+        citation.source,
+        citation.text,
         citation.url,
         citation.domain || '',
         citation.isBrandMention ? 'Yes' : 'No',
         citation.isDomainCitation ? 'Yes' : 'No',
         citation.timestamp
-      ].join(','))
-    ].join('\n');
+      ])
+    ]);
 
     const blob = new Blob([csvContent], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `citations-${selectedBrand?.companyName || 'brand'}-${new Date().toISOString().split('T')[0]}.csv`;
+    const brandStem = safeDownloadStem(selectedBrand?.companyName || 'brand', 'brand');
+    a.download = `citations-${brandStem}-${new Date().toISOString().split('T')[0]}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -290,7 +187,7 @@ export default function CitationsPage(): React.ReactElement {
             </button>
             <button
               onClick={handleExport}
-              disabled={filteredAndSortedCitations.length === 0}
+              disabled={!allCitations.some((citation) => citation.domain)}
               className="flex items-center space-x-2 bg-primary/10 text-primary px-4 py-2 rounded-full hover:bg-primary/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               <Download className="h-4 w-4" />
@@ -394,7 +291,7 @@ export default function CitationsPage(): React.ReactElement {
               </Link>
             </div>
             <div className="space-y-4">
-              {analytics.topDomains.map(([domain, count], index) => (
+              {analytics.topDomains.map(([domain, count]) => (
                 <div key={domain} className="flex items-center justify-between">
                   <div className="flex items-center space-x-3">
                     <WebLogo domain={`https://${domain}`} className="w-6 h-6" size={24} />
@@ -405,7 +302,7 @@ export default function CitationsPage(): React.ReactElement {
                           href={`https://${domain}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-gray-400 hover:text-gray-600"
+                          className="text-muted-foreground hover:text-muted-foreground"
                         >
                           <ExternalLink className="h-4 w-4" />
                         </a>
@@ -416,7 +313,7 @@ export default function CitationsPage(): React.ReactElement {
                     </div>
                   </div>
                   <div className="flex items-center space-x-2">
-                    <div className="w-32 bg-gray-200 rounded-full h-2">
+                    <div className="w-32 bg-border rounded-full h-2">
                       <div
                         className="bg-blue-600 h-2 rounded-full"
                         style={{
@@ -432,6 +329,12 @@ export default function CitationsPage(): React.ReactElement {
         </div>
 
       
+        {queriesError && (
+          <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+            Could not load citations: {queriesError}
+          </div>
+        )}
+
         {/* All Citations Table */}
         <Card className="p-6">
           <div className="flex items-center justify-between mb-6">
@@ -453,4 +356,4 @@ export default function CitationsPage(): React.ReactElement {
       </div>
     </DashboardLayout>
   );
-} 
+}

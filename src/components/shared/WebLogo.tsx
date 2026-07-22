@@ -87,9 +87,8 @@ export default function WebLogo({
           className="object-contain max-w-full max-h-full"
           onLoad={handleImageLoad}
           onError={handleImageError}
-          unoptimized // Since we're loading from external service
         />
       )}
     </div>
   );
-} 
+}

@@ -16,6 +16,7 @@ import {
   USER_QUERY_CREDIT_COST,
 } from '@/lib/billing/serverCredits';
 import type { APIResponse } from '@/lib/api-providers/types';
+import { logger } from '@/lib/logger';
 
 const REQUIRED_CREDITS = USER_QUERY_CREDIT_COST;
 const PREFERRED_PROVIDERS = ['chatgptsearch', 'google-ai-overview', 'perplexity'];
@@ -23,16 +24,13 @@ const PREFERRED_PROVIDERS = ['chatgptsearch', 'google-ai-overview', 'perplexity'
 export interface ExecuteUserQueryServerArgs {
   userId: string;
   query: string;
-  context?: string;
   persistResult?: boolean;
   brandId?: string;
-  brandName?: string;
-  brandDomain?: string;
   keyword?: string;
   category?: string;
   processingSessionId?: string;
   processingSessionTimestamp?: string;
-  clientRequestId?: string;
+  clientRequestId: string;
   skipBilling?: boolean;
 }
 
@@ -118,10 +116,7 @@ export type UserQueryWorkflowResult = ModalQueryResult | UserQueryWorkflowError;
 export interface ExecutePersistedUserQueryServerArgs {
   userId: string;
   query: string;
-  context?: string;
   brandId: string;
-  brandName: string;
-  brandDomain: string;
   keyword?: string;
   category?: string;
   processingSessionId: string;
@@ -151,20 +146,6 @@ function nowError(args: Omit<UserQueryWorkflowError, 'success' | 'timestamp'>): 
     success: false,
     timestamp: new Date().toISOString(),
     ...args,
-  };
-}
-
-function buildReplayModalResult(modalResult: ModalQueryResult): ModalQueryResult {
-  return {
-    ...modalResult,
-    results: modalResult.results.map((result) => ({
-      providerId: result.providerId,
-      status: result.status,
-      error: result.error,
-      responseTime: result.responseTime,
-      cost: result.cost,
-      timestamp: result.timestamp,
-    })),
   };
 }
 
@@ -229,11 +210,8 @@ export async function executeUserQueryServer(
   const {
     userId,
     query,
-    context,
     persistResult = false,
     brandId,
-    brandName,
-    brandDomain,
     keyword,
     category,
     processingSessionId,
@@ -242,13 +220,36 @@ export async function executeUserQueryServer(
     skipBilling = false,
   } = args;
 
-  const executionIdentity = clientRequestId
-    ? {
-        userId,
-        brandId,
-        clientRequestId,
-      }
-    : null;
+  const executionIdentity = {
+    userId,
+    brandId,
+    clientRequestId,
+  };
+  let reservedExecutionRequestId: string | null = null;
+  let creditsBefore = 0;
+
+  const refundReservedCredits = async (failureReason: string): Promise<boolean> => {
+    if (skipBilling || !reservedExecutionRequestId) return true;
+    try {
+      await refundUserCreditsServer(userId, REQUIRED_CREDITS, {
+        idempotencyKey: `user-query:${brandId || 'no-brand'}:${clientRequestId}:refund`,
+        reason: 'user query failure refund',
+        executionRequestId: reservedExecutionRequestId,
+        metadata: {
+          query,
+          brandId,
+          processingSessionId,
+          processingSessionTimestamp,
+          failureReason,
+        },
+      });
+      reservedExecutionRequestId = null;
+      return true;
+    } catch (refundError) {
+      logger.error('Failed to refund reserved query credits', refundError);
+      return false;
+    }
+  };
 
   const failExecution = async (
     code: string,
@@ -256,8 +257,6 @@ export async function executeUserQueryServer(
     httpStatus: number,
     refundApplied?: boolean
   ) => {
-    if (!executionIdentity) return;
-
     try {
       await failQueryExecution({
         ...executionIdentity,
@@ -267,7 +266,7 @@ export async function executeUserQueryServer(
         refundApplied,
       });
     } catch (ledgerError) {
-      console.error('❌ Failed to update query execution ledger:', ledgerError);
+      logger.error('Failed to update query execution ledger', ledgerError);
     }
   };
 
@@ -282,43 +281,51 @@ export async function executeUserQueryServer(
       });
     }
 
-    if (executionIdentity) {
-      const acquireResult = await acquireQueryExecution<UserQueryWorkflowResult>({
-        ...executionIdentity,
-        requestFingerprintSource: {
-          query,
-          context,
-          persistResult,
-          brandId,
-          keyword,
-          category,
-          processingSessionId,
-          processingSessionTimestamp,
-        },
+    const acquireResult = await acquireQueryExecution<UserQueryWorkflowResult>({
+      ...executionIdentity,
+      requestFingerprintSource: {
+        query,
+        persistResult,
+        brandId,
+        keyword,
+        category,
+        processingSessionId,
+        processingSessionTimestamp,
+      },
+    });
+
+    if (acquireResult.status === 'replay') {
+      return acquireResult.response;
+    }
+
+    if (acquireResult.status === 'in_progress') {
+      return nowError({
+        code: 'REQUEST_IN_PROGRESS',
+        error: 'This request is already being processed.',
+        httpStatus: 409,
+        retryAfterSeconds: acquireResult.retryAfterSeconds,
+        totalTime: Date.now() - startTime,
       });
+    }
 
-      if (acquireResult.status === 'replay') {
-        return acquireResult.response;
-      }
+    if (acquireResult.status === 'conflict') {
+      return nowError({
+        code: 'IDEMPOTENCY_KEY_REUSED',
+        error: acquireResult.message,
+        httpStatus: 409,
+        totalTime: Date.now() - startTime,
+      });
+    }
 
-      if (acquireResult.status === 'in_progress') {
-        return nowError({
-          code: 'REQUEST_IN_PROGRESS',
-          error: 'This request is already being processed.',
-          httpStatus: 409,
-          retryAfterSeconds: acquireResult.retryAfterSeconds,
-          totalTime: Date.now() - startTime,
-        });
-      }
-
-      if (acquireResult.status === 'conflict') {
-        return nowError({
-          code: 'IDEMPOTENCY_KEY_REUSED',
-          error: acquireResult.message,
-          httpStatus: 409,
-          totalTime: Date.now() - startTime,
-        });
-      }
+    if (acquireResult.status === 'previous_failure') {
+      return nowError({
+        code: 'REQUEST_PREVIOUSLY_FAILED',
+        error: acquireResult.failure.message,
+        message: `Previous failure code: ${acquireResult.failure.code}. Start a new attempt with a new clientRequestId.`,
+        httpStatus: 409,
+        refundApplied: acquireResult.failure.refundApplied,
+        totalTime: Date.now() - startTime,
+      });
     }
 
     const availableCredits = Number(profile.credits ?? 0);
@@ -352,44 +359,13 @@ export async function executeUserQueryServer(
       });
     }
 
-    const jobResult = await providerManager.executeRequest({
-      id: clientRequestId || `user-query-${Date.now()}`,
-      prompt: query,
-      providers: selectedProviders,
-      userId,
-      priority: 'high',
-      createdAt: new Date(),
-      metadata: {
-        context,
-        type: 'user-query',
-        creditsDeducted: skipBilling ? 0 : REQUIRED_CREDITS,
-      },
-    });
-
-    const anySuccess = jobResult.results.some((result) => result.status === 'success');
-    if (!anySuccess) {
-      await failExecution('ALL_PROVIDERS_FAILED', 'All AI providers failed. No credits were deducted.', 502);
-      return nowError({
-        code: 'ALL_PROVIDERS_FAILED',
-        error: 'All AI providers failed. No credits were deducted.',
-        httpStatus: 502,
-        results: jobResult.results.map((result) => ({
-          providerId: result.providerId,
-          status: result.status,
-          error: result.error,
-        })),
-        totalTime: Date.now() - startTime,
-      });
-    }
-
-    let creditsBefore = availableCredits;
+    creditsBefore = availableCredits;
     if (!skipBilling) {
       try {
         const creditResult = await deductUserCreditsServer(userId, REQUIRED_CREDITS, {
-          idempotencyKey: clientRequestId
-            ? `user-query:${brandId || 'no-brand'}:${clientRequestId}:debit`
-            : undefined,
-          reason: 'user query provider execution',
+          idempotencyKey: `user-query:${brandId || 'no-brand'}:${clientRequestId}:debit`,
+          reason: 'user query credit reservation',
+          executionRequestId: acquireResult.docId,
           metadata: {
             query,
             brandId,
@@ -398,34 +374,95 @@ export async function executeUserQueryServer(
           },
         });
         creditsBefore = creditResult.before;
+        reservedExecutionRequestId = acquireResult.docId;
       } catch (creditError) {
-        const message = creditError instanceof Error ? creditError.message : String(creditError);
-        const code = message === 'INSUFFICIENT_CREDITS'
-          ? 'INSUFFICIENT_CREDITS'
-          : 'CREDIT_DEDUCTION_FAILED';
-        await failExecution(
-          code,
-          code === 'INSUFFICIENT_CREDITS'
-            ? `Insufficient credits. Required: ${REQUIRED_CREDITS}.`
-            : 'Failed to deduct credits. Please try again.',
-          code === 'INSUFFICIENT_CREDITS' ? 402 : 500
-        );
+        const insufficient = creditError instanceof Error
+          && creditError.message === 'INSUFFICIENT_CREDITS';
+        const code = insufficient ? 'INSUFFICIENT_CREDITS' : 'CREDIT_DEDUCTION_FAILED';
+        const message = insufficient
+          ? `Insufficient credits. Required: ${REQUIRED_CREDITS}.`
+          : 'Failed to reserve credits. Please try again.';
+        await failExecution(code, message, insufficient ? 402 : 500);
         return nowError({
           code,
-          error: code === 'INSUFFICIENT_CREDITS'
-            ? `Insufficient credits. Required: ${REQUIRED_CREDITS}.`
-            : 'Failed to deduct credits. Please try again.',
-          httpStatus: code === 'INSUFFICIENT_CREDITS' ? 402 : 500,
+          error: message,
+          httpStatus: insufficient ? 402 : 500,
           requiredCredits: REQUIRED_CREDITS,
           totalTime: Date.now() - startTime,
         });
       }
     }
 
+    const jobResult = await providerManager.executeRequest({
+      id: clientRequestId,
+      prompt: query,
+      providers: selectedProviders,
+      userId,
+      priority: 'high',
+      createdAt: new Date(),
+      metadata: {
+        type: 'user-query',
+        creditsDeducted: skipBilling ? 0 : REQUIRED_CREDITS,
+      },
+    });
+
+    const anySuccess = jobResult.results.some((result) => result.status === 'success');
+    if (!anySuccess) {
+      const refundApplied = !skipBilling && reservedExecutionRequestId !== null
+        && await refundReservedCredits('all providers failed');
+      const refundSucceeded = skipBilling || refundApplied;
+      const code = refundSucceeded
+        ? 'ALL_PROVIDERS_FAILED'
+        : 'ALL_PROVIDERS_FAILED_REFUND_FAILED';
+      const message = refundSucceeded
+        ? (skipBilling
+            ? 'All AI providers failed. No credits were charged.'
+            : 'All AI providers failed. Reserved credits were refunded.')
+        : 'All AI providers failed and the automatic credit refund also failed.';
+      await failExecution(code, message, refundSucceeded ? 502 : 500, refundApplied);
+      return nowError({
+        code,
+        error: message,
+        httpStatus: refundSucceeded ? 502 : 500,
+        refundApplied,
+        results: jobResult.results.map((result) => ({
+          providerId: result.providerId,
+          status: result.status,
+          error: 'Provider request failed',
+        })),
+        totalTime: Date.now() - startTime,
+      });
+    }
+
     const modalResults = serializeProviderResults(jobResult.results);
     const deductedAmount = skipBilling ? 0 : REQUIRED_CREDITS;
 
-    let persistedQueryResult: QueryProcessingResult | undefined;
+    const buildModalResult = (
+      persistedQueryResult?: QueryProcessingResult
+    ): ModalQueryResult => ({
+      success: true,
+      query,
+      totalResults: jobResult.results.length,
+      successfulResults: jobResult.results.filter((result) => result.status === 'success').length,
+      totalCost: jobResult.totalCost,
+      totalTime: Date.now() - startTime,
+      results: modalResults,
+      summary: buildSummary(jobResult.results),
+      timestamp: new Date().toISOString(),
+      userCredits: {
+        before: creditsBefore,
+        after: creditsBefore - deductedAmount,
+        deducted: deductedAmount,
+      },
+      ...(persistedQueryResult && { persistedQueryResult }),
+      ...(persistedQueryResult && {
+        persistence: {
+          persisted: true,
+          refundApplied: false,
+        },
+      }),
+    });
+
     if (persistResult) {
       try {
         if (!brandId || !processingSessionId || !processingSessionTimestamp) {
@@ -443,11 +480,9 @@ export async function executeUserQueryServer(
           totalCost: jobResult.totalCost,
         };
 
-        const persisted = await persistOneQueryResultSql({
+        const persisted = await persistOneQueryResultSql<ModalQueryResult>({
           brandId,
           userId,
-          companyName: brandName || 'Unknown',
-          brandDomain: brandDomain || '',
           query: {
             query,
             keyword,
@@ -456,43 +491,28 @@ export async function executeUserQueryServer(
           processingSessionId,
           processingSessionTimestamp,
           userQueryResponse,
+          executionRequestId: acquireResult.docId,
+          buildExecutionReplayResponse: buildModalResult,
         });
-
-        persistedQueryResult = persisted.queryResult;
-      } catch (persistError) {
-        let refundApplied = false;
-        let refundErrorMessage: string | undefined;
-
-        if (!skipBilling) {
-          try {
-            await refundUserCreditsServer(userId, REQUIRED_CREDITS, {
-              idempotencyKey: clientRequestId
-                ? `user-query:${brandId || 'no-brand'}:${clientRequestId}:refund`
-                : undefined,
-              reason: 'user query persistence failure refund',
-              metadata: {
-                query,
-                brandId,
-                processingSessionId,
-                processingSessionTimestamp,
-              },
-            });
-            refundApplied = true;
-          } catch (refundError) {
-            refundErrorMessage = refundError instanceof Error
-              ? refundError.message
-              : String(refundError);
-            console.error('❌ Failed to refund credits after persistence error:', refundError);
-          }
+        if (!persisted.executionReplayResponse) {
+          throw new Error('EXECUTION_REPLAY_RESPONSE_MISSING');
         }
+        reservedExecutionRequestId = null;
+        return persisted.executionReplayResponse;
+      } catch (persistError) {
+        logger.error('Failed to persist query result', persistError);
+        const refundApplied = !skipBilling && reservedExecutionRequestId !== null
+          && await refundReservedCredits('query persistence failed');
 
-        const code = refundApplied
-          ? 'PERSISTENCE_FAILED_REFUNDED'
-          : (skipBilling ? 'PERSISTENCE_FAILED' : 'PERSISTENCE_FAILED_REFUND_FAILED');
+        const code = skipBilling
+          ? 'PERSISTENCE_FAILED'
+          : refundApplied
+            ? 'PERSISTENCE_FAILED_REFUNDED'
+            : 'PERSISTENCE_FAILED_REFUND_FAILED';
 
         await failExecution(
           code,
-          persistError instanceof Error ? persistError.message : 'Unknown persistence error',
+          'Failed to persist query result',
           500,
           refundApplied
         );
@@ -500,10 +520,9 @@ export async function executeUserQueryServer(
         return nowError({
           code,
           error: 'Failed to persist query result',
-          message: persistError instanceof Error ? persistError.message : 'Unknown persistence error',
+          message: 'The provider response could not be saved. Please retry with a new clientRequestId.',
           httpStatus: 500,
           refundApplied,
-          refundError: refundErrorMessage,
           totalTime: Date.now() - startTime,
           userCredits: {
             before: creditsBefore,
@@ -514,54 +533,31 @@ export async function executeUserQueryServer(
       }
     }
 
-    const modalResult: ModalQueryResult = {
-      success: true,
-      query,
-      totalResults: jobResult.results.length,
-      successfulResults: jobResult.results.filter((result) => result.status === 'success').length,
-      totalCost: jobResult.totalCost,
-      totalTime: Date.now() - startTime,
-      results: modalResults,
-      summary: buildSummary(jobResult.results),
-      timestamp: new Date().toISOString(),
-      userCredits: {
-        before: creditsBefore,
-        after: creditsBefore - deductedAmount,
-        deducted: deductedAmount,
-      },
-      ...(persistedQueryResult && { persistedQueryResult }),
-      ...(persistResult && {
-        persistence: {
-          persisted: true,
-          refundApplied: false,
-        },
-      }),
-    };
-
-    if (executionIdentity) {
-      try {
-        await completeQueryExecution({
-          ...executionIdentity,
-          replayResponse: buildReplayModalResult(modalResult),
-        });
-      } catch (ledgerError) {
-        console.error('❌ Failed to mark query execution completed:', ledgerError);
-      }
-    }
+    const modalResult = buildModalResult();
+    await completeQueryExecution({
+      ...executionIdentity,
+      replayResponse: modalResult,
+    });
+    reservedExecutionRequestId = null;
 
     return modalResult;
   } catch (error) {
+    logger.error('Unhandled user query workflow error', error);
+    const refundApplied = !skipBilling && reservedExecutionRequestId !== null
+      && await refundReservedCredits('unhandled workflow error');
     await failExecution(
       'UNHANDLED_USER_QUERY_ERROR',
-      error instanceof Error ? error.message : 'Unknown error',
-      500
+      'Failed to process user query',
+      500,
+      refundApplied
     );
 
     return nowError({
       code: 'UNHANDLED_USER_QUERY_ERROR',
       error: 'Failed to process user query',
-      message: error instanceof Error ? error.message : 'Unknown error',
+      message: 'An unexpected server error occurred while processing the query.',
       httpStatus: 500,
+      refundApplied,
       totalTime: Date.now() - startTime,
     });
   }

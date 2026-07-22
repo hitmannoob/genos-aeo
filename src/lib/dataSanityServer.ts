@@ -33,7 +33,7 @@ export interface DataSanityIssue {
   brandId?: string;
   userId?: string;
   processingSessionId?: string;
-  details?: any;
+  details?: Record<string, unknown>;
 }
 
 export interface DataSanityBrandSummary {
@@ -43,7 +43,7 @@ export interface DataSanityBrandSummary {
   domain?: string;
   totalQueryResults: number;
   totalSessions: number;
-  analyticsSessionsFound: number;
+  providerResultsScanned: number;
   issueCounts: Record<DataSanitySeverity, number>;
 }
 
@@ -53,7 +53,7 @@ export interface DataSanityCheckOptions {
   maxBrands?: number;
   maxIssues?: number;
   maxLedgerDocs?: number;
-  includeAnalytics?: boolean;
+  includeProviderResults?: boolean;
   includeLedger?: boolean;
 }
 
@@ -65,14 +65,14 @@ export interface DataSanityReport {
     maxBrands: number;
     maxIssues: number;
     maxLedgerDocs: number;
-    includeAnalytics: boolean;
+    includeProviderResults: boolean;
     includeLedger: boolean;
   };
   summary: {
     brandsScanned: number;
     queryResultsScanned: number;
     processingSessionsScanned: number;
-    analyticsDocsScanned: number;
+    providerResultsScanned: number;
     ledgerDocsScanned: number;
     errors: number;
     warnings: number;
@@ -106,6 +106,23 @@ interface QueryRunRow {
   created_at: Date | string;
   updated_at: Date | string;
   completed_at: Date | string | null;
+  total_provider_cost: number | string;
+}
+
+interface ProviderResultRow {
+  query_run_id: string;
+  provider_key: string;
+  status: 'success' | 'error' | 'timeout' | 'skipped' | string;
+  response_text: string | null;
+  error_message: string | null;
+  cost: number | string;
+}
+
+interface LedgerReplayResponse {
+  persistence?: {
+    persisted?: boolean;
+  };
+  persistedQueryResult?: unknown;
 }
 
 interface LedgerRow {
@@ -117,8 +134,8 @@ interface LedgerRow {
   client_request_id: string | null;
   status: 'processing' | 'completed' | 'failed' | string;
   lease_expires_at: Date | string | null;
-  replay_response: any;
-  last_error: any;
+  replay_response: LedgerReplayResponse | null;
+  last_error: Record<string, unknown> | null;
   processing_session_id: string | null;
 }
 
@@ -237,7 +254,8 @@ async function loadBrandQueryRuns(brandUuid: string): Promise<QueryRunRow[]> {
         credits_after,
         created_at,
         updated_at,
-        completed_at
+        completed_at,
+        total_provider_cost
       from query_runs
       where brand_id = $1
       order by created_at desc
@@ -245,6 +263,35 @@ async function loadBrandQueryRuns(brandUuid: string): Promise<QueryRunRow[]> {
     [brandUuid]
   );
   return result.rows;
+}
+
+async function loadBrandProviderResults(brandUuid: string): Promise<ProviderResultRow[]> {
+  const result = await sql<ProviderResultRow>(
+    `
+      select
+        pr.query_run_id,
+        pr.provider_key,
+        pr.status,
+        pr.response_text,
+        pr.error_message,
+        pr.cost
+      from provider_results pr
+      join query_runs qr on qr.id = pr.query_run_id
+      where qr.brand_id = $1
+      order by pr.created_at desc
+    `,
+    [brandUuid]
+  );
+  return result.rows;
+}
+
+function storedProviderKeys(result: QueryProcessingResult): Set<string> {
+  const keys = new Set<string>();
+  if (result.results.chatgpt) keys.add('chatgptsearch');
+  if (result.results.googleAI) keys.add('google-ai-overview');
+  if (result.results.gemini) keys.add('google-gemini');
+  if (result.results.perplexity) keys.add('perplexity');
+  return keys;
 }
 
 async function loadLedgerEntries(
@@ -341,7 +388,7 @@ export async function runDataSanityChecks(
     1,
     MAX_MAX_LEDGER_DOCS
   );
-  const includeAnalytics = options.includeAnalytics !== false;
+  const includeProviderResults = options.includeProviderResults !== false;
   const includeLedger = options.includeLedger !== false;
 
   const issues: DataSanityIssue[] = [];
@@ -352,6 +399,7 @@ export async function runDataSanityChecks(
   let queryResultsScanned = 0;
   let processingSessionsScanned = 0;
   let ledgerDocsScanned = 0;
+  let providerResultsScanned = 0;
   let maxIssuesReached = false;
 
   const pushIssue = (issue: DataSanityIssue) => {
@@ -419,6 +467,16 @@ export async function runDataSanityChecks(
     }
 
     const queryRuns = await loadBrandQueryRuns(brand.uuid);
+    const providerResults = includeProviderResults
+      ? await loadBrandProviderResults(brand.uuid)
+      : [];
+    providerResultsScanned += providerResults.length;
+    const providerResultsByRun = new Map<string, ProviderResultRow[]>();
+    for (const providerResult of providerResults) {
+      const rows = providerResultsByRun.get(providerResult.query_run_id) || [];
+      rows.push(providerResult);
+      providerResultsByRun.set(providerResult.query_run_id, rows);
+    }
 
     const seenQueryIdentities = new Set<string>();
     const sessionResultsMap = new Map<string, QueryProcessingResult[]>();
@@ -426,6 +484,7 @@ export async function runDataSanityChecks(
     for (const run of queryRuns) {
       queryResultsScanned += 1;
       const result = run.raw_result;
+      const normalizedProviderResults = providerResultsByRun.get(run.id) || [];
 
       if (!result) {
         pushIssue({
@@ -440,6 +499,79 @@ export async function runDataSanityChecks(
           details: { query: run.query },
         });
         continue;
+      }
+
+      if (includeProviderResults) {
+        const expectedProviderKeys = storedProviderKeys(result);
+        const normalizedProviderKeys = new Set(
+          normalizedProviderResults.map((providerResult) => providerResult.provider_key)
+        );
+        const missingProviderKeys = Array.from(expectedProviderKeys)
+          .filter((providerKey) => !normalizedProviderKeys.has(providerKey));
+        const unexpectedProviderKeys = Array.from(normalizedProviderKeys)
+          .filter((providerKey) => !expectedProviderKeys.has(providerKey));
+
+        if (missingProviderKeys.length > 0 || unexpectedProviderKeys.length > 0) {
+          pushIssue({
+            severity: 'warning',
+            code: 'PROVIDER_RESULT_SET_MISMATCH',
+            message: 'The raw query payload and normalized provider rows do not contain the same providers.',
+            collection: 'provider_results',
+            docId: run.id,
+            brandId,
+            userId: brand.firebase_uid,
+            processingSessionId: run.processing_session_id,
+            details: { missingProviderKeys, unexpectedProviderKeys },
+          });
+        }
+
+        for (const providerResult of normalizedProviderResults) {
+          if (providerResult.status === 'success' && !providerResult.response_text) {
+            pushIssue({
+              severity: 'warning',
+              code: 'PROVIDER_ROW_SUCCESS_WITHOUT_RESPONSE',
+              message: `${providerResult.provider_key} is marked successful but has no response text.`,
+              collection: 'provider_results',
+              docId: run.id,
+              brandId,
+              userId: brand.firebase_uid,
+              processingSessionId: run.processing_session_id,
+              details: { providerKey: providerResult.provider_key },
+            });
+          }
+          if (providerResult.status !== 'success' && !providerResult.error_message) {
+            pushIssue({
+              severity: 'warning',
+              code: 'PROVIDER_ROW_FAILURE_WITHOUT_ERROR',
+              message: `${providerResult.provider_key} is not successful but has no stored error.`,
+              collection: 'provider_results',
+              docId: run.id,
+              brandId,
+              userId: brand.firebase_uid,
+              processingSessionId: run.processing_session_id,
+              details: { providerKey: providerResult.provider_key, status: providerResult.status },
+            });
+          }
+        }
+
+        const normalizedCost = normalizedProviderResults.reduce(
+          (total, providerResult) => total + Number(providerResult.cost || 0),
+          0
+        );
+        const runCost = Number(run.total_provider_cost || 0);
+        if (Math.abs(normalizedCost - runCost) > 0.000001) {
+          pushIssue({
+            severity: 'warning',
+            code: 'PROVIDER_COST_MISMATCH',
+            message: 'The query-run provider cost does not equal the normalized provider-row total.',
+            collection: 'provider_results',
+            docId: run.id,
+            brandId,
+            userId: brand.firebase_uid,
+            processingSessionId: run.processing_session_id,
+            details: { runCost, normalizedCost },
+          });
+        }
       }
 
       if (!isValidIsoString(result.date)) {
@@ -693,7 +825,7 @@ export async function runDataSanityChecks(
       domain: brand.domain,
       totalQueryResults: queryRuns.length,
       totalSessions: sessionResultsMap.size,
-      analyticsSessionsFound: 0,
+      providerResultsScanned: providerResults.length,
       issueCounts: brandCounts.get(brandId) || brandIssueCounts,
     });
   }
@@ -833,14 +965,14 @@ export async function runDataSanityChecks(
       maxBrands,
       maxIssues,
       maxLedgerDocs,
-      includeAnalytics,
+      includeProviderResults,
       includeLedger,
     },
     summary: {
       brandsScanned,
       queryResultsScanned,
       processingSessionsScanned,
-      analyticsDocsScanned: 0,
+      providerResultsScanned,
       ledgerDocsScanned,
       errors: globalCounts.error,
       warnings: globalCounts.warning,

@@ -1,92 +1,67 @@
-'use client'
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+'use client';
 
-type Theme = 'light' | 'dark' | 'system';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+
+export type Theme = 'light' | 'dark' | 'system';
+type ActualTheme = 'light' | 'dark';
 
 interface ThemeContextType {
   theme: Theme;
   setTheme: (theme: Theme) => void;
-  actualTheme: 'light' | 'dark';
+  actualTheme: ActualTheme;
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
-export function useTheme() {
+export function useTheme(): ThemeContextType {
   const context = useContext(ThemeContext);
-  if (context === undefined) {
-    throw new Error('useTheme must be used within a ThemeProvider');
-  }
+  if (!context) throw new Error('useTheme must be used within a ThemeProvider');
   return context;
 }
 
-interface ThemeProviderProps {
-  children: ReactNode;
+function readSavedTheme(): Theme {
+  if (typeof window === 'undefined') return 'system';
+  const value = window.localStorage.getItem('theme');
+  return value === 'light' || value === 'dark' || value === 'system' ? value : 'system';
 }
 
-export function ThemeProvider({ children }: ThemeProviderProps): React.ReactElement {
-  // TODO: Implement dark/light theme switching in the future
-  // For now, we'll use light theme by default
-  const [theme] = useState<Theme>('light');
-  const [actualTheme] = useState<'light' | 'dark'>('light');
-  const [mounted, setMounted] = useState(false);
+function resolveTheme(theme: Theme): ActualTheme {
+  if (theme !== 'system') return theme;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+export function ThemeProvider({ children }: { children: React.ReactNode }): React.ReactElement {
+  const [theme, setThemeState] = useState<Theme>('system');
+  const [actualTheme, setActualTheme] = useState<ActualTheme>('light');
 
   useEffect(() => {
-    setMounted(true);
-    // TODO: Restore theme switching functionality
-    // const savedTheme = localStorage.getItem('theme') as Theme || 'system';
-    // setTheme(savedTheme);
+    setThemeState(readSavedTheme());
   }, []);
 
-  // TODO: Restore theme switching functionality
-  // useEffect(() => {
-  //   if (!mounted) return;
-  //
-  //   const updateActualTheme = () => {
-  //     if (theme === 'system') {
-  //       const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-  //       setActualTheme(systemTheme);
-  //     } else {
-  //       setActualTheme(theme);
-  //     }
-  //   };
-  //
-  //   updateActualTheme();
-  //
-  //   // Listen for system theme changes
-  //   const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-  //   mediaQuery.addEventListener('change', updateActualTheme);
-  //
-  //   return () => mediaQuery.removeEventListener('change', updateActualTheme);
-  // }, [theme, mounted]);
-
   useEffect(() => {
-    if (!mounted) return;
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const applyTheme = () => {
+      const resolved = resolveTheme(theme);
+      setActualTheme(resolved);
+      document.documentElement.classList.toggle('dark', resolved === 'dark');
+      document.documentElement.classList.toggle('light', resolved === 'light');
+      document.documentElement.style.colorScheme = resolved;
+    };
 
-    // Apply light theme to document
-    const root = document.documentElement;
-    root.classList.remove('light', 'dark');
-    root.classList.add('light'); // Force light theme
+    applyTheme();
+    mediaQuery.addEventListener('change', applyTheme);
+    return () => mediaQuery.removeEventListener('change', applyTheme);
+  }, [theme]);
 
-    // TODO: Restore theme persistence
-    // localStorage.setItem('theme', theme);
-  }, [mounted]);
+  const setTheme = useCallback((nextTheme: Theme) => {
+    setThemeState(nextTheme);
+    window.localStorage.setItem('theme', nextTheme);
+  }, []);
 
-  // TODO: Restore theme switching functionality
-  const handleSetTheme = (newTheme: Theme) => {
-    // setTheme(newTheme);
-    console.log('Theme switching will be implemented in the future:', newTheme);
-  };
-
-  // Prevent hydration mismatch - use light theme
-  if (!mounted) {
-    return <div className="light">{children}</div>;
-  }
-
-  return (
-    <ThemeContext.Provider value={{ theme, setTheme: handleSetTheme, actualTheme }}>
-      <div className="light">
-        {children}
-      </div>
-    </ThemeContext.Provider>
+  const value = useMemo(
+    () => ({ theme, setTheme, actualTheme }),
+    [theme, setTheme, actualTheme]
   );
-} 
+
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
+}

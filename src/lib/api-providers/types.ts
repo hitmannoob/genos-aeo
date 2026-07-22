@@ -17,7 +17,11 @@ export interface NormalizedCitation {
 export function parseDomain(url: string | undefined | null): string | null {
   if (!url || typeof url !== 'string') return null;
   try {
-    return new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
+      return null;
+    }
+    return parsed.hostname.toLowerCase().replace(/^www\./, '');
   } catch {
     return null;
   }
@@ -56,6 +60,7 @@ export interface APIResponse {
   responseTime: number;
   cost: number;
   timestamp: Date;
+  cacheHit?: boolean;
 }
 
 export interface ProviderConfig {
@@ -72,6 +77,7 @@ export interface JobResult {
   aggregatedData?: any;
   totalCost: number;
   completedAt: Date;
+  cacheHit?: boolean;
 }
 
 // Provider-specific types
@@ -88,6 +94,7 @@ export interface OpenAIRequest {
 export interface ChatGPTSearchRequest {
   input: string;
   model?: string;
+  webSearch?: boolean;
   temperature?: number;
   max_tokens?: number;
 }
@@ -151,4 +158,4 @@ export interface TracxnRequest {
     location?: string;
     fundingStage?: string;
   };
-} 
+}

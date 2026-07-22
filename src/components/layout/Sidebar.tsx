@@ -6,36 +6,27 @@ import { usePathname, useRouter } from 'next/navigation';
 import signOut from '@/firebase/auth/signOut';
 import { 
   BarChart3, 
-  Settings, 
   CreditCard, 
   Search, 
-  TrendingUp, 
   Users, 
   Quote, 
   Plus,
   Menu,
   LogOut,
   User,
-  Sun,
-  Moon,
-  Monitor,
   ChevronDown,
   ChevronUp
 } from 'lucide-react';
-import { useTheme } from '@/context/ThemeContext';
 import { useBrandContext } from '@/context/BrandContext';
 import { useAuthContext } from '@/context/AuthContext';
 import WebLogo from '@/components/shared/WebLogo';
 
 const navigationItems = [
-      { name: 'Overview', href: '/dashboard', icon: BarChart3 },
-      { name: 'Analytics', href: '/dashboard/analytics', icon: TrendingUp },
+  { name: 'Overview', href: '/dashboard', icon: BarChart3 },
   { name: 'Competitors', href: '/dashboard/competitors', icon: Users },
   { name: 'Queries', href: '/dashboard/queries', icon: Search },
   { name: 'Citations', href: '/dashboard/citations', icon: Quote },
   { name: 'Add Brand', href: '/dashboard/add-brand/step-1', icon: Plus },
-  { name: 'Billing', href: '/dashboard/billing', icon: CreditCard },
-  { name: 'Settings', href: '/dashboard/settings', icon: Settings },
 ];
 
 interface SidebarProps {
@@ -46,8 +37,7 @@ interface SidebarProps {
 export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.ReactElement {
   const pathname = usePathname();
   const router = useRouter();
-  const { theme, setTheme, actualTheme } = useTheme();
-  const { user, userProfile, refreshUserProfile } = useAuthContext();
+  const { user, userProfile } = useAuthContext();
   const { 
     brands, 
     loading: brandsLoading, 
@@ -56,12 +46,12 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
     setSelectedBrandId 
   } = useBrandContext();
   const [isBrandsDropdownOpen, setIsBrandsDropdownOpen] = React.useState(false);
+  const [signOutError, setSignOutError] = React.useState(false);
   const dropdownRef = React.useRef<HTMLDivElement>(null);
 
   // Ensure single brand is selected when only one brand exists
   React.useEffect(() => {
     if (brands.length === 1 && !selectedBrandId) {
-      console.log('🎯 Sidebar: Auto-selecting single brand:', brands[0].id, brands[0].companyName);
       setSelectedBrandId(brands[0].id);
     }
   }, [brands, selectedBrandId, setSelectedBrandId]);
@@ -73,72 +63,42 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
         setIsBrandsDropdownOpen(false);
       }
     };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsBrandsDropdownOpen(false);
+    };
 
     document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
     };
   }, []);
 
   // Note: We intentionally don't add periodic refresh here as it can interfere with query processing
   // Credits are updated manually after API calls in ProcessQueriesButton
 
-  const getThemeIcon = () => {
-    switch (theme) {
-      case 'light':
-        return Sun;
-      case 'dark':
-        return Moon;
-      case 'system':
-        return Monitor;
-      default:
-        return Monitor;
-    }
-  };
-
-  const cycleTheme = () => {
-    const themes = ['system', 'light', 'dark'] as const;
-    const currentIndex = themes.indexOf(theme);
-    const nextIndex = (currentIndex + 1) % themes.length;
-    setTheme(themes[nextIndex]);
-  };
-
-  const getThemeLabel = () => {
-    switch (theme) {
-      case 'light':
-        return 'Light';
-      case 'dark':
-        return 'Dark';
-      case 'system':
-        return `System (${actualTheme})`;
-      default:
-        return 'System';
-    }
-  };
-
   const handleSignOut = async () => {
-    const { result, error } = await signOut();
+    setSignOutError(false);
+    const { error } = await signOut();
     
     if (error) {
-      console.error('Sign out error:', error);
+      setSignOutError(true);
       return;
     }
     
     // Redirect to sign in page after successful sign out
-    router.push('/signin');
+    router.replace('/signin');
   };
-
-  const ThemeIcon = getThemeIcon();
-
-  // Filter out nav items to hide
-  const hiddenNavNames = ['Analytics', 'Billing', 'Settings'];
-  const visibleNavigationItems = navigationItems.filter(item => !hiddenNavNames.includes(item.name));
 
   return (
     <>
       {/* Mobile menu button */}
       <button
+        type="button"
         onClick={onToggle}
+        aria-label={isOpen ? 'Close navigation menu' : 'Open navigation menu'}
+        aria-expanded={isOpen}
         className="lg:hidden fixed top-6 left-6 z-50 p-2 rounded-lg bg-card border border-border text-foreground hover:bg-accent transition-colors"
       >
         <Menu className="h-5 w-5" />
@@ -147,6 +107,7 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
       {/* Overlay for mobile */}
       {isOpen && (
         <div
+          role="presentation"
           className="lg:hidden fixed inset-0 bg-black/50 z-40 backdrop-blur-sm"
           onClick={onToggle}
         />
@@ -163,13 +124,12 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
           <div className="flex items-center px-6 pt-4 pb-0">
             <div className="flex items-center justify-center w-full">
               <Image
-                src="/logo_no_background.png"
+                src="/genos-wordmark.png"
                 alt="Genos Logo"
-                width={160}
-                height={36}
-                style={{ width: 'auto', height: 'auto' }}
+                width={512}
+                height={141}
+                className="h-auto w-40"
                 priority
-                className="h-14 w-auto"
               />
             </div>
           </div>
@@ -186,7 +146,10 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
                   <div className="relative" ref={dropdownRef}>
                     {/* Dropdown Button */}
                     <button
+                      type="button"
                       onClick={() => setIsBrandsDropdownOpen(!isBrandsDropdownOpen)}
+                      aria-expanded={isBrandsDropdownOpen}
+                      aria-haspopup="listbox"
                       className="w-full flex items-center space-x-3 p-2 bg-card rounded-xl border border-border hover:bg-muted transition-colors"
                     >
                       {selectedBrandId && brands.length > 0 && (() => {
@@ -221,13 +184,16 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
 
                     {/* Dropdown Menu */}
                     {isBrandsDropdownOpen && (
-                      <div className="absolute top-full left-0 right-0 mt-1 bg-card border border-border rounded-xl shadow-xl z-50 max-h-48 overflow-y-auto">
+                      <div role="listbox" className="absolute top-full left-0 right-0 mt-1 bg-card border border-border rounded-xl shadow-xl z-50 max-h-48 overflow-y-auto">
                         {/* Show brands if available */}
                         {brands.length > 0 ? (
                           <>
                             {/* All Brands */}
                             {brands.map((brand) => (
                               <button
+                                type="button"
+                                role="option"
+                                aria-selected={selectedBrandId === brand.id}
                                 key={brand.id}
                                 onClick={() => {
                                   setSelectedBrandId(brand.id);
@@ -270,7 +236,7 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
                           className="w-full flex items-center space-x-3 p-2 hover:bg-muted transition-colors text-left rounded-b-xl"
                         >
                           <div className="w-5 h-5 bg-primary rounded-full flex items-center justify-center flex-shrink-0">
-                            <Plus className="h-3 w-3 text-foreground" />
+                            <Plus className="h-3 w-3 text-primary-foreground" />
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-medium text-foreground">Add Brand</p>
@@ -305,8 +271,14 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
                 <div className="border-t border-border mb-8"></div>
               </>
             )}
+
+            {brandsError && (
+              <p role="alert" className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
+                Could not load brands: {brandsError}
+              </p>
+            )}
             
-            {visibleNavigationItems.map((item) => {
+            {navigationItems.map((item) => {
               const Icon = item.icon;
               const isActive = item.name === 'Add Brand' 
                 ? pathname.startsWith('/dashboard/add-brand')
@@ -332,68 +304,44 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
             })}
           </nav>
 
-          {/* Theme Toggle Section - TODO: Restore when implementing theme switching */}
-          {/* 
-          <div className="px-4 py-3 border-t border-border">
-            <button
-              onClick={cycleTheme}
-              className="w-full flex items-center space-x-3 px-4 py-3 rounded-xl bg-muted/50 hover:bg-accent transition-all duration-200 group"
-              title={`Current theme: ${getThemeLabel()}. Click to cycle.`}
-            >
-              <div className="p-2 bg-background rounded-lg border border-border group-hover:border-accent transition-colors">
-                <ThemeIcon className="h-4 w-4 text-foreground" />
-              </div>
-              <div className="flex-1 text-left">
-                <p className="text-foreground text-sm font-medium">Theme</p>
-                <p className="text-muted-foreground text-xs">{getThemeLabel()}</p>
-              </div>
-              <div className="text-muted-foreground group-hover:text-foreground transition-colors">
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                </svg>
-              </div>
-            </button>
-          </div>
-          */}
-
           {/* User section */}
           <div className="p-4 border-t border-border">
             {/* Credits Display */}
             {userProfile && typeof userProfile.credits === 'number' && (
               <div className={`mb-3 px-4 py-2 rounded-xl border ${
                 userProfile.credits < 50 
-                  ? 'bg-gradient-to-r from-red-50 to-orange-50 border-red-200' 
+                  ? 'bg-destructive/10 border-destructive/30'
                   : userProfile.credits < 100
-                  ? 'bg-gradient-to-r from-yellow-50 to-orange-50 border-yellow-200'
-                  : 'bg-gradient-to-r from-primary/10 to-primary/10 border-primary/20'
+                  ? 'bg-warning/10 border-warning/30'
+                  : 'bg-primary/10 border-primary/20'
               }`}>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2">
                     <CreditCard className={`h-3 w-3 ${
                       userProfile.credits < 50 
-                        ? 'text-red-600' 
+                        ? 'text-destructive'
                         : userProfile.credits < 100
-                        ? 'text-yellow-600'
+                        ? 'text-warning'
                         : 'text-primary'
                     }`} />
                     <span className={`text-xs font-medium ${
                       userProfile.credits < 50 
-                        ? 'text-red-600' 
+                        ? 'text-destructive'
                         : userProfile.credits < 100
-                        ? 'text-yellow-600'
+                        ? 'text-warning'
                         : 'text-primary'
                     }`}>Available Credits</span>
                   </div>
                   <span className={`text-sm font-bold ${
                     userProfile.credits < 50 
-                      ? 'text-red-600' 
+                      ? 'text-destructive'
                       : userProfile.credits < 100
-                      ? 'text-yellow-600'
+                      ? 'text-warning'
                       : 'text-primary'
                   }`}>{userProfile.credits.toLocaleString()}</span>
                 </div>
                 {userProfile.credits < 50 && (
-                  <div className="mt-1 text-xs text-red-600">
+                  <div className="mt-1 text-xs text-destructive">
                     ⚠️ Low credits! Consider purchasing more.
                   </div>
                 )}
@@ -409,7 +357,7 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
                 />
               ) : (
                 <div className="w-10 h-10 bg-gradient-to-br from-primary to-primary rounded-full flex items-center justify-center">
-                  <User className="h-5 w-5 text-foreground" />
+                  <User className="h-5 w-5 text-primary-foreground" />
                 </div>
               )}
               <div className="flex-1 min-w-0">
@@ -421,16 +369,23 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
                 </p>
               </div>
               <button
+                type="button"
                 onClick={handleSignOut}
+                aria-label="Sign out"
                 className="text-muted-foreground hover:text-foreground transition-colors p-1"
                 title="Sign out"
               >
                 <LogOut className="h-4 w-4" />
               </button>
             </div>
+            {signOutError && (
+              <p role="alert" className="mt-2 text-xs text-destructive">
+                Sign out failed. Please try again.
+              </p>
+            )}
           </div>
         </div>
       </div>
     </>
   );
-} 
+}

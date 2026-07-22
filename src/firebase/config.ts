@@ -1,5 +1,6 @@
 import { initializeApp, getApps } from "firebase/app";
 import { getAuth, connectAuthEmulator } from "firebase/auth";
+import { logger } from '@/lib/logger';
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -9,7 +10,7 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-let firebase_app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+const firebase_app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 
 export const auth = getAuth(firebase_app);
 
@@ -18,7 +19,7 @@ const g = globalThis as unknown as { __FIREBASE_EMULATORS_CONNECTED__?: boolean 
 if (useEmulator && !g.__FIREBASE_EMULATORS_CONNECTED__) {
   connectAuthEmulator(auth, "http://127.0.0.1:9099", { disableWarnings: true });
   g.__FIREBASE_EMULATORS_CONNECTED__ = true;
-  console.log("🔥 Firebase Auth connected to local emulator (Auth:9099)");
+  logger.info('Firebase Auth connected to the local emulator');
 }
 
 export default firebase_app;

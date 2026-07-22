@@ -9,6 +9,7 @@ import {
   reprocessingJobQueryKey,
   type ReprocessingJob,
 } from '@/hooks/useReprocessingJob';
+import { logger } from '@/lib/logger';
 
 // Module-level dedupe set so terminal-state side effects (toasts, profile
 // refresh) fire exactly once per job id, no matter how many cache events
@@ -91,7 +92,7 @@ export function JobSideEffectsObserver(): null {
 
       void Promise.all([deps.refreshUserProfile(), deps.refetchBrands()]).catch(
         (err) => {
-          console.error('❌ Error refreshing post-job state:', err);
+          logger.error('Error refreshing post-job state', err);
         },
       );
 

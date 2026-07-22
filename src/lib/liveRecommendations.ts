@@ -282,5 +282,16 @@ export function buildLiveRecommendations({
   return candidates
     .sort((left, right) => right.score - left.score)
     .slice(0, 3)
-    .map(({ score, ...recommendation }) => recommendation);
+    .map((candidate) => ({
+      id: candidate.id,
+      title: candidate.title,
+      description: candidate.description,
+      priority: candidate.priority,
+      category: candidate.category,
+      imageUrl: candidate.imageUrl,
+      readTime: candidate.readTime,
+      rating: candidate.rating,
+      details: candidate.details,
+      evidence: candidate.evidence,
+    }));
 }

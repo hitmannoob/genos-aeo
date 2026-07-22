@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { Users, BarChart3, Award, AlertTriangle, Eye, Target, Shield, ArrowUp, ArrowDown, Minus } from 'lucide-react';
 import Card from '@/components/shared/Card';
 import InfoTooltip from '@/components/shared/InfoTooltip';
-import { useCompetitors } from '@/hooks/useCompetitors';
+import { useCompetitors, type CompetitorData } from '@/hooks/useCompetitors';
 import { useBrandContext } from '@/context/BrandContext';
 import { useLifetimeBrandAnalytics } from '@/hooks/useBrandAnalytics';
 
@@ -21,42 +21,30 @@ interface DonutChartProps {
 function DonutChart({ data, size = 200 }: DonutChartProps) {
   const center = size / 2;
   const radius = size / 2 - 20;
-  const innerRadius = radius * 0.6;
-  
+  const strokeWidth = radius * 0.4;
+  const chartRadius = radius - strokeWidth / 2;
+  const circumference = 2 * Math.PI * chartRadius;
   let cumulativePercentage = 0;
-  
-  const createPath = (percentage: number, startPercentage: number) => {
-    const startAngle = (startPercentage / 100) * 2 * Math.PI - Math.PI / 2;
-    const endAngle = ((startPercentage + percentage) / 100) * 2 * Math.PI - Math.PI / 2;
-    
-    const x1 = center + radius * Math.cos(startAngle);
-    const y1 = center + radius * Math.sin(startAngle);
-    const x2 = center + radius * Math.cos(endAngle);
-    const y2 = center + radius * Math.sin(endAngle);
-    
-    const x3 = center + innerRadius * Math.cos(endAngle);
-    const y3 = center + innerRadius * Math.sin(endAngle);
-    const x4 = center + innerRadius * Math.cos(startAngle);
-    const y4 = center + innerRadius * Math.sin(startAngle);
-    
-    const largeArc = percentage > 50 ? 1 : 0;
-    
-    return `M ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} L ${x3} ${y3} A ${innerRadius} ${innerRadius} 0 ${largeArc} 0 ${x4} ${y4} Z`;
-  };
 
   return (
-    <div className="relative">
-      <svg width={size} height={size} className="transform -rotate-90">
+    <div className="relative" role="img" aria-label="Share of response mentions by brand">
+      <svg width={size} height={size} className="-rotate-90" aria-hidden="true">
         {data.map((segment, index) => {
-          const path = createPath(segment.percentage, cumulativePercentage);
-          const currentCumulative = cumulativePercentage;
+          const dashLength = Math.max(0, Math.min(100, segment.percentage)) / 100 * circumference;
+          const dashOffset = -(cumulativePercentage / 100) * circumference;
           cumulativePercentage += segment.percentage;
-          
+
           return (
-            <path
-              key={index}
-              d={path}
-              fill={segment.color}
+            <circle
+              key={`${segment.name}-${index}`}
+              cx={center}
+              cy={center}
+              r={chartRadius}
+              fill="none"
+              stroke={segment.color}
+              strokeWidth={strokeWidth}
+              strokeDasharray={`${dashLength} ${circumference - dashLength}`}
+              strokeDashoffset={dashOffset}
               className="transition-all duration-300 hover:opacity-80"
             />
           );
@@ -68,7 +56,7 @@ function DonutChart({ data, size = 200 }: DonutChartProps) {
         <div className="text-lg font-bold text-foreground">
           {data.reduce((sum, item) => sum + item.value, 0)}
         </div>
-        <div className="text-xs text-muted-foreground">Total Mentions</div>
+        <div className="text-xs text-muted-foreground">Response mentions</div>
       </div>
     </div>
   );
@@ -83,7 +71,7 @@ function Legend({ data }: LegendProps) {
   return (
     <div className="space-y-3">
       {data.map((item, index) => (
-                 <div key={index} className="flex items-center justify-between p-3 bg-[#F8F8F8] rounded-lg border border-gray-100 hover:shadow-sm transition-shadow">
+        <div key={`${item.name}-${index}`} className="flex items-center justify-between p-3 bg-muted/40 rounded-lg border border-border hover:shadow-sm transition-shadow">
           <div className="flex items-center space-x-3">
             {/* Market position indicator */}
                          <div className={`flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold text-white ${
@@ -116,7 +104,7 @@ function Legend({ data }: LegendProps) {
           
           <div className="text-right">
             <div className="text-sm font-semibold text-foreground">{item.percentage.toFixed(1)}%</div>
-            <div className="text-xs text-muted-foreground">{item.value} mentions</div>
+            <div className="text-xs text-muted-foreground">{item.value} response mentions</div>
           </div>
         </div>
       ))}
@@ -125,7 +113,13 @@ function Legend({ data }: LegendProps) {
 }
 
 export default function CompetitorMentionsCard({ className = '' }: CompetitorMentionsCardProps): React.ReactElement {
-  const { competitors, loading: competitorsLoading, error: competitorsError } = useCompetitors();
+  const {
+    competitors,
+    totalQueriesProcessed,
+    loading: competitorsLoading,
+    error: competitorsError,
+    refetch: refetchCompetitors,
+  } = useCompetitors();
   const { selectedBrand } = useBrandContext();
   const lifetimeAnalyticsQuery = useLifetimeBrandAnalytics(selectedBrand?.id);
   const lifetimeAnalytics = lifetimeAnalyticsQuery.data || null;
@@ -140,10 +134,15 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
   
   // Calculate competitor metrics
   const totalCompetitorMentions = competitors.reduce((sum, comp) => sum + comp.mentions, 0);
-  const totalVisibility = competitors.reduce((sum, comp) => sum + comp.visibility, 0);
-  const averageVisibility = competitors.length > 0 ? Math.round(totalVisibility / competitors.length) : 0;
-  const topCompetitor = competitors.length > 0 ? competitors.reduce((prev, current) => (prev.mentions > current.mentions) ? prev : current) : null;
-  const totalQueries = competitors.length > 0 ? competitors[0].queriesAnalyzed : 0;
+  const mentionedCompetitors = competitors.filter((competitor) => competitor.mentions > 0);
+  const totalVisibility = mentionedCompetitors.reduce((sum, comp) => sum + comp.visibility, 0);
+  const averageVisibility = mentionedCompetitors.length > 0
+    ? Math.round(totalVisibility / mentionedCompetitors.length)
+    : 0;
+  const topCompetitor = mentionedCompetitors.length > 0
+    ? mentionedCompetitors.reduce((prev, current) => (prev.mentions > current.mentions) ? prev : current)
+    : null;
+  const totalQueries = totalQueriesProcessed;
 
   // ✅ PROPER SOV CALCULATION using real brand analytics data
   const realBrandMentions = brandAnalytics?.totalBrandMentions || 0;
@@ -169,7 +168,14 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
     '#9F52A3', '#1F2A5C', '#6E5BA7', '#E07856',
   ];
 
-  // Prepare donut chart data with real analytics
+  const sortedCompetitors = [...mentionedCompetitors].sort((a, b) => b.mentions - a.mentions);
+  const featuredCompetitors = sortedCompetitors.slice(0, 7);
+  const otherCompetitorMentions = sortedCompetitors
+    .slice(7)
+    .reduce((sum, competitor) => sum + competitor.mentions, 0);
+
+  // Keep the whole denominator represented. Long competitor lists are grouped
+  // into one "Other competitors" segment after the seven largest players.
   const unsortedDonutData = [
     {
       name: selectedBrand?.companyName || 'Your Brand',
@@ -181,20 +187,29 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
       percentage: brandShareOfVoice ?? 0,
       isUserBrand: true
     },
-    ...competitors.slice(0, 8).map((competitor, index) => ({
+    ...featuredCompetitors.map((competitor, index) => ({
       name: competitor.name,
       value: competitor.mentions,
       color: competitorColors[index % competitorColors.length],
       percentage: totalMarketMentions > 0 ? (competitor.mentions / totalMarketMentions) * 100 : 0,
       isUserBrand: false
-    }))
+    })),
+    ...(otherCompetitorMentions > 0 ? [{
+      name: 'Other competitors',
+      value: otherCompetitorMentions,
+      color: competitorColors[7],
+      percentage: totalMarketMentions > 0
+        ? (otherCompetitorMentions / totalMarketMentions) * 100
+        : 0,
+      isUserBrand: false,
+    }] : []),
   ].filter(item => item.value > 0);
 
   // Sort by highest to lowest market share (mentions)
   const donutData = unsortedDonutData.sort((a, b) => b.value - a.value);
 
   // Calculate threat levels and market position
-  const getCompetitorThreatLevel = (competitor: any) => {
+  const getCompetitorThreatLevel = (competitor: CompetitorData) => {
     if (competitor.visibility >= 70) return { level: 'High', color: 'text-red-600', bg: 'bg-red-50', icon: AlertTriangle };
     if (competitor.visibility >= 40) return { level: 'Medium', color: 'text-orange-600', bg: 'bg-orange-50', icon: Shield };
     return { level: 'Low', color: 'text-green-600', bg: 'bg-green-50', icon: Shield };
@@ -212,7 +227,7 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
               <Users className="h-5 w-5 text-red-600" />
             </div>
             <div>
-              <h3 className="text-lg font-semibold text-foreground">Competitors' Mentions</h3>
+              <h3 className="text-lg font-semibold text-foreground">Competitor Response Mentions</h3>
               <p className="text-sm text-muted-foreground">Competitive landscape analysis</p>
             </div>
           </div>
@@ -226,7 +241,26 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
     );
   }
 
-  if (error || competitors.length === 0) {
+  if (error) {
+    return (
+      <Card className={className}>
+        <div className="p-6 text-center">
+          <AlertTriangle className="h-10 w-10 text-destructive mx-auto mb-3" />
+          <h3 className="text-base font-semibold text-foreground">Unable to load competitor analytics</h3>
+          <p className="mt-1 text-sm text-muted-foreground">{error}</p>
+          <button
+            type="button"
+            onClick={() => void Promise.all([refetchCompetitors(), lifetimeAnalyticsQuery.refetch()])}
+            className="mt-4 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+          >
+            Try again
+          </button>
+        </div>
+      </Card>
+    );
+  }
+
+  if (competitors.length === 0 || totalQueries === 0) {
     return (
       <Card className={className}>
         <div className="p-6">
@@ -235,7 +269,7 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
               <Users className="h-5 w-5 text-red-600" />
             </div>
             <div>
-              <h3 className="text-lg font-semibold text-foreground">Competitors' Mentions</h3>
+              <h3 className="text-lg font-semibold text-foreground">Competitor Response Mentions</h3>
               <p className="text-sm text-muted-foreground">Competitive landscape analysis</p>
             </div>
           </div>
@@ -243,7 +277,9 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
             <AlertTriangle className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
             <h4 className="text-sm font-medium text-foreground mb-2">No Competitor Data Yet</h4>
             <p className="text-xs text-muted-foreground">
-              Process queries for {selectedBrand?.companyName} to generate competitor analytics
+              {competitors.length === 0
+                ? `Add competitors to ${selectedBrand?.companyName || 'this brand'} before comparing response visibility.`
+                : `Process queries for ${selectedBrand?.companyName || 'this brand'} to generate competitor analytics.`}
             </p>
             {!brandAnalytics && (
               <p className="text-xs text-amber-600 mt-2">
@@ -256,13 +292,16 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
     );
   }
 
-  // Sort competitors by mentions (descending)
-  const sortedCompetitors = [...competitors].sort((a, b) => b.mentions - a.mentions);
   const topThreeCompetitors = sortedCompetitors.slice(0, 3);
 
-  // Calculate user's brand market ranking
-  const userBrandRank = donutData.findIndex(item => item.isUserBrand) + 1;
-  const totalMarketPlayers = donutData.length;
+  // Rank the brand against individual competitors, not the grouped donut
+  // segment. Include the tracked brand even when it currently has zero hits.
+  const userBrandRank = 1 + sortedCompetitors.filter(
+    (competitor) => competitor.mentions > realBrandMentions
+  ).length;
+  const totalMarketPlayers = sortedCompetitors.filter(
+    (competitor) => competitor.mentions > 0
+  ).length + 1;
 
   // Calculate competitive positioning based on accurate SOV.
   // When we have no market data, skip labelling the position at all rather
@@ -291,9 +330,9 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
               <Users className="h-5 w-5 text-red-600" />
             </div>
             <div>
-              <h3 className="text-lg font-semibold text-foreground">Competitors' Mentions</h3>
+              <h3 className="text-lg font-semibold text-foreground">Competitor Response Mentions</h3>
               <p className="text-sm text-muted-foreground">
-                {totalQueries} queries analyzed
+                {totalQueries} query {totalQueries === 1 ? 'run' : 'runs'} analyzed
                 {marketPosition && (
                   <> • <span className={positionColor}>{marketPosition}</span></>
                 )}
@@ -305,18 +344,18 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
             <div className="text-right">
               <div className="text-2xl font-bold text-red-600">{totalCompetitorMentions}</div>
               <div className="text-xs text-muted-foreground inline-flex items-center justify-end">
-                Competitor Mentions
+                Competitor Response Mentions
                 <InfoTooltip side="top">
-                  Total mentions of all tracked competitors across the AI responses for this brand's queries.
+                  Provider responses that mention a tracked competitor. Each competitor is counted at most once per provider response.
                 </InfoTooltip>
               </div>
             </div>
             <div className="text-right">
               <div className="text-lg font-bold text-primary">{realBrandMentions}</div>
               <div className="text-xs text-muted-foreground inline-flex items-center justify-end">
-                Your Brand Mentions
+                Your Brand Response Mentions
                 <InfoTooltip side="top">
-                  Total mentions of your brand across the AI responses, drawn from the same lifetime corpus used for the competitor count above.
+                  Provider responses that mention your brand, drawn from the same lifetime corpus and matching rules used for competitors.
                 </InfoTooltip>
               </div>
             </div>
@@ -330,15 +369,15 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
           <div className="flex items-center justify-between mb-4">
             <h4 className="text-sm font-semibold text-foreground flex items-center">
               <BarChart3 className="h-4 w-4 mr-2" />
-              Share of Voice Analysis
+              Response Share of Voice
               <InfoTooltip>
-                Each player's percentage of total market mentions: (their mentions ÷ all brand + competitor mentions). Sums to 100% across the donut.
+                Each player's share of entity-response matches. An entity is counted at most once in each provider response, and the donut sums to 100%.
               </InfoTooltip>
             </h4>
             <span className="text-sm text-muted-foreground inline-flex items-center">
-              Total Market: {totalMarketMentions} mentions
+              Total: {totalMarketMentions} response mentions
               <InfoTooltip side="top">
-                Sum of your brand's mentions plus all competitor mentions across the lifetime corpus. The denominator for every Share of Voice number on this card.
+                Sum of brand and competitor response-presence matches across the lifetime corpus. This is the denominator for every share on this card.
               </InfoTooltip>
             </span>
           </div>
@@ -350,7 +389,7 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
               {donutData.length > 0 ? (
                 <DonutChart data={donutData} size={200} />
               ) : (
-                <div className="w-[200px] h-[200px] flex items-center justify-center bg-[#F8F8F8] rounded-full">
+                <div className="w-[200px] h-[200px] flex items-center justify-center bg-muted/40 rounded-full">
                   <span className="text-sm text-muted-foreground">No data</span>
                 </div>
               )}
@@ -370,7 +409,7 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
         {/* Key Metrics Grid */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           <div className="text-center p-3 bg-red-50 rounded-lg border border-red-100">
-            <div className="text-lg font-bold text-red-600">{competitors.length}</div>
+            <div className="text-lg font-bold text-red-600">{mentionedCompetitors.length}</div>
             <div className="text-xs text-muted-foreground inline-flex items-center justify-center">
               Active Competitors
               <InfoTooltip>
@@ -390,9 +429,9 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
           <div className="text-center p-3 bg-purple-50 rounded-lg border border-purple-100">
             <div className="text-lg font-bold text-purple-600">{topCompetitor?.mentions || 0}</div>
             <div className="text-xs text-muted-foreground inline-flex items-center justify-center">
-              Highest Mentions
+              Highest Response Mentions
               <InfoTooltip>
-                Mention count of the single most-referenced competitor. A useful "ceiling" — what your top rival is achieving.
+                Number of provider responses that mention the most-visible competitor.
               </InfoTooltip>
             </div>
           </div>
@@ -401,9 +440,9 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
               {competitorShareOfVoice === null ? '—' : `${competitorShareOfVoice}%`}
             </div>
             <div className="text-xs text-muted-foreground inline-flex items-center justify-center">
-              {competitorShareOfVoice === null ? 'Competitor SOV (no data yet)' : 'Competitor SOV'}
+              {competitorShareOfVoice === null ? 'Competitor share (no data yet)' : 'Competitor response share'}
               <InfoTooltip>
-                The combined Share of Voice held by every competitor (= 100% − your brand's SOV). Higher means the AI references competitors more often than you.
+                The combined response share held by every competitor (= 100% minus your brand's share). Higher means competitors appear in more provider responses than your brand.
               </InfoTooltip>
             </div>
           </div>
@@ -433,12 +472,12 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
               const trendIcon = !hasTrend ? null : change > 0 ? ArrowUp : change < 0 ? ArrowDown : Minus;
               // Competitor mentions up = bad for user; down = good
               const trendColor = !hasTrend
-                ? 'text-gray-400'
+                ? 'text-muted-foreground'
                 : change > 0
                   ? 'text-red-500'
                   : change < 0
                     ? 'text-green-500'
-                    : 'text-gray-500';
+                    : 'text-muted-foreground';
               const trendLabel = !hasTrend
                 ? 'New'
                 : change > 0
@@ -448,7 +487,7 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
                     : '±0';
               
               return (
-                <div key={competitor.id} className="flex items-center justify-between p-4 bg-[#F8F8F8] rounded-lg border border-gray-100 hover:shadow-md transition-shadow">
+                <div key={competitor.id} className="flex items-center justify-between p-4 bg-muted/40 rounded-lg border border-border hover:shadow-md transition-shadow">
                   <div className="flex items-center space-x-3">
                     <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm font-bold text-white ${
                       index === 0 ? 'bg-gradient-to-r from-primary to-[#6d8ead]' : 
@@ -479,7 +518,7 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
                   <div className="flex items-center space-x-4">
                     <div className="text-right">
                       <div className="font-semibold text-foreground">{competitor.mentions}</div>
-                      <div className="text-xs text-muted-foreground">mentions</div>
+                      <div className="text-xs text-muted-foreground">response mentions</div>
                     </div>
                     {trendIcon && (
                       <div className="flex items-center space-x-1">
@@ -488,22 +527,27 @@ export default function CompetitorMentionsCard({ className = '' }: CompetitorMen
                       </div>
                     )}
                     {!hasTrend && (
-                      <span className="text-xs text-gray-400">New</span>
+                      <span className="text-xs text-muted-foreground">New</span>
                     )}
                   </div>
                 </div>
               );
             })}
+            {topThreeCompetitors.length === 0 && (
+              <div className="rounded-lg border border-border bg-muted/20 p-4 text-center text-sm text-muted-foreground">
+                No tracked competitor appeared in the processed responses yet.
+              </div>
+            )}
           </div>
 
           {/* Show more competitors indicator */}
-          {competitors.length > 3 && (
+          {mentionedCompetitors.length > 3 && (
             <div className="text-center mt-4">
               <Link
                 href="/dashboard/competitors"
-                className="inline-block text-xs text-muted-foreground bg-[#F8F8F8] px-3 py-1 rounded-full hover:bg-gray-200 hover:text-foreground transition-colors"
+                className="inline-block text-xs text-muted-foreground bg-muted/40 px-3 py-1 rounded-full hover:bg-border hover:text-foreground transition-colors"
               >
-                + {competitors.length - 3} more competitors tracked
+                + {mentionedCompetitors.length - 3} more mentioned competitors
               </Link>
             </div>
           )}

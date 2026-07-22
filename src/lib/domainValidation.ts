@@ -1,5 +1,3 @@
-import { isIP } from 'node:net';
-
 const RESERVED_HOSTS = new Set(['localhost']);
 
 const RESERVED_SUFFIXES = [
@@ -14,6 +12,7 @@ const RESERVED_SUFFIXES = [
   '.example',
   '.invalid',
   '.test',
+  '.onion',
 ];
 
 const HOST_LABEL_REGEX = /^[a-z0-9-]+$/i;
@@ -23,6 +22,13 @@ export class DomainValidationError extends Error {
     super(message);
     this.name = 'DomainValidationError';
   }
+}
+
+function isIpAddress(hostname: string): boolean {
+  if (hostname.includes(':') || /^\[.*\]$/.test(hostname)) return true;
+  const parts = hostname.split('.');
+  return parts.length === 4
+    && parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255);
 }
 
 export function normalizePublicDomain(input: string): string {
@@ -59,11 +65,15 @@ export function normalizePublicDomain(input: string): string {
     throw new DomainValidationError('Invalid domain');
   }
 
+  if (hostname.length > 253) {
+    throw new DomainValidationError('Domain is too long');
+  }
+
   if (RESERVED_HOSTS.has(hostname) || RESERVED_SUFFIXES.some((suffix) => hostname.endsWith(suffix))) {
     throw new DomainValidationError('Private or reserved hostnames are not allowed');
   }
 
-  if (isIP(hostname) !== 0) {
+  if (isIpAddress(hostname)) {
     throw new DomainValidationError('IP addresses are not allowed');
   }
 

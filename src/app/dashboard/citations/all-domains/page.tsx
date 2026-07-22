@@ -6,15 +6,16 @@ import { useLifetimeCitations } from '@/hooks/useLifetimeCitations';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import Card from '@/components/shared/Card';
 import WebLogo from '@/components/shared/WebLogo';
-import { 
+import {
   ArrowLeft,
   ExternalLink, 
   Search, 
-  Filter,
   Download,
   RefreshCw,
   AlertCircle
 } from 'lucide-react';
+import { buildCsv } from '@/lib/csv';
+import { isCompetitorDomainName } from '@/lib/competitor-matching';
 
 // Citation interface
 interface Citation {
@@ -39,7 +40,6 @@ export default function AllDomainsPage(): React.ReactElement {
     citations: lifetimeCitations, 
     loading: queriesLoading, 
     error: queriesError,
-    stats: lifetimeStats
   } = useLifetimeCitations({ brandId: selectedBrand?.id });
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -49,22 +49,11 @@ export default function AllDomainsPage(): React.ReactElement {
   // Classify each cited domain against the user's brand / configured competitors.
   // "Competitor" was previously hardcoded to false; now it matches the brand's
   // competitors list by name-in-domain, which mirrors how the matcher works.
-  const competitorNames: string[] = ((selectedBrand as any)?.competitors || []).filter(Boolean);
-
-  const normalizeCompetitorForDomain = (name: string) =>
-    name.toLowerCase().replace(/[^a-z0-9]+/g, '');
-
-  const competitorTokens = competitorNames.map(normalizeCompetitorForDomain).filter(t => t.length >= 3);
-
-  const isCompetitorDomain = (domain?: string) => {
-    if (!domain) return false;
-    const flat = domain.toLowerCase().replace(/[^a-z0-9]+/g, '');
-    return competitorTokens.some(tok => flat.includes(tok));
-  };
+  const competitorNames = selectedBrand?.competitors ?? [];
 
   const getSourceType = (domain: string, isBrandDomain: boolean) => {
     if (isBrandDomain) return 'Own Brand';
-    if (isCompetitorDomain(domain)) return 'Competitor';
+    if (isCompetitorDomainName(domain, competitorNames)) return 'Competitor';
     return 'Third Party';
   };
 
@@ -72,11 +61,6 @@ export default function AllDomainsPage(): React.ReactElement {
   const allCitations = useMemo(() => {
     if (!lifetimeCitations || !selectedBrand) return [];
     
-    console.log('🔍 All-domains page - using lifetime citations:', {
-      citationsCount: lifetimeCitations.length,
-      selectedBrand: selectedBrand.companyName
-    });
-
     return lifetimeCitations;
   }, [lifetimeCitations, selectedBrand]);
 
@@ -84,7 +68,7 @@ export default function AllDomainsPage(): React.ReactElement {
   const filteredCitations = useMemo(() => {
     return allCitations.filter(citation => {
       // Exclude Google search results for domain analysis
-      if (citation.domain === 'google.com') return false;
+      if (!citation.domain || citation.domain === 'google.com') return false;
 
       // Search filter
       if (searchTerm) {
@@ -145,15 +129,15 @@ export default function AllDomainsPage(): React.ReactElement {
   };
 
   const handleExport = () => {
-    const csvContent = [
-              ['Domain', 'Source Type', 'Total Citations', 'Providers'].join(','),
+    const csvContent = buildCsv([
+      ['Domain', 'Source Type', 'Total Citations', 'Providers'],
       ...domainStats.map(stat => [
         stat.domain,
         getSourceType(stat.domain, stat.isBrandDomain),
         stat.citations.length,
         Array.from(new Set((stat.citations as Citation[]).map((c: Citation) => c.provider))).join(';')
-      ].join(','))
-    ].join('\n');
+      ])
+    ]);
 
     const blob = new Blob([csvContent], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
@@ -165,7 +149,7 @@ export default function AllDomainsPage(): React.ReactElement {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-background">
       <DashboardLayout>
         <div className="p-6 space-y-8">
           {/* Header */}
@@ -180,29 +164,31 @@ export default function AllDomainsPage(): React.ReactElement {
           </div>
 
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">All Cited Domains</h1>
-            <p className="mt-2 text-gray-600">
+            <h1 className="text-3xl font-bold text-foreground">All Cited Domains</h1>
+            <p className="mt-2 text-muted-foreground">
               Complete list of all domains referenced in AI answers across all providers.
             </p>
           </div>
 
           {/* Search and Filter Controls */}
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+          <div className="bg-card rounded-xl border border-border shadow-sm p-6">
             <div className="flex flex-col sm:flex-row gap-4">
               <div className="flex-1">
                 <input
                   type="text"
+                  aria-label="Search cited domains"
                   placeholder="Search domains by name, query, or content..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full rounded-lg border border-border bg-background px-4 py-2 text-foreground placeholder:text-muted-foreground focus:border-transparent focus:ring-2 focus:ring-primary"
                 />
               </div>
               <div className="flex gap-2">
                 <select
+                  aria-label="Filter domains by provider"
                   value={selectedProvider}
                   onChange={(e) => setSelectedProvider(e.target.value)}
-                  className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="rounded-lg border border-border bg-background px-4 py-2 text-foreground focus:border-transparent focus:ring-2 focus:ring-primary"
                 >
                   <option value="">All Providers</option>
                   <option value="chatgpt">ChatGPT</option>
@@ -210,9 +196,10 @@ export default function AllDomainsPage(): React.ReactElement {
                   <option value="googleAI">Google AI</option>
                 </select>
                 <select
+                  aria-label="Filter domains by source type"
                   value={selectedSource}
                   onChange={(e) => setSelectedSource(e.target.value)}
-                  className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="rounded-lg border border-border bg-background px-4 py-2 text-foreground focus:border-transparent focus:ring-2 focus:ring-primary"
                 >
                   <option value="">All Sources</option>
                   <option value="own">Own Brand</option>
@@ -229,7 +216,7 @@ export default function AllDomainsPage(): React.ReactElement {
                 </button>
               </div>
             </div>
-            <div className="mt-4 text-sm text-gray-600">
+            <div className="mt-4 text-sm text-muted-foreground">
               Showing {domainStats.length} domains
             </div>
           </div>
@@ -237,7 +224,7 @@ export default function AllDomainsPage(): React.ReactElement {
           {/* All Domains Table */}
           {queriesLoading ? (
             <Card className="p-6">
-              <div className="flex items-center space-x-2 text-gray-600">
+              <div className="flex items-center space-x-2 text-muted-foreground">
                 <RefreshCw className="h-4 w-4 animate-spin" />
                 <span>Loading citations...</span>
               </div>
@@ -251,11 +238,11 @@ export default function AllDomainsPage(): React.ReactElement {
             </Card>
           ) : domainStats.length === 0 ? (
             <Card className="p-6 text-center">
-              <div className="w-12 h-12 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
-                <Search className="w-6 h-6 text-gray-400" />
+              <div className="w-12 h-12 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
+                <Search className="w-6 h-6 text-muted-foreground" />
               </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">No Domains Found</h3>
-              <p className="text-gray-600">
+              <h3 className="text-lg font-semibold text-foreground mb-2">No Domains Found</h3>
+              <p className="text-muted-foreground">
                 {allCitations.length === 0 
                   ? 'Process some queries first to generate citations data.'
                   : 'No domains match your current filters. Try adjusting your search criteria.'
@@ -264,15 +251,15 @@ export default function AllDomainsPage(): React.ReactElement {
             </Card>
           ) : (
             <Card className="overflow-hidden">
-              <div className="px-6 py-4 border-b border-gray-100">
-                <h2 className="text-lg font-semibold text-gray-900">All Cited Domains ({domainStats.length})</h2>
-                <p className="text-sm text-gray-600">Complete list of domains referenced in AI answers</p>
+              <div className="px-6 py-4 border-b border-border">
+                <h2 className="text-lg font-semibold text-foreground">All Cited Domains ({domainStats.length})</h2>
+                <p className="text-sm text-muted-foreground">Complete list of domains referenced in AI answers</p>
               </div>
               
               {/* Mobile Card Layout */}
               <div className="block lg:hidden">
-                <div className="divide-y divide-gray-200">
-                  {domainStats.map((domainStat, index) => {
+                <div className="divide-y divide-border">
+                  {domainStats.map((domainStat) => {
                     const sourceType = getSourceType(domainStat.domain, domainStat.isBrandDomain);
                     const providerStats = getProviderStats(domainStat.citations);
                     
@@ -284,14 +271,14 @@ export default function AllDomainsPage(): React.ReactElement {
                             <WebLogo domain={`https://${domainStat.domain}`} className="w-6 h-6" size={24} />
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center space-x-2">
-                                <span className="font-medium text-gray-900 truncate">
+                                <span className="font-medium text-foreground truncate">
                                   {domainStat.domain}
                                 </span>
                                 <a
                                   href={`https://${domainStat.domain}`}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                                  className="text-muted-foreground hover:text-muted-foreground transition-colors"
                                   title={`Visit ${domainStat.domain}`}
                                 >
                                   <ExternalLink className="w-4 h-4" />
@@ -302,7 +289,7 @@ export default function AllDomainsPage(): React.ReactElement {
                           <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
                             sourceType === 'Own Brand' ? 'bg-blue-100 text-blue-800' :
                             sourceType === 'Competitor' ? 'bg-red-100 text-red-800' :
-                            'bg-gray-100 text-gray-800'
+                            'bg-muted text-foreground'
                           }`}>
                             {sourceType}
                           </span>
@@ -312,9 +299,9 @@ export default function AllDomainsPage(): React.ReactElement {
                         <div className="flex items-center justify-between">
                           <div className="flex items-center space-x-2">
                             {domainStat.citations.length > 1 && (
-                              <span className="text-lg font-bold text-gray-900">{domainStat.citations.length}</span>
+                              <span className="text-lg font-bold text-foreground">{domainStat.citations.length}</span>
                             )}
-                            <span className="text-sm text-gray-600">
+                            <span className="text-sm text-muted-foreground">
                               {domainStat.citations.length === 1 ? 'citation' : 'citations'}
                             </span>
                           </div>
@@ -344,7 +331,7 @@ export default function AllDomainsPage(): React.ReactElement {
 	c0.001-0.001,0.002-0.001,0.003-0.002l6.19,5.238C36.971,39.205,44,34,44,24C44,22.659,43.862,21.35,43.611,20.083z"></path>
                                   </svg>
                                 )}
-                                {count > 1 && <span className="text-xs font-medium text-gray-700">{count}</span>}
+                                {count > 1 && <span className="text-xs font-medium text-foreground">{count}</span>}
                               </div>
                             ))}
                           </div>
@@ -358,26 +345,26 @@ export default function AllDomainsPage(): React.ReactElement {
               {/* Desktop Table Layout */}
               <div className="hidden lg:block overflow-x-auto">
                 <table className="w-full min-w-full">
-                  <thead className="bg-gray-50">
+                  <thead className="bg-muted/40">
                     <tr>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
                         Cited Domain
                       </th>
-                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-4 py-3 text-center text-xs font-medium text-muted-foreground uppercase tracking-wider">
                         Source Type
                       </th>
-                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-4 py-3 text-center text-xs font-medium text-muted-foreground uppercase tracking-wider">
                         Answer Distribution
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {domainStats.map((domainStat, index) => {
+                  <tbody className="bg-card divide-y divide-border">
+                    {domainStats.map((domainStat) => {
                       const sourceType = getSourceType(domainStat.domain, domainStat.isBrandDomain);
                       const providerStats = getProviderStats(domainStat.citations);
                       
                       return (
-                        <tr key={domainStat.domain} className="hover:bg-gray-50">
+                        <tr key={domainStat.domain} className="hover:bg-muted/40">
                           <td className="px-4 py-4">
                             <div className="flex items-center space-x-3">
                               <div className="flex-shrink-0">
@@ -385,14 +372,14 @@ export default function AllDomainsPage(): React.ReactElement {
                               </div>
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center space-x-2">
-                                  <span className="font-medium text-gray-900 truncate">
+                                  <span className="font-medium text-foreground truncate">
                                     {domainStat.domain}
                                   </span>
                                   <a
                                     href={`https://${domainStat.domain}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="text-gray-400 hover:text-gray-600 transition-colors"
+                                    className="text-muted-foreground hover:text-muted-foreground transition-colors"
                                     title={`Visit ${domainStat.domain}`}
                                   >
                                     <ExternalLink className="w-4 h-4" />
@@ -405,7 +392,7 @@ export default function AllDomainsPage(): React.ReactElement {
                             <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
                               sourceType === 'Own Brand' ? 'bg-blue-100 text-blue-800' :
                               sourceType === 'Competitor' ? 'bg-red-100 text-red-800' :
-                              'bg-gray-100 text-gray-800'
+                              'bg-muted text-foreground'
                             }`}>
                               {sourceType}
                             </span>
@@ -414,7 +401,7 @@ export default function AllDomainsPage(): React.ReactElement {
                             <div className="flex items-center justify-center">
                               <div className="flex items-center space-x-3">
                                 {domainStat.citations.length > 1 && (
-                                  <span className="text-lg font-bold text-gray-900">{domainStat.citations.length}</span>
+                                  <span className="text-lg font-bold text-foreground">{domainStat.citations.length}</span>
                                 )}
                               </div>
                               <div className="flex items-center space-x-2 ml-4">
@@ -443,7 +430,7 @@ export default function AllDomainsPage(): React.ReactElement {
 	c0.001-0.001,0.002-0.001,0.003-0.002l6.19,5.238C36.971,39.205,44,34,44,24C44,22.659,43.862,21.35,43.611,20.083z"></path>
                                       </svg>
                                     )}
-                                    {count > 1 && <span className="text-xs font-medium text-gray-700">{count}</span>}
+                                    {count > 1 && <span className="text-xs font-medium text-foreground">{count}</span>}
                                   </div>
                                 ))}
                               </div>
@@ -462,4 +449,3 @@ export default function AllDomainsPage(): React.ReactElement {
     </div>
   );
 }
-

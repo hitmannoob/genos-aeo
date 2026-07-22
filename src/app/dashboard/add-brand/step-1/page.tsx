@@ -2,8 +2,10 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
-import { Globe, Search, Sparkles, ArrowRight, AlertCircle, CheckCircle, Building2, Users, Tag, TrendingUp, ExternalLink, RefreshCw, Target } from 'lucide-react';
+import { Globe, ArrowRight, AlertCircle, CheckCircle } from 'lucide-react';
 import { useCompanyInfo } from '@/hooks/useCompanyInfo';
+import { normalizePublicDomain } from '@/lib/domainValidation';
+import { COMPANY_INFO_CREDIT_COST } from '@/lib/billing/creditCosts';
 
 export default function AddBrandStep1(): React.ReactElement {
   const [domain, setDomain] = useState('');
@@ -11,11 +13,7 @@ export default function AddBrandStep1(): React.ReactElement {
   const [isValidating, setIsValidating] = useState(false);
   const router = useRouter();
   
-  const { 
-    companyState, 
-    getCompanyInfo,
-    clearCompanyInfo
-  } = useCompanyInfo();
+  const { companyState, getCompanyInfo } = useCompanyInfo();
   
   const companyData = companyState.result;
   const isAnalyzing = companyState.loading;
@@ -33,7 +31,6 @@ export default function AddBrandStep1(): React.ReactElement {
     
     // Handle error case
     if (analysisError && !isAnalyzing) {
-      setError(analysisError);
       setIsValidating(false);
     }
   }, [companyData, isAnalyzing, analysisError, router]);
@@ -44,45 +41,17 @@ export default function AddBrandStep1(): React.ReactElement {
       return { isValid: false, cleanDomain: '', error: 'Domain is required' };
     }
 
-    // Remove protocols and www
-    let cleanDomain = inputDomain.trim().toLowerCase();
-    cleanDomain = cleanDomain.replace(/^https?:\/\//, '');
-    cleanDomain = cleanDomain.replace(/^www\./, '');
-    cleanDomain = cleanDomain.replace(/\/$/, ''); // Remove trailing slash
-
-    // Basic format validation
-    const domainRegex = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$/;
-    
-    if (!domainRegex.test(cleanDomain)) {
-      return { isValid: false, cleanDomain, error: 'Please enter a valid domain (e.g., example.com)' };
+    try {
+      return { isValid: true, cleanDomain: normalizePublicDomain(inputDomain), error: '' };
+    } catch (validationError) {
+      return {
+        isValid: false,
+        cleanDomain: '',
+        error: validationError instanceof Error
+          ? validationError.message
+          : 'Please enter a valid public domain (e.g., example.com)',
+      };
     }
-
-    // Check for spaces
-    if (cleanDomain.includes(' ')) {
-      return { isValid: false, cleanDomain, error: 'Domain cannot contain spaces' };
-    }
-
-    // Check for invalid characters
-    if (!/^[a-zA-Z0-9.-]+$/.test(cleanDomain)) {
-      return { isValid: false, cleanDomain, error: 'Domain contains invalid characters' };
-    }
-
-    // Check if it has at least one dot (TLD)
-    if (!cleanDomain.includes('.')) {
-      return { isValid: false, cleanDomain, error: 'Please include a top-level domain (e.g., .com, .org)' };
-    }
-
-    // Check for consecutive dots
-    if (cleanDomain.includes('..')) {
-      return { isValid: false, cleanDomain, error: 'Domain cannot have consecutive dots' };
-    }
-
-    // Check length
-    if (cleanDomain.length > 253) {
-      return { isValid: false, cleanDomain, error: 'Domain is too long (max 253 characters)' };
-    }
-
-    return { isValid: true, cleanDomain, error: '' };
   };
 
   const handleDomainChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -115,7 +84,7 @@ export default function AddBrandStep1(): React.ReactElement {
       await getCompanyInfo(validation.cleanDomain);
       
       setIsValidating(false);
-    } catch (err) {
+    } catch {
       setError('Failed to validate domain. Please try again.');
       setIsValidating(false);
     }
@@ -136,13 +105,13 @@ export default function AddBrandStep1(): React.ReactElement {
       <div className="flex justify-center pt-8 pb-6">
         <div className="flex flex-col items-center space-y-2">
           {/* Genos Logo */}
-          <div className="relative w-48 h-12">
+          <div className="relative w-48 h-[53px]">
             <Image
-              src="/logo_no_background.png"
+              src="/genos-wordmark.png"
               alt="Genos Logo"
-              width={192}
-              height={48}
-              className="w-full h-auto"
+              width={512}
+              height={141}
+              className="h-auto w-48"
               priority
             />
           </div>
@@ -275,15 +244,18 @@ export default function AddBrandStep1(): React.ReactElement {
                 </>
               ) : (
                 <>
-                  <span>Get Company Information</span>
+                  <span>Get Company Information ({COMPANY_INFO_CREDIT_COST} credits)</span>
                   <ArrowRight className="h-5 w-5" />
                 </>
               )}
             </button>
+            <p className="mt-3 text-center text-xs text-muted-foreground">
+              Credits are charged only when a valid company profile is returned.
+            </p>
 
           </div>
         </div>
       </div>
     </div>
   );
-} 
+}

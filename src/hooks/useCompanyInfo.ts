@@ -37,16 +37,12 @@ export function useCompanyInfo(): UseCompanyInfoReturn {
     });
 
     try {
-      console.log('🚀 Fetching company info for domain:', domain);
-
       const idToken = await getFirebaseIdTokenWithRetry(3, 1000);
       if (!idToken) {
         throw new Error('Authentication required');
       }
       
-      const clientRequestId = (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const clientRequestId = crypto.randomUUID();
 
       const response = await fetch('/api/get-company-info', {
         method: 'POST',
@@ -59,8 +55,6 @@ export function useCompanyInfo(): UseCompanyInfoReturn {
 
       const data = await response.json();
       
-      console.log('📄 API Response:', data);
-
       if (!response.ok) {
         throw new Error(data.error || 'Failed to get company info');
       }
@@ -69,26 +63,15 @@ export function useCompanyInfo(): UseCompanyInfoReturn {
         throw new Error(data.error || 'Company info fetch was not successful');
       }
 
-      await refreshUserProfile();
-
-      console.log('✅ Company info fetched successfully:', {
-        companyName: data.data.companyName,
-        description: data.data.shortDescription?.substring(0, 100) + '...',
-        productsCount: data.data.productsAndServices?.length || 0,
-        keywordsCount: data.data.keywords?.length || 0,
-        website: data.data.website
-      });
-
       setCompanyState({
         loading: false,
         result: data.data,
         error: null,
         metadata: data.metadata,
       });
+      await refreshUserProfile().catch(() => undefined);
 
     } catch (error) {
-      console.error('❌ Company info fetch failed:', error);
-      
       setCompanyState({
         loading: false,
         result: null,

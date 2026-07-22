@@ -6,6 +6,7 @@ import type { UserBrand } from '@/types/userBrand';
 import { getQueryResultsByBrandPublicId } from './queryResults';
 import { matchCompetitorsInText } from '@/lib/competitor-matching';
 import { BRAND_CREATION_CREDIT_COST } from '@/lib/billing/serverCredits';
+import { logger } from '@/lib/logger';
 
 const VALID_QUERY_CATEGORIES = new Set([
   'Awareness',
@@ -13,6 +14,8 @@ const VALID_QUERY_CATEGORIES = new Set([
   'Consideration',
   'Purchase',
 ]);
+const MAX_BRAND_KEYWORDS = 20;
+const MAX_BRAND_QUERIES = 100;
 
 export type CreateBrandServerResult =
   | { success: true; creditsAfter: number; brandId: string }
@@ -142,12 +145,7 @@ async function loadQueryResultsForLegacyBrand(
     return undefined;
   }
 
-  try {
-    return await getQueryResultsByBrandPublicId(brandId, firebaseUid);
-  } catch (error) {
-    console.warn(`⚠️ Failed to load SQL query results for brand ${brandId}:`, error);
-    return [];
-  }
+  return getQueryResultsByBrandPublicId(brandId, firebaseUid);
 }
 
 async function loadBrandQueries(brandIds: string[]): Promise<Map<string, BrandQueryRow[]>> {
@@ -276,6 +274,23 @@ export async function getBrandSql(
   );
 }
 
+export async function getBrandPublicIdByDomainSql(
+  firebaseUid: string,
+  domain: string
+): Promise<string | null> {
+  const result = await sql<{ public_brand_id: string }>(
+    `
+      select coalesce(b.legacy_firestore_id, b.id::text) as public_brand_id
+      from brands b
+      join app_users u on u.id = b.user_id
+      where u.firebase_uid = $1 and lower(b.domain) = lower($2)
+      limit 1
+    `,
+    [firebaseUid, domain]
+  );
+  return result.rows[0]?.public_brand_id ?? null;
+}
+
 export async function createBrandWithCreditsSql(params: {
   brandId: string;
   firebaseUid: string;
@@ -305,10 +320,6 @@ export async function createBrandWithCreditsSql(params: {
       }
 
       const currentCredits = Number(user.credit_balance ?? 0);
-      if (currentCredits < creditCost) {
-        throw new Error('INSUFFICIENT_CREDITS');
-      }
-
       const domain = cleanString(params.brandData.domain);
       const companyName = cleanString(params.brandData.companyName);
       if (!domain || !companyName) {
@@ -328,6 +339,10 @@ export async function createBrandWithCreditsSql(params: {
 
       if (existing.rows[0]) {
         throw new Error('BRAND_ALREADY_EXISTS');
+      }
+
+      if (currentCredits < creditCost) {
+        throw new Error('INSUFFICIENT_CREDITS');
       }
 
       const balanceAfter = currentCredits - creditCost;
@@ -399,7 +414,7 @@ export async function createBrandWithCreditsSql(params: {
             query,
             cleanString(queryValue.keyword, 'unknown'),
             normalizeCategory(queryValue.category),
-            queryValue.containsBrand === true || queryValue.containsBrand === 1,
+            matchCompetitorsInText(query, [{ name: companyName, domain }]).length > 0,
             queryValue.selected !== false,
             index,
           ]
@@ -419,6 +434,7 @@ export async function createBrandWithCreditsSql(params: {
         `
           insert into credit_ledger (
             user_id,
+            brand_id,
             idempotency_key,
             entry_type,
             amount,
@@ -426,10 +442,11 @@ export async function createBrandWithCreditsSql(params: {
             reason,
             metadata
           )
-          values ($1, $2, 'debit', $3, $4, $5, $6::jsonb)
+          values ($1, $2, $3, 'debit', $4, $5, $6, $7::jsonb)
         `,
         [
           user.id,
+          brandUuid,
           `brand-setup:${params.brandId}:debit`,
           -creditCost,
           balanceAfter,
@@ -450,6 +467,16 @@ export async function createBrandWithCreditsSql(params: {
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const databaseCode = typeof error === 'object' && error !== null && 'code' in error
+      ? String(error.code)
+      : '';
+    if (databaseCode === '23505') {
+      return {
+        success: false,
+        code: 'BRAND_ALREADY_EXISTS',
+        error: 'BRAND_ALREADY_EXISTS',
+      };
+    }
     if (
       message === 'INSUFFICIENT_CREDITS' ||
       message === 'USER_NOT_FOUND' ||
@@ -462,11 +489,11 @@ export async function createBrandWithCreditsSql(params: {
       };
     }
 
-    console.error('❌ createBrandWithCreditsSql failed:', error);
+    logger.error('Failed to create brand transaction', error);
     return {
       success: false,
       code: 'TRANSACTION_FAILED',
-      error: message,
+      error: 'Failed to create brand',
     };
   }
 }
@@ -505,6 +532,9 @@ export async function addKeywordToBrandSql(
     );
 
     if (!hasKeyword) {
+      if (existingKeywords.length >= MAX_BRAND_KEYWORDS) {
+        throw new Error(`A brand can have at most ${MAX_BRAND_KEYWORDS} topics`);
+      }
       await client.query(
         `
           update brands
@@ -576,6 +606,29 @@ export async function addQueryToBrandSql(args: {
       [brand.id]
     );
 
+    const existingQuery = await client.query(
+      `
+        select 1 from brand_queries
+        where brand_id = $1
+          and lower(btrim(query)) = lower(btrim($2))
+          and lower(btrim(keyword)) = lower(btrim($3))
+          and lower(btrim(category)) = lower(btrim($4))
+        limit 1
+      `,
+      [brand.id, query, topic, category]
+    );
+    if (existingQuery.rows[0]) {
+      throw new Error('Query already exists');
+    }
+
+    const queryCountResult = await client.query<{ query_count: number }>(
+      'select count(*)::integer as query_count from brand_queries where brand_id = $1',
+      [brand.id]
+    );
+    if (Number(queryCountResult.rows[0]?.query_count ?? 0) >= MAX_BRAND_QUERIES) {
+      throw new Error(`A brand can have at most ${MAX_BRAND_QUERIES} queries`);
+    }
+
     const containsBrand = matchCompetitorsInText(
       query,
       [{ name: brand.company_name, domain: brand.domain }]
@@ -613,6 +666,9 @@ export async function addQueryToBrandSql(args: {
     );
 
     if (!hasKeyword) {
+      if ((brand.keywords || []).length >= MAX_BRAND_KEYWORDS) {
+        throw new Error(`A brand can have at most ${MAX_BRAND_KEYWORDS} topics`);
+      }
       await client.query(
         `
           update brands

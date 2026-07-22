@@ -92,7 +92,7 @@ export default function CompetitorsPage(): React.ReactElement {
           <p className="text-muted-foreground mb-4">
             Add your first brand to start analyzing competitors.
           </p>
-          <Link href="/dashboard/add-brand/step-1" className="bg-primary text-white px-4 py-2 rounded-lg hover:bg-primary/90 transition-colors">
+          <Link href="/dashboard/add-brand/step-1" className="rounded-lg bg-primary px-4 py-2 text-primary-foreground transition-colors hover:bg-primary/90">
             Add Brand
           </Link>
         </div>
@@ -153,10 +153,10 @@ export default function CompetitorsPage(): React.ReactElement {
 
         {/* Error State */}
         {(error || brandAnalyticsError) && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+          <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4">
             <div className="flex items-center">
-              <AlertCircle className="h-5 w-5 text-red-600 mr-2" />
-              <p className="text-red-800">{error || brandAnalyticsError}</p>
+              <AlertCircle className="mr-2 h-5 w-5 text-destructive" />
+              <p className="text-destructive">{error || brandAnalyticsError}</p>
             </div>
           </div>
         )}
@@ -177,7 +177,7 @@ export default function CompetitorsPage(): React.ReactElement {
               </div>
             ))}
           </div>
-        ) : competitors.length > 0 ? (
+        ) : competitors.length > 0 && totalQueriesProcessed > 0 ? (
           <>
             {/* Real Competitor Analytics Overview */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
@@ -185,7 +185,7 @@ export default function CompetitorsPage(): React.ReactElement {
                 <div className="text-center">
                   <Users className="h-8 w-8 text-primary mx-auto mb-2" />
                   <p className="text-2xl font-bold text-foreground">{competitors.length}</p>
-                  <p className="text-muted-foreground text-sm">Competitors Tracking</p>
+                  <p className="text-muted-foreground text-sm">Competitors Tracked</p>
                 </div>
               </Card>
               
@@ -215,7 +215,7 @@ export default function CompetitorsPage(): React.ReactElement {
                   <p className="text-2xl font-bold text-foreground">
                     {totalQueriesProcessed}
                   </p>
-                  <p className="text-muted-foreground text-sm">Queries Analyzed</p>
+                  <p className="text-muted-foreground text-sm">Query Runs Analyzed</p>
                 </div>
               </Card>
             </div>
@@ -280,12 +280,12 @@ export default function CompetitorsPage(): React.ReactElement {
             <Card>
               <h3 className="text-lg font-semibold text-foreground mb-4">Share of Voice Summary</h3>
               {!sovReady ? (
-                <div className="p-4 bg-gray-50 rounded-lg flex items-center justify-center text-sm text-muted-foreground">
+                <div className="p-4 bg-muted/40 rounded-lg flex items-center justify-center text-sm text-muted-foreground">
                   <RefreshCw className="h-4 w-4 animate-spin mr-2" />
                   Loading brand mentions…
                 </div>
               ) : (
-                <div className="p-4 bg-gray-50 rounded-lg">
+                <div className="p-4 bg-muted/40 rounded-lg">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="text-center">
                       <div className="text-2xl font-bold text-green-600">
@@ -308,7 +308,7 @@ export default function CompetitorsPage(): React.ReactElement {
                       <div className="text-xs text-muted-foreground mt-1">{totalCompetitorMentions} mentions</div>
                     </div>
                   </div>
-                  <div className="mt-4 pt-4 border-t border-gray-200">
+                  <div className="mt-4 pt-4 border-t border-border">
                     <div className="text-center">
                       <div className="text-sm text-muted-foreground">
                         Total Market: <strong>{totalMarketMentions}</strong> mentions
@@ -367,23 +367,19 @@ export default function CompetitorsPage(): React.ReactElement {
               <TrendingUp className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
               <h3 className="text-lg font-semibold text-foreground mb-2">No Competitor Analytics Yet</h3>
               <p className="text-muted-foreground mb-4">
-                Process queries for {selectedBrand.companyName} to generate real competitor analytics.
+                {competitors.length === 0
+                  ? `No competitors are configured for ${selectedBrand.companyName}.`
+                  : `Process queries for ${selectedBrand.companyName} to generate real competitor analytics.`}
               </p>
               <p className="text-sm text-muted-foreground mb-6">
                 Competitor analytics are generated from actual AI query responses, showing which competitors appear in AI recommendations.
               </p>
-              <div className="flex flex-col sm:flex-row gap-3 justify-center">
+              <div className="flex justify-center">
                 <Link 
                   href="/dashboard/queries" 
-                  className="bg-primary text-white px-4 py-2 rounded-lg hover:bg-primary/90 transition-colors"
+                  className="rounded-lg bg-primary px-4 py-2 text-primary-foreground transition-colors hover:bg-primary/90"
                 >
                   Process Queries
-                </Link>
-                <Link 
-                  href="/dashboard/add-brand/step-2" 
-                  className="bg-muted text-foreground px-4 py-2 rounded-lg hover:bg-accent transition-colors"
-                >
-                  Add Competitors
                 </Link>
               </div>
             </div>

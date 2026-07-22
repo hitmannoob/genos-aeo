@@ -1,9 +1,7 @@
 'use client';
 
-// Root error boundary for the App Router.
-// Sentry reporting is deferred — add `Sentry.captureException(error)` in the
-// useEffect below once @sentry/nextjs is installed.
-// See: https://nextjs.org/docs/app/api-reference/file-conventions/error
+import { useEffect } from 'react';
+import * as Sentry from '@sentry/nextjs';
 
 export default function GlobalError( {
   error,
@@ -12,6 +10,10 @@ export default function GlobalError( {
   error: Error & { digest?: string };
   reset: () => void;
 } ): React.ReactElement {
+  useEffect(() => {
+    Sentry.captureException(error);
+  }, [error]);
+
   return (
     <div style={{ padding: '2rem', fontFamily: 'system-ui, sans-serif' }}>
       <h2>Something went wrong.</h2>

@@ -1,4 +1,5 @@
 import { BaseAPIProvider } from './base-provider';
+import { createHash } from 'node:crypto';
 import { GeminiProvider } from './gemini-provider';
 import { ChatGPTSearchProvider } from './chatgptsearch-provider';
 import { GoogleAIOverviewProvider } from './google-ai-overview-provider';
@@ -9,10 +10,10 @@ import {
   getCachedProviderResponse,
   setCachedProviderResponse,
 } from '@/lib/cache/providerResponseCache';
+import { logger } from '@/lib/logger';
 
 export class ProviderManager {
   private providers: Map<string, BaseAPIProvider> = new Map();
-  private jobQueue: APIRequest[] = [];
   private activeJobs: Map<string, Promise<JobResult>> = new Map();
 
   constructor() {
@@ -40,7 +41,7 @@ export class ProviderManager {
           provider = new PerplexityProvider(config);
           break;
         default:
-          console.warn(`Unknown provider type: ${config.type}`);
+          logger.warn(`Unknown provider type: ${config.type}`);
           return;
       }
       
@@ -63,9 +64,6 @@ export class ProviderManager {
         retryAttempts: 3,
       };
       configs.push(chatgptSearchConfig);
-      console.log('✅ ChatGPT Search provider configured');
-    } else {
-      console.warn('⚠️ ChatGPT Search API key not found. Set OPENAI_API_KEY or CHATGPT_SEARCH_API_KEY environment variable to enable ChatGPT Search provider.');
     }
     
     // Perplexity Configuration
@@ -79,9 +77,6 @@ export class ProviderManager {
         retryAttempts: 3,
       };
       configs.push(perplexityConfig);
-      console.log('✅ Perplexity provider configured');
-    } else {
-      console.warn('⚠️ Perplexity API key not found. Set PERPLEXITY_API_KEY environment variable to enable Perplexity provider.');
     }
     
     // Google Gemini Configuration
@@ -95,9 +90,6 @@ export class ProviderManager {
         retryAttempts: 3,
       };
       configs.push(geminiConfig);
-      console.log('✅ Google Gemini provider configured');
-    } else {
-      console.warn('⚠️ Google Gemini API key not found. Set GOOGLE_AI_API_KEY or GEMINI_API_KEY environment variable to enable Gemini provider.');
     }
     
     // Google AI Overview Configuration (DataForSEO) - Only enable with proper credentials
@@ -121,26 +113,21 @@ export class ProviderManager {
       retryAttempts: 3,
     };
     configs.push(googleAIOverviewConfig);
-      console.log('✅ Google AI Overview provider configured with environment credentials');
-    } else {
-      console.log('⚠️ Google AI Overview provider disabled - set DATAFORSEO_USERNAME and DATAFORSEO_PASSWORD environment variables to enable');
-      console.log('💡 DataForSEO requires paid credits. Sign up at https://dataforseo.com for API access.');
     }
-    
-    console.log('🔧 Provider Manager Initialized:', {
-      availableProviders: configs.map(c => c.name),
-      chatgptSearchConfigured: !!chatgptSearchApiKey,
-      perplexityConfigured: !!perplexityApiKey,
-      geminiConfigured: !!geminiApiKey,
-      dataForSeoConfigured: !!(dataForSeoUsername && dataForSeoPassword)
-    });
     
     return configs;
   }
 
   // Execute request across multiple providers
   async executeRequest(request: APIRequest): Promise<JobResult> {
-    const jobId = request.id;
+    const requestFingerprint = createHash('sha256')
+      .update(JSON.stringify({
+        prompt: request.prompt,
+        providers: request.providers,
+        metadata: request.metadata ?? {},
+      }))
+      .digest('hex');
+    const jobId = `${request.userId}:${request.id}:${requestFingerprint}`;
     
     // Check if job is already running
     if (this.activeJobs.has(jobId)) {
@@ -168,9 +155,13 @@ export class ProviderManager {
     return {
       ...cached,
       requestId: request.id,
+      cacheHit: true,
+      totalCost: 0,
       results: cached.results.map((result) => ({
         ...result,
         requestId: request.id,
+        cacheHit: true,
+        cost: 0,
         timestamp: result.timestamp instanceof Date
           ? result.timestamp
           : new Date(result.timestamp),
@@ -191,16 +182,44 @@ export class ProviderManager {
         prompt: request.prompt,
         providers: providerNames,
         purpose: request.metadata?.type,
+        variant: {
+          locationCode: request.metadata?.locationCode,
+          languageCode: request.metadata?.languageCode,
+          device: request.metadata?.device,
+          os: request.metadata?.os,
+          webSearch: request.metadata?.webSearch,
+          temperature: request.metadata?.temperature,
+          maxTokens: request.metadata?.maxTokens,
+          cacheScope: request.userId,
+          chatgptModel: 'gpt-5.4-mini',
+          perplexityModel: 'sonar-pro',
+          geminiModel: process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite',
+        },
       });
-      const cached = await getCachedProviderResponse(cacheKey);
+      let cached: JobResult | null = null;
+      try {
+        cached = await getCachedProviderResponse(cacheKey);
+      } catch (error) {
+        logger.warn('Provider cache read failed', error);
+      }
       if (cached) {
         return this.remapCachedResult(request, cached);
       }
 
       const result = await this.processRequest(request);
-      const hasSuccess = result.results.some((providerResult) => providerResult.status === 'success');
-      if (hasSuccess) {
-        await setCachedProviderResponse(cacheKey, result, typeof cacheTtlMs === 'number' ? cacheTtlMs : undefined);
+      const allSucceeded = result.results.length === providerNames.length
+        && result.results.every((providerResult) => providerResult.status === 'success');
+      if (allSucceeded) {
+        try {
+          await setCachedProviderResponse(
+            cacheKey,
+            result,
+            typeof cacheTtlMs === 'number' ? cacheTtlMs : undefined,
+            typeof request.metadata?.type === 'string' ? request.metadata.type : 'default'
+          );
+        } catch (error) {
+          logger.warn('Provider cache write failed', error);
+        }
       }
       return result;
     }
@@ -209,27 +228,10 @@ export class ProviderManager {
   }
 
   private async processRequest(request: APIRequest): Promise<JobResult> {
-    const startTime = Date.now();
     const results: APIResponse[] = [];
     
     // Get requested providers or use all available
     const providerNames = this.getProviderNamesForRequest(request);
-
-    console.log('🔄 ProviderManager Processing Request:', {
-      requestId: request.id,
-      availableProviders: Array.from(this.providers.keys()),
-      requestedProviders: request.providers,
-      providersToExecute: providerNames,
-      prompt: request.prompt.substring(0, 100) + '...'
-    });
-
-    // EXPLICIT LOGGING FOR GOOGLE AI OVERVIEW
-    console.log('🚨🚨🚨 PROVIDER AVAILABILITY CHECK 🚨🚨🚨');
-    console.log('Google AI Overview requested:', request.providers.includes('google-ai-overview'));
-    console.log('Google AI Overview available:', Array.from(this.providers.keys()).includes('google-ai-overview'));
-    console.log('Google AI Overview provider exists:', this.providers.has('google-ai-overview'));
-    console.log('All providers map:', Array.from(this.providers.keys()));
-    console.log('🚨🚨🚨 PROVIDER AVAILABILITY CHECK END 🚨🚨🚨');
 
     // Execute requests in parallel. Each mapper catches its own errors and
     // returns an `APIResponse` with `status: 'error'` — so the outer
@@ -252,45 +254,11 @@ export class ProviderManager {
       try {
         // Transform generic request to provider-specific format
         const providerRequest = this.transformRequestForProvider(request, provider);
-        console.log(`🚀 Executing ${providerName} with request:`, JSON.stringify(providerRequest, null, 2));
 
         const result = await provider.execute(providerRequest);
-        console.log(`✅ ${providerName} completed:`, {
-          status: result.status,
-          responseTime: result.responseTime,
-          cost: result.cost,
-          hasContent: !!result.data?.content
-        });
-
-        // Enhanced logging for specific providers
-        if (providerName === 'google-ai-overview') {
-          console.log(`🔍 ${providerName} detailed result:`, {
-            dataKeys: Object.keys(result.data || {}),
-            contentField: result.data?.content,
-            contentLength: result.data?.content?.length || 0,
-            aiOverview: result.data?.aiOverview,
-            hasAIOverview: result.data?.hasAIOverview,
-            organicResultsCount: result.data?.organicResultsCount || 0
-          });
-        }
-
-        if (providerName === 'perplexity') {
-          console.log(`🔍 ${providerName} detailed result:`, {
-            dataKeys: Object.keys(result.data || {}),
-            content: result.data?.content?.substring(0, 200) + '...',
-            contentLength: result.data?.content?.length || 0,
-            hasCitations: !!result.data?.citations,
-            citationsCount: result.data?.citations?.length || 0,
-            realTimeData: result.data?.realTimeData
-          });
-        }
-
         return result;
       } catch (error) {
-        console.error(`❌ ${providerName} execution failed:`, {
-          error: (error as Error).message,
-          stack: (error as Error).stack
-        });
+        logger.error(`Provider ${providerName} execution failed`, error);
         return {
           providerId: providerName,
           requestId: request.id,
@@ -303,45 +271,15 @@ export class ProviderManager {
       }
     });
 
-    // Wait for all providers to complete. Rejections are impossible here
-    // because each mapper catches and returns an error-shaped APIResponse.
-    console.log('⏳ Waiting for all providers to complete...');
     const responses = await Promise.all(promises);
     results.push(...responses);
 
     // Calculate total cost
     const totalCost = results.reduce((sum, result) => sum + result.cost, 0);
 
-    console.log('📊 All providers completed:', {
-      totalResults: results.length,
-      successfulResults: results.filter(r => r.status === 'success').length,
-      totalCost,
-      totalTime: Date.now() - startTime
-    });
-    
-    // Log individual provider results for debugging
-    results.forEach(result => {
-      if (result.status === 'error') {
-        console.error(`❌ ${result.providerId} FAILED:`, {
-          error: result.error,
-          responseTime: result.responseTime
-        });
-      } else {
-        console.log(`✅ ${result.providerId} SUCCESS:`, {
-          hasData: !!result.data,
-          cost: result.cost,
-          responseTime: result.responseTime
-        });
-      }
-    });
-
-    // Aggregate results (implement your business logic here)
-    const aggregatedData = this.aggregateResults(results);
-
     return {
       requestId: request.id,
       results,
-      aggregatedData,
       totalCost,
       completedAt: new Date(),
     };
@@ -362,7 +300,9 @@ export class ProviderManager {
         return {
           input: request.prompt,
           model: 'gpt-5.4-mini',
-          temperature: 0.7,
+          temperature: typeof md.temperature === 'number' ? md.temperature : 0.7,
+          max_tokens: typeof md.maxTokens === 'number' ? md.maxTokens : 1_500,
+          webSearch: md.webSearch !== false,
           _userId: userId,
         };
 
@@ -370,8 +310,8 @@ export class ProviderManager {
         return {
           prompt: request.prompt,
           model: 'sonar-pro',
-          temperature: 0.7,
-          max_tokens: 1000,
+          temperature: typeof md.temperature === 'number' ? md.temperature : 0.7,
+          max_tokens: typeof md.maxTokens === 'number' ? md.maxTokens : 1_500,
           _userId: userId,
         };
 
@@ -387,7 +327,6 @@ export class ProviderManager {
           depth: 10,
           group_organic_results: true,
           load_async_ai_overview: true,
-          people_also_ask_click_depth: 4,
           _userId: userId,
         };
 
@@ -397,8 +336,8 @@ export class ProviderManager {
             parts: [{ text: request.prompt }]
           }],
           generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 1000,
+            temperature: typeof md.temperature === 'number' ? md.temperature : 0.7,
+            maxOutputTokens: typeof md.maxTokens === 'number' ? md.maxTokens : 1_500,
           },
           _userId: userId,
         };
@@ -406,56 +345,6 @@ export class ProviderManager {
       default:
         return { prompt: request.prompt, _userId: userId };
     }
-  }
-
-  private aggregateResults(results: APIResponse[]): any {
-    const successfulResults = results.filter(r => r.status === 'success');
-    
-    if (successfulResults.length === 0) {
-      return { error: 'All providers failed' };
-    }
-
-    // Simple aggregation - you can implement more sophisticated logic
-    return {
-      responses: successfulResults.map(r => ({
-        provider: r.providerId,
-        content: r.data?.content || '',
-        confidence: this.calculateConfidence(r),
-      })),
-      consensus: this.findConsensus(successfulResults),
-      averageResponseTime: results.reduce((sum, r) => sum + r.responseTime, 0) / results.length,
-    };
-  }
-
-  private calculateConfidence(response: APIResponse): number {
-    // Implement confidence scoring based on provider reliability, response time, etc.
-    const baseConfidence = 0.8;
-    const responseTimePenalty = Math.min(response.responseTime / 10000, 0.2); // Penalty for slow responses
-    return Math.max(0, baseConfidence - responseTimePenalty);
-  }
-
-  private findConsensus(results: APIResponse[]): string {
-    // Simple consensus - in production you'd use more sophisticated algorithms
-    if (results.length === 0) return '';
-    
-    // For now, return the first successful response
-    return results[0].data?.content || '';
-  }
-
-  // Get provider status
-  async getProviderStatus(): Promise<Record<string, boolean>> {
-    const status: Record<string, boolean> = {};
-    
-    const healthChecks = Array.from(this.providers.entries()).map(async ([name, provider]) => {
-      try {
-        status[name] = await provider.healthCheck();
-      } catch {
-        status[name] = false;
-      }
-    });
-
-    await Promise.allSettled(healthChecks);
-    return status;
   }
 
   // Get available providers

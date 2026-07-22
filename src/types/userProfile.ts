@@ -4,7 +4,7 @@ export interface UserProfile {
   displayName: string;
   photoURL?: string;
   credits: number;
-  createdAt: any;
-  lastLoginAt: any;
+  createdAt: string | null;
+  lastLoginAt: string | null;
   isNewUser?: boolean;
 }

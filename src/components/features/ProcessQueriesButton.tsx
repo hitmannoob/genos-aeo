@@ -11,6 +11,8 @@ import {
   type ReprocessingJob,
   type ReprocessingJobCompletionResult,
 } from '@/hooks/useReprocessingJob';
+import type { UserBrand } from '@/types/userBrand';
+import { USER_QUERY_CREDIT_COST } from '@/lib/billing/creditCosts';
 
 interface ProcessQueriesButtonProps {
   brandId?: string;
@@ -48,10 +50,10 @@ export default function ProcessQueriesButton({
   );
 
   const getScopedQueries = useCallback(
-    (brand: any) => {
+    (brand: UserBrand | undefined) => {
       const all = brand?.queries || [];
       if (!queriesFilter || queriesFilter.length === 0) return all;
-      return all.filter((q: any) =>
+      return all.filter((q) =>
         queriesFilter.includes(buildTrackedQueryIdentity(q)),
       );
     },
@@ -97,7 +99,7 @@ export default function ProcessQueriesButton({
       return;
     }
 
-    const required = queries.length * 10;
+    const required = queries.length * USER_QUERY_CREDIT_COST;
     const available = userProfile?.credits || 0;
     if (available < required) {
       setLocalError(`Insufficient credits. Need ${required}, have ${available}`);
@@ -142,7 +144,7 @@ export default function ProcessQueriesButton({
         buildTrackedQueryIdentity(result),
       ),
     );
-    return getScopedQueries(targetBrand).filter((q: any) =>
+    return getScopedQueries(targetBrand).filter((q) =>
       processedQueryIds.has(buildTrackedQueryIdentity(q)),
     ).length;
   };
@@ -150,7 +152,7 @@ export default function ProcessQueriesButton({
   const hasProcessedQueries =
     getProcessedQueriesCount() > 0 || !!targetBrand?.lastProcessedAt;
 
-  const requiredCredits = scopedQueries.length * 10;
+  const requiredCredits = scopedQueries.length * USER_QUERY_CREDIT_COST;
   const availableCredits = userProfile?.credits || 0;
   const hasEnoughCredits = availableCredits >= requiredCredits;
 

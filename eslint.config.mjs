@@ -9,7 +9,6 @@ export default [
       'build/**',
       'coverage/**',
       'eslint.config.mjs',
-      'src/__tests__/**',
     ],
   },
   ...nextTypescript,

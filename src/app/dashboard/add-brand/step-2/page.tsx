@@ -2,10 +2,26 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
-import { ArrowLeft, ArrowRight, Building2, Users, Tag, TrendingUp, ExternalLink, RefreshCw, Globe, Search, Sparkles, Brain, Target, BarChart3, Zap, DollarSign, MessageSquare, Edit3, Plus, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Building2, Tag, RefreshCw, Globe, Sparkles, Target, Edit3, Plus, X } from 'lucide-react';
 import WebLogo from '@/components/shared/WebLogo';
-import { CompanyInfo } from '@/lib/get-company-info';
-import { useAIQuery } from '@/hooks/useAIQuery';
+import { CompanyInfoSchema, type CompanyInfo } from '@/lib/get-company-info';
+import { normalizePublicDomain } from '@/lib/domainValidation';
+
+const MAX_EDITABLE_ITEMS = 20;
+
+function normalizeEditableList(items: string[], limit = MAX_EDITABLE_ITEMS): string[] {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const item of items) {
+    const value = item.trim();
+    const key = value.toLowerCase();
+    if (!value || value.length > 160 || seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(value);
+    if (normalized.length === limit) break;
+  }
+  return normalized;
+}
 
 export default function AddBrandStep2(): React.ReactElement {
   const router = useRouter();
@@ -27,112 +43,60 @@ export default function AddBrandStep2(): React.ReactElement {
   const [newKeyword, setNewKeyword] = useState('');
   const [newCompetitor, setNewCompetitor] = useState('');
   const [showAllProducts, setShowAllProducts] = useState(false);
+  const [validationError, setValidationError] = useState('');
   
-  const { queryState, executeQuery, clearQuery } = useAIQuery();
-
   useEffect(() => {
     // Get domain and company info data from sessionStorage
     const storedDomain = sessionStorage.getItem('brandDomain');
     const storedCompanyInfo = sessionStorage.getItem('companyInfo');
     
-    if (!storedDomain) {
+    if (!storedDomain || !storedCompanyInfo) {
       // If no domain found, redirect back to step 1
       router.push('/dashboard/add-brand/step-1');
       return;
     }
     
-    setDomain(storedDomain);
-    
-    if (storedCompanyInfo) {
-      try {
-        const parsedCompanyInfo = JSON.parse(storedCompanyInfo);
-        setCompanyData(parsedCompanyInfo);
-      } catch (error) {
-        console.error('Failed to parse company info data:', error);
-      }
+    try {
+      const normalizedDomain = normalizePublicDomain(storedDomain);
+      const parsedCompanyInfo = CompanyInfoSchema.safeParse(JSON.parse(storedCompanyInfo));
+      if (!parsedCompanyInfo.success) throw new Error('Invalid company information');
+      setDomain(normalizedDomain);
+      setCompanyData(parsedCompanyInfo.data);
+    } catch {
+      sessionStorage.removeItem('brandDomain');
+      sessionStorage.removeItem('companyInfo');
+      router.replace('/dashboard/add-brand/step-1');
+      return;
     }
     
     setLoading(false);
   }, [router]);
 
-  const generateInsights = async (type: 'competitive' | 'marketing' | 'insights') => {
-    if (!companyData || !domain) return;
-
-    const prompts = {
-      competitive: `Analyze the comprehensive competitive landscape for ${companyData.companyName} (${domain}). 
-      Company description: ${companyData.shortDescription}
-      Products/Services: ${companyData.productsAndServices?.join(', ')}
-      Known competitors: ${companyData.competitors?.join(', ') || 'None listed'}
-      
-      Instructions:
-      - Identify companies that offer the SAME or SIMILAR products/services as listed above
-      - Include both direct competitors (same target market) and indirect competitors (alternative solutions)
-      - Consider companies that solve the same customer problems with different approaches
-      - Look for businesses targeting the same customer segments or industries
-      
-      Provide:
-      1. DIRECT COMPETITORS: Companies offering identical/very similar products/services
-      2. INDIRECT COMPETITORS: Companies offering alternative solutions to the same customer problems
-      3. SERVICE-BASED COMPETITORS: If this company offers services, include other service providers in the same domain
-      4. PRODUCT-BASED COMPETITORS: If this company offers products, include companies with competing products
-      5. Competitive advantages and weaknesses analysis
-      6. Market positioning comparison
-      7. Differentiation opportunities
-      8. Market share insights (if available)
-      
-      Format as JSON with sections: directCompetitors, indirectCompetitors, serviceCompetitors, productCompetitors, advantages, weaknesses, positioning, opportunities`,
-      
-      marketing: `Create comprehensive marketing strategies for ${companyData.companyName} (${domain}).
-      Company description: ${companyData.shortDescription}
-      Products/Services: ${companyData.productsAndServices?.join(', ')}
-      Keywords: ${companyData.keywords?.join(', ')}
-      
-      Provide:
-      1. Target audience segments
-      2. Content marketing strategies
-      3. Social media recommendations
-      4. SEO optimization suggestions
-      5. Paid advertising strategies
-      6. Budget allocation recommendations
-      
-      Format as JSON with sections: audience, content, social, seo, advertising, budget`,
-      
-      insights: `Provide comprehensive business insights for ${companyData.companyName} (${domain}).
-      Company description: ${companyData.shortDescription}
-      Products/Services: ${companyData.productsAndServices?.join(', ')}
-      Keywords: ${companyData.keywords?.join(', ')}
-      
-      Provide:
-      1. Industry trends analysis
-      2. Growth opportunities
-      3. Revenue potential assessment
-      4. Technology stack recommendations
-      5. Partnership opportunities
-      6. Future market predictions
-      
-      Format as JSON with sections: trends, opportunities, revenue, technology, partnerships, predictions`
-    };
-
-    await executeQuery(
-      prompts[type],
-      ['chatgptsearch', 'google-gemini'],
-      'high'
-    );
-  };
-
   const handleReanalyze = () => {
     // Clear company data and go back to step 1 for re-analysis
     sessionStorage.removeItem('companyInfo');
-    clearQuery();
     router.push('/dashboard/add-brand/step-1');
   };
 
   const handleContinue = () => {
-    // Store AI insights for step 3 if available
-    if (queryState.result) {
-      sessionStorage.setItem('aiInsights', JSON.stringify(queryState.result));
+    if (!companyData || companyData.keywords.length === 0) {
+      setValidationError('Add at least one keyword before continuing so queries can be generated.');
+      return;
     }
+    setValidationError('');
     router.push('/dashboard/add-brand/step-3');
+  };
+
+  const persistCompanyData = (candidate: CompanyInfo): boolean => {
+    const parsed = CompanyInfoSchema.safeParse(candidate);
+    if (!parsed.success) {
+      setValidationError('The edited company information is invalid. Check item lengths and remove blank values.');
+      return false;
+    }
+    setValidationError('');
+    setCompanyData(parsed.data);
+    sessionStorage.setItem('companyInfo', JSON.stringify(parsed.data));
+    return true;
   };
 
   // Editing functions
@@ -143,9 +107,7 @@ export default function AddBrandStep2(): React.ReactElement {
 
   const saveDescription = () => {
     if (companyData) {
-      const updatedData = { ...companyData, shortDescription: tempDescription };
-      setCompanyData(updatedData);
-      sessionStorage.setItem('companyInfo', JSON.stringify(updatedData));
+      if (!persistCompanyData({ ...companyData, shortDescription: tempDescription.trim() })) return;
     }
     setEditingDescription(false);
   };
@@ -162,9 +124,10 @@ export default function AddBrandStep2(): React.ReactElement {
 
   const saveProducts = () => {
     if (companyData) {
-      const updatedData = { ...companyData, productsAndServices: tempProducts };
-      setCompanyData(updatedData);
-      sessionStorage.setItem('companyInfo', JSON.stringify(updatedData));
+      if (!persistCompanyData({
+        ...companyData,
+        productsAndServices: normalizeEditableList(tempProducts),
+      })) return;
     }
     setEditingProducts(false);
   };
@@ -175,7 +138,7 @@ export default function AddBrandStep2(): React.ReactElement {
   };
 
   const addProduct = () => {
-    setTempProducts([...tempProducts, '']);
+    if (tempProducts.length < MAX_EDITABLE_ITEMS) setTempProducts([...tempProducts, '']);
   };
 
   const updateProduct = (index: number, value: string) => {
@@ -197,15 +160,14 @@ export default function AddBrandStep2(): React.ReactElement {
     // Commit any pending input the user typed but didn't click + on yet —
     // otherwise hitting Save discards their typed value.
     const draft = newKeyword.trim();
-    const finalKeywords = (
-      draft && !tempKeywords.includes(draft) && tempKeywords.length < 10
+    const finalKeywords = normalizeEditableList(
+      draft && !tempKeywords.some((item) => item.toLowerCase() === draft.toLowerCase()) && tempKeywords.length < 10
         ? [...tempKeywords, draft]
-        : tempKeywords
+        : tempKeywords,
+      10
     );
     if (companyData) {
-      const updatedData = { ...companyData, keywords: finalKeywords };
-      setCompanyData(updatedData);
-      sessionStorage.setItem('companyInfo', JSON.stringify(updatedData));
+      if (!persistCompanyData({ ...companyData, keywords: finalKeywords })) return;
     }
     setNewKeyword('');
     setEditingKeywords(false);
@@ -218,7 +180,7 @@ export default function AddBrandStep2(): React.ReactElement {
   };
 
   const addKeyword = () => {
-    if (newKeyword.trim() && !tempKeywords.includes(newKeyword.trim()) && tempKeywords.length < 10) {
+    if (newKeyword.trim() && !tempKeywords.some((item) => item.toLowerCase() === newKeyword.trim().toLowerCase()) && tempKeywords.length < 10) {
       setTempKeywords([...tempKeywords, newKeyword.trim()]);
       setNewKeyword('');
     }
@@ -235,15 +197,14 @@ export default function AddBrandStep2(): React.ReactElement {
 
   const saveCompetitors = () => {
     const draft = newCompetitor.trim();
-    const finalCompetitors = (
-      draft && !tempCompetitors.includes(draft) && tempCompetitors.length < 10
+    const finalCompetitors = normalizeEditableList(
+      draft && !tempCompetitors.some((item) => item.toLowerCase() === draft.toLowerCase()) && tempCompetitors.length < 10
         ? [...tempCompetitors, draft]
-        : tempCompetitors
+        : tempCompetitors,
+      10
     );
     if (companyData) {
-      const updatedData = { ...companyData, competitors: finalCompetitors };
-      setCompanyData(updatedData);
-      sessionStorage.setItem('companyInfo', JSON.stringify(updatedData));
+      if (!persistCompanyData({ ...companyData, competitors: finalCompetitors })) return;
     }
     setNewCompetitor('');
     setEditingCompetitors(false);
@@ -256,7 +217,7 @@ export default function AddBrandStep2(): React.ReactElement {
   };
 
   const addCompetitor = () => {
-    if (newCompetitor.trim() && !tempCompetitors.includes(newCompetitor.trim()) && tempCompetitors.length < 10) {
+    if (newCompetitor.trim() && !tempCompetitors.some((item) => item.toLowerCase() === newCompetitor.trim().toLowerCase()) && tempCompetitors.length < 10) {
       setTempCompetitors([...tempCompetitors, newCompetitor.trim()]);
       setNewCompetitor('');
     }
@@ -264,163 +225,6 @@ export default function AddBrandStep2(): React.ReactElement {
 
   const removeCompetitor = (index: number) => {
     setTempCompetitors(tempCompetitors.filter((_, i) => i !== index));
-  };
-
-  const renderAIInsights = () => {
-    if (queryState.loading) {
-      return (
-        <div className="bg-card border border-border rounded-xl p-8">
-          <div className="flex items-center justify-center space-x-3">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-            <p className="text-lg text-muted-foreground">Generating AI insights...</p>
-          </div>
-        </div>
-      );
-    }
-
-    if (queryState.error) {
-      return (
-        <div className="bg-card border border-border rounded-xl p-8">
-          <div className="text-center">
-            <p className="text-red-500 mb-4">Error generating insights: {queryState.error}</p>
-            <button
-              onClick={() => generateInsights('insights')}
-              className="bg-primary text-foreground px-4 py-2 rounded-lg hover:bg-primary/90 transition-colors"
-            >
-              Retry
-            </button>
-          </div>
-        </div>
-      );
-    }
-
-    if (!queryState.result) {
-      return (
-        <div className="bg-card border border-border rounded-xl p-8">
-          <div className="text-center">
-            <Brain className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-foreground mb-4">AI-Powered Business Insights</h3>
-            <p className="text-muted-foreground mb-6">
-              Get comprehensive analysis including competitive landscape, marketing strategies, and growth opportunities.
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-              <button
-                onClick={() => generateInsights('insights')}
-                className="bg-primary text-foreground p-4 rounded-lg hover:bg-primary/90 transition-colors flex flex-col items-center space-y-2"
-              >
-                <TrendingUp className="h-6 w-6" />
-                <span>Business Insights</span>
-              </button>
-              <button
-                onClick={() => generateInsights('competitive')}
-                className="bg-primary text-primary-foreground p-4 rounded-lg hover:bg-primary/90 transition-colors flex flex-col items-center space-y-2"
-              >
-                <BarChart3 className="h-6 w-6" />
-                <span>Competitive Analysis</span>
-              </button>
-              <button
-                onClick={() => generateInsights('marketing')}
-                className="bg-success text-foreground p-4 rounded-lg hover:bg-success/90 transition-colors flex flex-col items-center space-y-2"
-              >
-                <Target className="h-6 w-6" />
-                <span>Marketing Strategy</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    // Display AI results
-    const aiData = queryState.result.data;
-    const providersUsed = queryState.result.debug?.providersExecuted || [];
-    
-    try {
-      const parsedData = typeof aiData === 'string' ? JSON.parse(aiData) : aiData;
-      
-      return (
-        <div className="space-y-6">
-          {/* AI Results Header */}
-          <div className="bg-accent/30 border border-border rounded-xl p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center space-x-3">
-                <Brain className="h-6 w-6 text-primary" />
-                <h3 className="text-lg font-semibold text-foreground">AI Analysis Results</h3>
-              </div>
-              <div className="flex items-center space-x-2 text-sm text-muted-foreground">
-                <Zap className="h-4 w-4" />
-                <span>Powered by {providersUsed.join(', ')}</span>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="text-center">
-                <div className="text-lg font-semibold text-foreground">{queryState.result.results.length}</div>
-                <div className="text-sm text-muted-foreground">AI Providers</div>
-              </div>
-              <div className="text-center">
-                <div className="text-lg font-semibold text-foreground">${queryState.result.totalCost.toFixed(4)}</div>
-                <div className="text-sm text-muted-foreground">Total Cost</div>
-              </div>
-              <div className="text-center">
-                <div className="text-lg font-semibold text-foreground">
-                  {Math.round((Date.now() - new Date(queryState.result.completedAt).getTime()) / 1000)}s
-                </div>
-                <div className="text-sm text-muted-foreground">Response Time</div>
-              </div>
-              <div className="text-center">
-                <div className="text-lg font-semibold text-success">✓</div>
-                <div className="text-sm text-muted-foreground">Analysis Complete</div>
-              </div>
-            </div>
-          </div>
-
-          {/* Display parsed AI insights */}
-          {parsedData && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {Object.entries(parsedData).map(([key, value]) => (
-                <div key={key} className="bg-card border border-border rounded-xl p-6">
-                  <h4 className="text-foreground font-semibold mb-4 capitalize">
-                    {key.replace(/([A-Z])/g, ' $1').trim()}
-                  </h4>
-                  <div className="text-sm text-muted-foreground">
-                    {Array.isArray(value) ? (
-                      <ul className="space-y-1">
-                        {value.map((item, index) => (
-                          <li key={index}>• {typeof item === 'object' ? JSON.stringify(item) : String(item)}</li>
-                        ))}
-                      </ul>
-                    ) : typeof value === 'object' ? (
-                      <pre className="whitespace-pre-wrap text-xs">{JSON.stringify(value, null, 2)}</pre>
-                    ) : (
-                      <p>{String(value)}</p>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Raw AI Response (Debug) */}
-          <details className="bg-muted/30 border border-border rounded-xl p-4">
-            <summary className="cursor-pointer text-sm font-medium text-muted-foreground">
-              View Raw AI Response (Debug)
-            </summary>
-            <pre className="mt-4 text-xs text-muted-foreground whitespace-pre-wrap">
-              {JSON.stringify(queryState.result, null, 2)}
-            </pre>
-          </details>
-        </div>
-      );
-    } catch (error) {
-      return (
-        <div className="bg-card border border-border rounded-xl p-6">
-          <p className="text-yellow-600 mb-4">Raw AI Response (parsing failed):</p>
-          <pre className="text-xs text-muted-foreground whitespace-pre-wrap">
-            {JSON.stringify(aiData, null, 2)}
-          </pre>
-        </div>
-      );
-    }
   };
 
   if (loading) {
@@ -437,13 +241,13 @@ export default function AddBrandStep2(): React.ReactElement {
       <div className="flex justify-center pt-8 pb-6">
         <div className="flex flex-col items-center space-y-2">
           {/* Genos Logo */}
-          <div className="relative w-48 h-12">
+          <div className="relative w-48 h-[53px]">
             <Image
-              src="/logo_no_background.png"
+              src="/genos-wordmark.png"
               alt="Genos Logo"
-              width={192}
-              height={48}
-              className="w-full h-auto"
+              width={512}
+              height={141}
+              className="h-auto w-48"
               priority
             />
           </div>
@@ -534,6 +338,7 @@ export default function AddBrandStep2(): React.ReactElement {
                               onChange={(e) => setTempDescription(e.target.value)}
                               className="w-full p-3 border border-border rounded-lg bg-background text-foreground resize-none"
                               rows={3}
+                              maxLength={2000}
                               placeholder="Enter company description..."
                             />
                             <div className="flex space-x-2">
@@ -608,7 +413,7 @@ export default function AddBrandStep2(): React.ReactElement {
                                   type="text"
                                   value={product}
                                   onChange={(e) => updateProduct(index, e.target.value)}
-                                  maxLength={50}
+                                  maxLength={160}
                                   className="flex-1 p-2 border border-border rounded-lg bg-background text-foreground text-sm"
                                   placeholder="Enter product or service..."
                                 />
@@ -622,6 +427,7 @@ export default function AddBrandStep2(): React.ReactElement {
                             ))}
                             <button
                               onClick={addProduct}
+                              disabled={tempProducts.length >= MAX_EDITABLE_ITEMS}
                               className="flex items-center space-x-1 text-primary hover:text-primary/80 transition-colors text-sm"
                             >
                               <Plus className="h-4 w-4" />
@@ -722,7 +528,7 @@ export default function AddBrandStep2(): React.ReactElement {
                                   }
                                 }}
                                 disabled={tempKeywords.length >= 10}
-                                maxLength={50}
+                                maxLength={160}
                                 className="flex-1 p-2 border border-border rounded-lg bg-background text-foreground text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                                 placeholder={tempKeywords.length >= 10 ? "Maximum 10 keywords reached" : "Add keyword..."}
                               />
@@ -820,7 +626,7 @@ export default function AddBrandStep2(): React.ReactElement {
                                   }
                                 }}
                                 disabled={tempCompetitors.length >= 10}
-                                maxLength={50}
+                                maxLength={160}
                                 className="flex-1 p-2 border border-border rounded-lg bg-background text-foreground text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                                 placeholder={tempCompetitors.length >= 10 ? "Maximum 10 competitors reached" : "Add competitor..."}
                               />
@@ -875,6 +681,12 @@ export default function AddBrandStep2(): React.ReactElement {
 
 
                   </div>
+
+                {validationError && (
+                  <div className="mt-6 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive" role="alert">
+                    {validationError}
+                  </div>
+                )}
 
                 {/* Navigation Buttons */}
                 <div className="flex justify-between pt-6">

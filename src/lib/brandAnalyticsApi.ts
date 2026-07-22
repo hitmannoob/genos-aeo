@@ -6,11 +6,15 @@ import type {
   LifetimeBrandAnalytics,
 } from '@/lib/analytics/brandAnalytics';
 import type { RecommendationData } from '@/lib/recommendation-types';
+import type { CompetitorAnalyticsData } from '@/utils/competitor-analytics';
 
 export interface BrandAnalyticsBundleResponse {
   latestAnalytics: BrandAnalyticsData | null;
   lifetimeAnalytics: LifetimeBrandAnalytics | null;
-  competitorAnalytics: any | null;
+  competitorAnalytics: {
+    current: CompetitorAnalyticsData;
+    previous: CompetitorAnalyticsData | null;
+  } | null;
   recommendations: RecommendationData[];
 }
 

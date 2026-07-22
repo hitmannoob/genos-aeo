@@ -3,7 +3,7 @@ import { useBrandContext } from '@/context/BrandContext';
 import { useBrandAnalyticsBundle } from './useBrandAnalytics';
 import type { CompetitorAnalyticsData } from '@/utils/competitor-analytics';
 
-interface CompetitorData {
+export interface CompetitorData {
   id: string;
   name: string;
   domain?: string;

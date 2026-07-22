@@ -10,14 +10,19 @@ interface DashboardLayoutProps {
 
 export default function DashboardLayout({ children }: DashboardLayoutProps): React.ReactElement {
   const { user, userProfile, loading } = useAuthContext();
-  const { brands, loading: brandsLoading } = useBrandContext();
+  const {
+    brands,
+    loading: brandsLoading,
+    error: brandsError,
+    refetchBrands,
+  } = useBrandContext();
   const router = useRouter();
   const pathname = usePathname();
 
   useEffect(() => {
     // Only redirect if not loading and user is null
     if (!loading && user == null) {
-      router.push("/signin");
+      router.replace('/signin');
     }
   }, [user, loading, router]);
 
@@ -32,13 +37,13 @@ export default function DashboardLayout({ children }: DashboardLayoutProps): Rea
       userProfile &&
       !loading &&
       !brandsLoading &&
+      !brandsError &&
       brands.length === 0 &&
       !pathname.startsWith('/dashboard/add-brand')
     ) {
-      console.log('🎯 Redirecting user with no brands to add-brand flow');
       router.push('/dashboard/add-brand/step-1');
     }
-  }, [user, userProfile, loading, brandsLoading, brands.length, pathname, router]);
+  }, [user, userProfile, loading, brandsLoading, brandsError, brands.length, pathname, router]);
 
   // Show loading while auth state is being determined
   if (loading) {
@@ -58,6 +63,28 @@ export default function DashboardLayout({ children }: DashboardLayoutProps): Rea
     );
   }
 
+  if (
+    brandsError &&
+    brands.length === 0 &&
+    !pathname.startsWith('/dashboard/add-brand')
+  ) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+        <div className="max-w-md space-y-4 text-center">
+          <h2 className="text-xl font-semibold text-foreground">We couldn&apos;t load your brands</h2>
+          <p className="text-sm text-muted-foreground">{brandsError}</p>
+          <button
+            type="button"
+            onClick={() => void refetchBrands().catch(() => undefined)}
+            className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // If user is authenticated, render the children
   return <>{children}</>;
-} 
+}

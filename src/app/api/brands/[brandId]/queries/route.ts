@@ -4,8 +4,23 @@ import {
   addKeywordToBrandSql,
   addQueryToBrandSql,
 } from '@/lib/db/brands';
+import { z } from 'zod';
+import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
+
+const mutationSchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('addKeyword'),
+    keyword: z.string().trim().min(1).max(160),
+  }).strict(),
+  z.object({
+    action: z.literal('addQuery'),
+    query: z.string().trim().min(4).max(500),
+    keyword: z.string().trim().min(1).max(160),
+    category: z.enum(['Awareness', 'Interest', 'Consideration', 'Purchase']),
+  }).strict(),
+]);
 
 export async function POST(
   request: NextRequest,
@@ -19,38 +34,60 @@ export async function POST(
   const { brandId } = await context.params;
 
   try {
-    const body = await request.json();
-    const { action } = body || {};
+    const body = await request.json().catch(() => null);
+    const parsedBody = mutationSchema.safeParse(body);
+    if (!parsedBody.success) {
+      return NextResponse.json({ error: 'Invalid query mutation request' }, { status: 400 });
+    }
+    const mutation = parsedBody.data;
 
-    if (action === 'addKeyword') {
-      await addKeywordToBrandSql(brandId, authResult.uid, body.keyword || '');
+    if (mutation.action === 'addKeyword') {
+      await addKeywordToBrandSql(brandId, authResult.uid, mutation.keyword);
       return NextResponse.json({ success: true });
     }
 
-    if (action === 'addQuery') {
+    if (mutation.action === 'addQuery') {
       await addQueryToBrandSql({
         brandId,
         firebaseUid: authResult.uid,
-        rawQuery: body.query || '',
-        category: body.category || '',
-        keyword: body.keyword || '',
+        rawQuery: mutation.query,
+        category: mutation.category,
+        keyword: mutation.keyword,
       });
       return NextResponse.json({ success: true });
     }
-
-    return NextResponse.json({
-      error: 'Unsupported action',
-    }, { status: 400 });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     const status =
       message === 'Unauthorized' ? 403 :
       message === 'Brand not found' ? 404 :
-      400;
+      message === 'Query already exists' ? 409 :
+      message === 'Topic is empty' ||
+      message === 'Query is empty' ||
+      message === 'Topic is required' ||
+      message === 'Invalid query category' ||
+      message === 'A brand can have at most 20 topics' ||
+      message === 'A brand can have at most 100 queries' ? 400 :
+      500;
 
-    console.error(`❌ /api/brands/${brandId}/queries failed:`, error);
+    const safeValidationMessages = new Set([
+      'Topic is empty',
+      'Query is empty',
+      'Query already exists',
+      'Topic is required',
+      'Invalid query category',
+      'A brand can have at most 20 topics',
+      'A brand can have at most 100 queries',
+    ]);
+    if (!safeValidationMessages.has(message) && status === 500) {
+      logger.error('Failed to update brand queries', error);
+    }
     return NextResponse.json({
-      error: message,
+      error: safeValidationMessages.has(message)
+        ? message
+        : status === 404
+          ? 'Brand not found'
+          : 'Failed to update brand queries',
     }, { status });
   }
 }

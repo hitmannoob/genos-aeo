@@ -29,7 +29,6 @@ export function extractGoogleAIOverviewCitations(text: string, googleAIData?: an
   const malformedSourcePattern = /\(source=([^"]+)"\s+target="_blank"[^>]*>([^)]+)\)/g;
   let match;
   while ((match = malformedSourcePattern.exec(text || '')) !== null) {
-    const source = match[1];
     const domain = match[2];
     if (domain && domain.trim()) {
       const url = domain.startsWith('http') ? domain : `https://${domain}`;
@@ -62,7 +61,7 @@ export function extractGoogleAIOverviewCitations(text: string, googleAIData?: an
           try {
             const urlObj = new URL(url);
             displayText = urlObj.hostname.replace('www.', '');
-          } catch (e) {
+          } catch {
             displayText = url;
           }
           citations.push({ text: `Citation ${citationNumber}: ${displayText}`, url: url.trim(), source: 'Google AI Overview' });
@@ -107,7 +106,7 @@ export function extractGoogleAIOverviewCitations(text: string, googleAIData?: an
           try {
             const urlObj = new URL(cleanUrl);
             displayText = urlObj.hostname.replace('www.', '');
-          } catch (e) {
+          } catch {
             displayText = cleanUrl;
           }
           citations.push({ text: displayText, url: cleanUrl.trim(), source: 'Google AI Overview' });

@@ -2,10 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ProviderManager } from '@/lib/api-providers/provider-manager';
 import { APIRequest } from '@/lib/api-providers/types';
 import { getDomainMetadata } from '@/lib/domain-metadata';
-import {
-  CompanyInfoInputSchema,
-  type CompanyInfo,
-} from '@/lib/get-company-info';
+import { CompanyInfoInputSchema, type CompanyInfo } from '@/lib/get-company-info';
 import { authenticateApiRequest } from '@/lib/serverAuth';
 import {
   DomainValidationError,
@@ -14,96 +11,45 @@ import {
 import {
   COMPANY_INFO_CREDIT_COST,
   deductUserCreditsServer,
-  requireSufficientCreditsServer,
+  refundUserCreditsServer,
 } from '@/lib/billing/serverCredits';
 import { consumeRateLimit } from '@/lib/rateLimit/rateLimit';
-
-function generateCompanyInfoPrompt(domain: string, websiteData?: { title?: string; description?: string; siteName?: string }): string {
-  const hasWebsiteData = websiteData && (websiteData.title || websiteData.description);
-  
-  const contextSection = hasWebsiteData ? `
-
-Website Data Retrieved:
-- Title: ${websiteData.title || 'Not available'}
-- Meta Description: ${websiteData.description || 'Not available'}
-- Site Name: ${websiteData.siteName || 'Not available'}
-
-Use this actual website data as your PRIMARY source of information.` : '';
-
-  return `You are an AI assistant tasked with extracting structured company information from a given domain.
-
-Input:  
-Domain: ${domain}${contextSection}
-
-Your Objective:  
-${hasWebsiteData 
-  ? 'Using the provided website data as your primary source, extract and structure the company information. Enhance this data with additional context if needed, but prioritize the actual website content provided above.'
-  : 'Research the domain and relevant pages (e.g., homepage, /products, /services) and return the following structured information based only on verifiable evidence from the website or top-ranked search results. Avoid assumptions.'
-}
-
-Output Structure:
-You MUST return a valid JSON object with all of the following fields. If you cannot find information for a specific field, return an empty string "" for text fields or an empty array [] for list fields. DO NOT omit any fields.
-
-{
-  "companyName": "Identify the official brand or company name",
-  "shortDescription": "A concise 2 to 3 sentence summary describing what the company does",
-  "productsAndServices": ["A", "bullet-point", "list", "of", "main", "products", "services", "features", "or", "offerings"],
-  "keywords": ["4", "to", "5", "relevant", "keywords", "or", "phrases"],
-  "competitors": ["3", "to", "5", "main", "competitor", "companies", "or", "brands"]
-}
-
-Instructions:
-- Prioritize clarity, conciseness, and factual accuracy.
-- ${hasWebsiteData ? 'Use the provided website data as your primary source and enhance it with logical inferences.' : 'Use top search results and the company\'s own site to gather data.'}
-- For competitors: Identify companies that offer the SAME or SIMILAR products/services as listed. Include both direct competitors (same target market) and companies that provide alternative solutions to the same customer problems.
-- Consider businesses that target the same customer segments, industries, or solve similar pain points.
-- Do NOT infer or speculate beyond what is clearly stated in the source content.
-- Return ONLY the JSON object, no additional text or formatting.
-- Ensure the JSON is valid and properly formatted.`;
-}
-
-function parseAIResponse(response: string, domain: string): CompanyInfo {
-  try {
-    // Clean the response to extract JSON
-    let cleanedResponse = response.trim();
-    
-    // Remove markdown code blocks if present
-    if (cleanedResponse.startsWith('```json')) {
-      cleanedResponse = cleanedResponse.replace(/^```json\s*/, '').replace(/\s*```$/, '');
-    } else if (cleanedResponse.startsWith('```')) {
-      cleanedResponse = cleanedResponse.replace(/^```\s*/, '').replace(/\s*```$/, '');
-    }
-    
-    const parsed = JSON.parse(cleanedResponse);
-    
-    // Validate and structure the response
-    const result: CompanyInfo = {
-      companyName: parsed.companyName || domain.split('.')[0].charAt(0).toUpperCase() + domain.split('.')[0].slice(1),
-      shortDescription: parsed.shortDescription || `A company operating at ${domain}`,
-      productsAndServices: Array.isArray(parsed.productsAndServices) ? parsed.productsAndServices : [],
-      keywords: Array.isArray(parsed.keywords) ? parsed.keywords : [],
-      competitors: Array.isArray(parsed.competitors) ? parsed.competitors : [],
-      website: `https://www.${domain}`,
-    };
-    
-    return result;
-  } catch (error) {
-    console.error('Error parsing AI response:', error);
-    console.error('Raw response:', response);
-    
-    // Return fallback structure if parsing fails
-    return {
-      companyName: domain.split('.')[0].charAt(0).toUpperCase() + domain.split('.')[0].slice(1),
-      shortDescription: `A company operating at ${domain}. Unable to fetch detailed information.`,
-      productsAndServices: [],
-      keywords: [],
-      competitors: [],
-      website: `https://www.${domain}`,
-    };
-  }
-}
+import {
+  acquireQueryExecution,
+  completeQueryExecution,
+  failQueryExecution,
+} from '@/lib/db/queryExecution';
+import { buildCompanyInfoPrompt, parseCompanyInfoResponse } from '@/lib/prompts/companyInfo';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
+  let executionIdentity: { userId: string; clientRequestId: string } | null = null;
+  let creditReservation: {
+    userId: string;
+    domain: string;
+    clientRequestId: string;
+    executionRequestId: string;
+  } | null = null;
+  let userCredits: Awaited<ReturnType<typeof deductUserCreditsServer>> | null = null;
+
+  const refundReservation = async (failureReason: string): Promise<boolean> => {
+    if (!creditReservation) return true;
+    const reservation = creditReservation;
+    try {
+      await refundUserCreditsServer(reservation.userId, COMPANY_INFO_CREDIT_COST, {
+        idempotencyKey: `companyinfo:${reservation.userId}:${reservation.domain}:${reservation.clientRequestId}:refund`,
+        reason: 'company info failure refund',
+        executionRequestId: reservation.executionRequestId,
+        metadata: { domain: reservation.domain, failureReason },
+      });
+      creditReservation = null;
+      return true;
+    } catch (refundError) {
+      logger.error('Failed to refund company-info credit reservation', refundError);
+      return false;
+    }
+  };
+
   try {
     const authResult = await authenticateApiRequest(request);
     if (!authResult) {
@@ -123,6 +69,53 @@ export async function POST(request: NextRequest) {
     }
 
     const domain = normalizePublicDomain(parsedInput.data.domain);
+    const clientRequestId = parsedInput.data.clientRequestId;
+
+    const execution = await acquireQueryExecution<Record<string, unknown>>({
+      userId: authResult.uid,
+      clientRequestId,
+      requestFingerprintSource: {
+        query: domain,
+        keyword: 'company-info',
+      },
+    });
+    if (execution.status === 'replay') {
+      return NextResponse.json(execution.response);
+    }
+    if (execution.status === 'in_progress') {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'This company lookup is already in progress.',
+          code: 'REQUEST_IN_PROGRESS',
+          retryAfterSeconds: execution.retryAfterSeconds,
+        },
+        { status: 409, headers: { 'Retry-After': String(execution.retryAfterSeconds) } }
+      );
+    }
+    if (execution.status === 'conflict' || execution.status === 'previous_failure') {
+      return NextResponse.json(
+        {
+          success: false,
+          error: execution.status === 'conflict'
+            ? execution.message
+            : 'This request previously failed. Retry with a new clientRequestId.',
+          code: 'REQUEST_ID_CONFLICT',
+        },
+        { status: 409 }
+      );
+    }
+    executionIdentity = { userId: authResult.uid, clientRequestId };
+
+    const failExecution = async (code: string, message: string, httpStatus: number) => {
+      await failQueryExecution({
+        ...executionIdentity!,
+        code,
+        message,
+        httpStatus,
+      });
+      executionIdentity = null;
+    };
 
     const rateLimit = await consumeRateLimit({
       bucketId: `endpoint:/api/get-company-info:user:${authResult.uid}`,
@@ -130,6 +123,7 @@ export async function POST(request: NextRequest) {
       windowMs: 60_000,
     });
     if (!rateLimit.allowed) {
+      await failExecution('RATE_LIMITED', 'Too many company-info requests.', 429);
       return NextResponse.json(
         {
           success: false,
@@ -146,106 +140,132 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    try {
-      await requireSufficientCreditsServer(authResult.uid, COMPANY_INFO_CREDIT_COST);
-    } catch {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Insufficient credits',
-          code: 'INSUFFICIENT_CREDITS',
-          requiredCredits: COMPANY_INFO_CREDIT_COST,
-        },
-        { status: 402 }
-      );
-    }
-    
-    console.log('🚀 Starting company info fetch for domain:', domain);
-    
     // Step 1: Fetch actual website metadata first
-    console.log('📄 Fetching website metadata...');
     let websiteMetadata = null;
     try {
       websiteMetadata = await getDomainMetadata({ domain });
-      console.log('✅ Website metadata fetched:', {
-        title: websiteMetadata.title,
-        description: websiteMetadata.description?.substring(0, 100) + '...',
-        siteName: websiteMetadata.siteName
-      });
     } catch (error) {
-      console.warn('⚠️ Could not fetch website metadata, proceeding without it:', error);
+      if (error instanceof DomainValidationError) throw error;
     }
     
     // Step 2: Generate enhanced prompt with website data
-    const prompt = generateCompanyInfoPrompt(domain, websiteMetadata || undefined);
+    const prompt = buildCompanyInfoPrompt(domain, websiteMetadata || undefined);
     
     // Initialize provider manager
     const providerManager = new ProviderManager();
     
+    const preferredProviders = [
+      'chatgptsearch',
+      'perplexity',
+      ...(websiteMetadata ? ['google-gemini'] : []),
+    ];
+    const availableProviders = new Set(providerManager.getAvailableProviders());
+    const providers = preferredProviders.filter((provider) => availableProviders.has(provider));
+    if (providers.length === 0) {
+      await failExecution('NO_PROVIDERS_CONFIGURED', 'No company-research provider is configured', 503);
+      return NextResponse.json(
+        { success: false, error: 'No company-research provider is configured', code: 'NO_PROVIDERS_CONFIGURED' },
+        { status: 503 }
+      );
+    }
+
+    try {
+      userCredits = await deductUserCreditsServer(authResult.uid, COMPANY_INFO_CREDIT_COST, {
+        idempotencyKey: `companyinfo:${authResult.uid}:${domain}:${clientRequestId}:debit`,
+        reason: 'company info credit reservation',
+        executionRequestId: execution.docId,
+        metadata: { domain },
+      });
+      creditReservation = {
+        userId: authResult.uid,
+        domain,
+        clientRequestId,
+        executionRequestId: execution.docId,
+      };
+    } catch (creditError) {
+      const insufficient = creditError instanceof Error && creditError.message === 'INSUFFICIENT_CREDITS';
+      const code = insufficient ? 'INSUFFICIENT_CREDITS' : 'CREDIT_DEDUCTION_FAILED';
+      const message = insufficient ? 'Insufficient credits' : 'Failed to reserve credits';
+      await failExecution(code, message, insufficient ? 402 : 500);
+      return NextResponse.json({
+        success: false,
+        error: message,
+        code,
+        ...(insufficient && { requiredCredits: COMPANY_INFO_CREDIT_COST }),
+      }, { status: insufficient ? 402 : 500 });
+    }
+
     const apiRequest: APIRequest = {
-      id: `company-info-${Date.now()}`,
+      id: clientRequestId,
       prompt: prompt,
-      providers: ['chatgptsearch', 'google-gemini'],
+      providers,
       priority: 'medium',
       userId: authResult.uid,
       createdAt: new Date(),
       metadata: {
         domain: domain,
         type: 'company-info',
+        temperature: 0.2,
+        maxTokens: 2_500,
       }
     };
 
-    console.log('🔄 Executing request with providers:', apiRequest.providers);
-    
     // Execute the request
     const result = await providerManager.executeRequest(apiRequest);
-    
-    console.log('📊 Provider results:', {
-      totalResults: result.results.length,
-      successfulResults: result.results.filter(r => r.status === 'success').length,
-      totalCost: result.totalCost
-    });
 
-    // Try to get successful response in priority order
+    // Try successful providers in priority order, but only accept output that
+    // satisfies the public company-info contract.
     const successfulResults = result.results.filter(r => r.status === 'success');
     
     if (successfulResults.length === 0) {
-      console.error('❌ All providers failed');
-      throw new Error('All AI providers failed to analyze the domain');
+      const refundApplied = await refundReservation('all providers failed');
+      const code = refundApplied ? 'ALL_PROVIDERS_FAILED' : 'ALL_PROVIDERS_FAILED_REFUND_FAILED';
+      await failExecution(code, 'All AI providers failed to analyze the domain.', refundApplied ? 502 : 500);
+      return NextResponse.json(
+        {
+          success: false,
+          error: refundApplied
+            ? 'All AI providers failed to analyze the domain. Reserved credits were refunded.'
+            : 'All AI providers failed and the automatic credit refund also failed.',
+          code,
+          refundApplied,
+        },
+        { status: refundApplied ? 502 : 500 }
+      );
     }
 
-    // Use the first successful result (Azure AD has priority)
-    const primaryResult = successfulResults[0];
-    console.log('✅ Using result from provider:', primaryResult.providerId);
-    
-    if (!primaryResult.data?.content) {
-      throw new Error('No content received from AI provider');
+    const website = websiteMetadata?.url || `https://${domain}`;
+    let selected: { result: (typeof successfulResults)[number]; companyInfo: CompanyInfo } | null = null;
+    for (const providerResult of successfulResults) {
+      if (typeof providerResult.data?.content !== 'string') continue;
+      const companyInfo = parseCompanyInfoResponse(providerResult.data.content, website);
+      if (companyInfo) {
+        selected = { result: providerResult, companyInfo };
+        break;
+      }
     }
 
-    // Parse the AI response
-    const companyInfo = parseAIResponse(primaryResult.data.content, domain);
-    // Without a stable idempotency key a retried request gets charged twice.
-    // Prefer the client-supplied request id; fall back to a per-user/domain hour
-    // bucket so tight retries still dedupe even when the client omits the id.
-    const requestKey = parsedInput.data.clientRequestId
-      ?? `${domain}:hour:${Math.floor(Date.now() / 3_600_000)}`;
-    const userCredits = await deductUserCreditsServer(authResult.uid, COMPANY_INFO_CREDIT_COST, {
-      idempotencyKey: `companyinfo:${authResult.uid}:${requestKey}`,
-      reason: 'company info lookup',
-      metadata: {
-        domain,
-        provider: primaryResult.providerId,
-      },
-    });
+    if (!selected) {
+      const refundApplied = await refundReservation('invalid provider response');
+      const code = refundApplied ? 'INVALID_PROVIDER_RESPONSE' : 'INVALID_PROVIDER_RESPONSE_REFUND_FAILED';
+      await failExecution(code, 'AI providers returned invalid company information.', refundApplied ? 502 : 500);
+      return NextResponse.json(
+        {
+          success: false,
+          error: refundApplied
+            ? 'AI providers returned invalid company information. Reserved credits were refunded.'
+            : 'AI providers returned invalid data and the automatic credit refund also failed.',
+          code,
+          refundApplied,
+        },
+        { status: refundApplied ? 502 : 500 }
+      );
+    }
+
+    const primaryResult = selected.result;
+    const companyInfo = selected.companyInfo;
     
-    console.log('✅ Company info extracted:', {
-      companyName: companyInfo.companyName,
-      description: companyInfo.shortDescription?.substring(0, 100) + '...',
-      productsCount: companyInfo.productsAndServices?.length || 0,
-      keywordsCount: companyInfo.keywords?.length || 0,
-    });
-    
-    return NextResponse.json({
+    const responsePayload = {
       success: true,
       data: companyInfo,
       metadata: {
@@ -253,7 +273,8 @@ export async function POST(request: NextRequest) {
         source: primaryResult.providerId,
         responseTime: primaryResult.responseTime,
         cost: primaryResult.cost,
-        userCredits,
+        totalProviderCost: result.totalCost,
+        userCredits: userCredits!,
         websiteMetadata: websiteMetadata ? {
           title: websiteMetadata.title,
           description: websiteMetadata.description,
@@ -266,9 +287,28 @@ export async function POST(request: NextRequest) {
           responseTime: r.responseTime
         }))
       }
+    };
+    await completeQueryExecution({
+      userId: authResult.uid,
+      clientRequestId,
+      replayResponse: responsePayload,
     });
+    creditReservation = null;
+    executionIdentity = null;
+    return NextResponse.json(responsePayload);
 
   } catch (error) {
+    const refundApplied = creditReservation
+      ? await refundReservation('unhandled company-info error')
+      : false;
+    if (executionIdentity) {
+      await failQueryExecution({
+        ...executionIdentity,
+        code: 'COMPANY_INFO_FAILED',
+        message: error instanceof DomainValidationError ? error.message : 'Company info lookup failed',
+        httpStatus: error instanceof DomainValidationError ? 400 : 500,
+      }).catch(() => undefined);
+    }
     if (error instanceof DomainValidationError) {
       return NextResponse.json(
         {
@@ -279,12 +319,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.error('❌ Company info API error:', error);
+    logger.error('Company info API error', error);
     
     return NextResponse.json(
       { 
         success: false, 
-        error: error instanceof Error ? error.message : 'Internal server error' 
+        error: 'Internal server error',
+        code: 'INTERNAL_ERROR',
+        refundApplied,
       },
       { status: 500 }
     );

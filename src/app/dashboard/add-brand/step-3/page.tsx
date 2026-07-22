@@ -2,13 +2,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
-import { ArrowLeft, Check, Search, Sparkles, RefreshCw, Eye, Tag, TrendingUp, ShoppingCart, Lightbulb, Target, X, Plus, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Check, Search, Sparkles, RefreshCw, Eye, TrendingUp, ShoppingCart, Lightbulb, X, Plus, AlertCircle } from 'lucide-react';
 import WebLogo from '@/components/shared/WebLogo';
-import { CompanyInfo } from '@/lib/get-company-info';
-import { useAIQuery } from '@/hooks/useAIQuery';
+import { CompanyInfoSchema, type CompanyInfo } from '@/lib/get-company-info';
+import { useQueryGeneration } from '@/hooks/useQueryGeneration';
+import type { GeneratedQuery } from '@/lib/queryGeneration';
 import { useUserCredits } from '@/hooks/useUserCredits';
 import { useAuthContext } from '@/context/AuthContext';
-import { generateRealisticAnalytics } from '@/utils/generateBrandData';
 import { useBrandContext } from '@/context/BrandContext';
 import { useToast } from '@/context/ToastContext';
 import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
@@ -17,20 +17,22 @@ import {
   getCategoryPillClasses,
   getCategorySolidClass,
 } from '@/lib/queryCategories';
+import { normalizePublicDomain } from '@/lib/domainValidation';
+import { matchCompetitorsInText } from '@/lib/competitor-matching';
+import {
+  BRAND_CREATION_CREDIT_COST,
+  QUERY_GENERATION_CREDIT_COST,
+  USER_QUERY_CREDIT_COST,
+} from '@/lib/billing/creditCosts';
 
-interface GeneratedQuery {
-  keyword: string;
-  query: string;
-  category: 'Awareness' | 'Interest' | 'Consideration' | 'Purchase';
-  containsBrand: 0 | 1;
-}
+const MAX_ONBOARDING_QUERIES = 40;
 
 export default function AddBrandStep3(): React.ReactElement {
   const router = useRouter();
   const { user, refreshUserProfile } = useAuthContext();
-  const { refetchBrands, setSelectedBrandId, clearBrandContext } = useBrandContext();
+  const { refetchBrands, setSelectedBrandId } = useBrandContext();
   const { credits, loading: creditsLoading } = useUserCredits();
-  const { showSuccess, showError, showInfo } = useToast();
+  const { showSuccess, showError, showWarning, showInfo } = useToast();
   const [domain, setDomain] = useState<string>('');
   const [companyData, setCompanyData] = useState<CompanyInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -58,12 +60,7 @@ export default function AddBrandStep3(): React.ReactElement {
   // modal's confirm action can navigate straight to it.
   const [existingBrandId, setExistingBrandId] = useState<string | null>(null);
 
-  // Guards against auto-generating queries more than once per company. React
-  // StrictMode (and any setState that retriggers the effect before the first
-  // generation completes) would otherwise fire two `/api/ai-query` calls.
-  const autoGenerationStartedRef = useRef(false);
-
-  const { queryState, executeQuery, clearQuery } = useAIQuery();
+  const { queryState, generateQueries: requestGeneratedQueries } = useQueryGeneration();
 
   useEffect(() => {
     // Get domain and company info from sessionStorage
@@ -76,88 +73,48 @@ export default function AddBrandStep3(): React.ReactElement {
       return;
     }
     
-    setDomain(storedDomain);
-    
     try {
-      const parsedCompanyInfo = JSON.parse(storedCompanyInfo);
-      setCompanyData(parsedCompanyInfo);
-    } catch (error) {
-      console.error('Failed to parse company info:', error);
-      router.push('/dashboard/add-brand/step-1');
+      const normalizedDomain = normalizePublicDomain(storedDomain);
+      const parsedCompanyInfo = CompanyInfoSchema.safeParse(JSON.parse(storedCompanyInfo));
+      if (!parsedCompanyInfo.success) throw new Error('Invalid company information');
+      setDomain(normalizedDomain);
+      setCompanyData(parsedCompanyInfo.data);
+    } catch {
+      sessionStorage.removeItem('brandDomain');
+      sessionStorage.removeItem('companyInfo');
+      router.replace('/dashboard/add-brand/step-1');
       return;
     }
     
     setLoading(false);
   }, [router]);
 
-  // Auto-generate queries when company data is loaded
-  useEffect(() => {
-    if (
-      !companyData ||
-      !companyData.keywords ||
-      companyData.keywords.length === 0 ||
-      generatedQueries.length > 0 ||
-      autoGenerationStartedRef.current
-    ) {
+  const generateQueries = async () => {
+    if (!companyData) return;
+    if (creditsLoading) {
+      showInfo('Loading account', 'Just a moment while we load your credit balance.');
+      return;
+    }
+    if (credits < QUERY_GENERATION_CREDIT_COST) {
+      showError(
+        'Insufficient Credits',
+        `You need ${QUERY_GENERATION_CREDIT_COST} credits to generate queries, but you have ${credits}.`
+      );
       return;
     }
 
-    autoGenerationStartedRef.current = true;
-    const handle = setTimeout(() => {
-      generateQueries();
-    }, 500);
-
-    return () => clearTimeout(handle);
-  }, [companyData, generatedQueries.length]);
-
-  const generateQueries = async () => {
-    if (!companyData) return;
-    
     setIsGenerating(true);
-    
-    const prompt = `You are an AI assistant that generates realistic and user-centric search queries based on brand information.
 
-Given:
-- Brand: ${companyData.companyName}
-- Description: ${companyData.shortDescription}
-- Products & Services: ${companyData.productsAndServices?.join(', ')}
-- Keywords: ${companyData.keywords?.join(', ')}
-
-Task:
-1. For each keyword, generate 2–3 realistic, natural-sounding user search queries that span various funnel stages: **Awareness**, **Interest**, **Consideration**, and **Purchase**.
-2. Assign the appropriate funnel stage to each query using the \`category\` field.
-3. If the brand is well-known (e.g., Coca-Cola, Nike) or moderately known (e.g., Shoeshack, HubSpot), include the brand name in **only 1–2 queries total**. All other queries should remain brand-agnostic while still being contextually relevant.
-4. Use the \`containsBrand\` field to indicate whether the query explicitly includes the brand name:
-   - \`1\` = brand name is present
-   - \`0\` = brand name is not present
-5. Ensure all queries are natural, human-like, relevant to the brand's actual category, and free from inappropriate or misleading content.
-
-Output format (return ONLY valid JSON array):
-[
-  {
-    "keyword": "crm tools",
-    "query": "best crm tools for startups",
-    "category": "Interest",
-    "containsBrand": 0
-  },
-  {
-    "keyword": "crm tools", 
-    "query": "is HubSpot good for small business CRM?",
-    "category": "Consideration",
-    "containsBrand": 1
-  }
-]`;
-
-    try {
-      await executeQuery(
-        prompt,
-        ['chatgptsearch', 'google-gemini'],
-        'high'
+    const result = await requestGeneratedQueries(companyData);
+    if (result) {
+      setGeneratedQueries(result.data);
+      setSelectedQueries(new Set(result.data.map((_, index) => index)));
+      showSuccess(
+        'Query generation completed',
+        `Generated ${result.data.length} relevant queries for ${companyData.companyName}.`
       );
-    } catch (error) {
-      console.error('Failed to generate queries:', error);
-      setIsGenerating(false);
     }
+    setIsGenerating(false);
   };
 
   // Close the prompt-table filter dropdown when clicking outside.
@@ -172,138 +129,21 @@ Output format (return ONLY valid JSON array):
     return () => document.removeEventListener('mousedown', handler);
   }, [openFilter]);
 
-  // Watch for query results
   useEffect(() => {
-    console.log('🔍 Query State Changed:', queryState);
-    
-    if (queryState.result && !queryState.loading) {
-      try {
-        console.log('📊 Raw AI Response:', queryState.result);
-        const aiResponse = queryState.result.data;
-        console.log('📋 AI Response Data:', aiResponse);
-        
-        let parsedQueries: GeneratedQuery[] = [];
-        
-        if (typeof aiResponse === 'string') {
-          console.log('🔤 Parsing string response...');
-          // Try to extract JSON from the string if it's wrapped in text
-          const jsonMatch = aiResponse.match(/\[[\s\S]*\]/);
-          if (jsonMatch) {
-            parsedQueries = JSON.parse(jsonMatch[0]);
-          } else {
-            parsedQueries = JSON.parse(aiResponse);
-          }
-        } else if (Array.isArray(aiResponse)) {
-          console.log('📋 Using array response...');
-          parsedQueries = aiResponse;
-        } else if (aiResponse && typeof aiResponse === 'object') {
-          console.log('🔄 Object response, checking structure...');
-          
-          // Check if response has a content field (OpenAI format)
-          if (aiResponse.content && typeof aiResponse.content === 'string') {
-            console.log('📄 Found content field, parsing...');
-            const jsonMatch = aiResponse.content.match(/\[[\s\S]*\]/);
-            if (jsonMatch) {
-              parsedQueries = JSON.parse(jsonMatch[0]);
-            } else {
-              parsedQueries = JSON.parse(aiResponse.content);
-            }
-          }
-          // Check if response has responses array (API provider format)
-          else if (aiResponse.responses && Array.isArray(aiResponse.responses)) {
-            console.log('📄 Found responses array, extracting content...');
-            const firstResponse = aiResponse.responses[0];
-            if (firstResponse && firstResponse.content) {
-              console.log('📄 Raw content:', firstResponse.content);
-              // Clean the content by removing extra whitespace and line breaks
-              let cleanContent = firstResponse.content.trim();
-              
-              // Try to extract JSON array from the content
-              const jsonMatch = cleanContent.match(/\[[\s\S]*\]/);
-              if (jsonMatch) {
-                console.log('📄 Extracted JSON:', jsonMatch[0]);
-                parsedQueries = JSON.parse(jsonMatch[0]);
-              } else {
-                // If no match, try parsing the entire content
-                console.log('📄 Parsing entire content...');
-                parsedQueries = JSON.parse(cleanContent);
-              }
-            }
-          }
-          // Check if it's a direct object with provider and content
-          else if (aiResponse.provider && aiResponse.content) {
-            console.log('📄 Found provider response format...');
-            const jsonMatch = aiResponse.content.match(/\[[\s\S]*\]/);
-            if (jsonMatch) {
-              parsedQueries = JSON.parse(jsonMatch[0]);
-            } else {
-              parsedQueries = JSON.parse(aiResponse.content);
-            }
-          }
-          else {
-            console.log('🔄 Unexpected object format:', aiResponse);
-          }
-        } else {
-          console.log('🔄 Unexpected response format:', typeof aiResponse);
-        }
-        
-        console.log('✅ Found queries:', parsedQueries);
-        setGeneratedQueries(parsedQueries);
-        
-        // Auto-select all newly generated queries
-        setSelectedQueries(new Set(parsedQueries.map((_, index) => index)));
-        
-        // Show success notification for auto-generated queries
-        if (parsedQueries.length > 0) {
-          showSuccess(
-            'Query Search Completed!',
-            `Found ${parsedQueries.length} relevant queries for ${companyData?.companyName}. You can add more or edit existing ones.`
-          );
-        }
-              } catch (error) {
-          console.error('❌ Failed to parse found queries:', error);
-        console.error('Raw response:', queryState.result.data);
-        console.error('Error details:', error);
-        
-        // Try alternative parsing for debugging
-        if (queryState.result.data?.responses?.[0]?.content) {
-          const content = queryState.result.data.responses[0].content;
-          console.log('🔧 Full content for debugging:', content);
-          
-          // Try to manually extract and parse
-          try {
-            const startIndex = content.indexOf('[');
-            const endIndex = content.lastIndexOf(']');
-            if (startIndex !== -1 && endIndex !== -1) {
-              const jsonStr = content.substring(startIndex, endIndex + 1);
-              console.log('🔧 Extracted JSON string:', jsonStr);
-              const manualParsed = JSON.parse(jsonStr);
-              console.log('🔧 Manual parsing successful:', manualParsed);
-              setGeneratedQueries(manualParsed);
-            }
-          } catch (manualError) {
-            console.error('🔧 Manual parsing also failed:', manualError);
-          }
-        }
-      }
-      setIsGenerating(false);
-    }
-    
     if (queryState.error) {
-      console.error('❌ Query error:', queryState.error);
+      showError('Query generation failed', queryState.error);
       setIsGenerating(false);
     }
-  }, [queryState]);
+  }, [queryState.error, showError]);
 
   const handleComplete = async () => {
     if (!companyData || selectedQueries.size < 4 || !user?.uid) {
-      console.error('Missing required data for completion:', {
-        hasCompanyData: !!companyData,
-        hasMinimumQueries: selectedQueries.size >= 4,
-        selectedCount: selectedQueries.size,
-        minimumRequired: 4,
-        hasUser: !!user?.uid
-      });
+      showError(
+        'Setup is incomplete',
+        !user?.uid
+          ? 'Please sign in again before completing setup.'
+          : 'Select at least four queries before completing setup.'
+      );
       return;
     }
 
@@ -316,10 +156,10 @@ Output format (return ONLY valid JSON array):
     }
 
     // Check if user has enough credits
-    if (credits < 100) {
+    if (credits < BRAND_CREATION_CREDIT_COST) {
       showError(
         'Insufficient Credits',
-        `You need 100 credits to complete brand setup, but you only have ${credits} credits available. Please purchase more credits to continue.`
+        `You need ${BRAND_CREATION_CREDIT_COST} credits to complete brand setup, but you only have ${credits} credits available. Please purchase more credits to continue.`
       );
       return;
     }
@@ -327,27 +167,10 @@ Output format (return ONLY valid JSON array):
     setIsCompleting(true);
 
     try {
-      console.log('🚀 Generating brand analytics...');
-
-      // Generate brand analytics data client-side
-      const brandsbasicData = generateRealisticAnalytics(
-        companyData.companyName,
-        domain,
-        companyData.keywords || []
-      );
-
-      console.log('✅ Brand analytics generated:', brandsbasicData);
-
       // Prepare the complete brand payload sent to /api/brands.
       const completeBrandData = {
-        // User Information
-        userId: user.uid,
-
-        // Step 1 - Domain Information
-        domain: domain,
+        domain,
         website: companyData.website,
-
-        // Step 2 - Company Information
         companyName: companyData.companyName,
         shortDescription: companyData.shortDescription,
         productsAndServices: companyData.productsAndServices || [],
@@ -357,7 +180,6 @@ Output format (return ONLY valid JSON array):
         keywords: allTopics,
         competitors: companyData.competitors || [],
 
-        // Step 3 - Generated Queries (only selected ones)
         queries: generatedQueries
           .filter((_, index) => selectedQueries.has(index))
           .map(query => ({
@@ -368,52 +190,14 @@ Output format (return ONLY valid JSON array):
             selected: true
           })),
 
-        // Query distribution by category (only selected queries)
-        queryDistribution: {
-          awareness: generatedQueries.filter((q, i) => selectedQueries.has(i) && q.category === 'Awareness').length,
-          interest: generatedQueries.filter((q, i) => selectedQueries.has(i) && q.category === 'Interest').length,
-          consideration: generatedQueries.filter((q, i) => selectedQueries.has(i) && q.category === 'Consideration').length,
-          purchase: generatedQueries.filter((q, i) => selectedQueries.has(i) && q.category === 'Purchase').length
-        },
-
-        // AI Analysis metadata (if available)
         aiAnalysis: queryState.result ? {
-          providersUsed: queryState.result.debug?.providersExecuted || [],
+          providersUsed: [queryState.result.sourceProvider],
           totalCost: queryState.result.totalCost || 0,
           completedAt: queryState.result.completedAt || new Date().toISOString(),
           requestId: queryState.result.requestId || null
         } : null,
-
-        // Generated brand analytics
-        brandsbasicData,
-
-        // Metadata — server-authoritative audit timestamps.
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        // `timestamp` (ms-since-epoch) is kept for legacy sort fallbacks in
-        // useUserBrands; new readers should prefer createdAt.
-        timestamp: Date.now(),
-        totalQueries: selectedQueries.size,
-        setupComplete: true,
-        currentStep: 3,
-
-        // Credit usage tracking. creditTransaction.timestamp lives inside a
-        // nested map (not an array), so new Date().toISOString() is allowed and
-        // matches the audit-timestamp policy for the rest of this doc.
-        creditsUsed: 100,
-        creditTransaction: {
-          amount: 100,
-          type: 'deduction',
-          reason: 'Brand setup completion',
-          timestamp: new Date().toISOString()
-        }
       };
 
-      // Generate user-scoped document ID to prevent conflicts
-      const cleanDomain = domain.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
-      const brandId = `${user.uid}_${cleanDomain}`;
-
-      console.log('💾 Saving brand and deducting credits on the server...');
       const idToken = await getFirebaseIdTokenWithRetry(3, 500);
       if (!idToken) {
         showError(
@@ -431,7 +215,6 @@ Output format (return ONLY valid JSON array):
           'Authorization': `Bearer ${idToken}`,
         },
         body: JSON.stringify({
-          brandId,
           brandData: completeBrandData,
         }),
       });
@@ -442,28 +225,22 @@ Output format (return ONLY valid JSON array):
         if (txResult.code === 'INSUFFICIENT_CREDITS') {
           showError(
             'Insufficient Credits',
-            'You need 100 credits to complete brand setup. Please purchase more credits to continue.'
+            `You need ${BRAND_CREATION_CREDIT_COST} credits to complete brand setup. Please purchase more credits to continue.`
           );
           setIsCompleting(false);
           return;
         }
 
         if (txResult.code === 'BRAND_ALREADY_EXISTS') {
-          setExistingBrandId(brandId);
+          if (typeof txResult.brandId === 'string' && txResult.brandId) {
+            setExistingBrandId(txResult.brandId);
+          } else {
+            showError('Brand already exists', 'Refresh your brand list and open the existing brand.');
+          }
           setIsCompleting(false);
           return;
         }
 
-        if (txResult.code === 'DOC_TOO_LARGE') {
-          showError(
-            'Save Failed',
-            'This brand payload is too large to save atomically. Please trim the setup data and try again.'
-          );
-          setIsCompleting(false);
-          return;
-        }
-
-        console.error('❌ Brand creation API failed:', txResult);
         showError(
           'Save Failed',
           'Unable to save your brand. No credits were deducted. Please try again.'
@@ -472,27 +249,36 @@ Output format (return ONLY valid JSON array):
         return;
       }
 
-      console.log('✅ Brand data saved successfully:', brandId);
-
-      // Sync the credit balance shown in the sidebar / UI now that the tx committed.
-      await refreshUserProfile();
+      if (typeof txResult.brandId !== 'string' || !txResult.brandId) {
+        throw new Error('Brand creation response did not include an id');
+      }
+      const brandId = txResult.brandId;
 
       // Clear only the keys this onboarding flow set. The previous
       // localStorage.clear() / sessionStorage.clear() wiped unrelated state
       // (theme, selectedBrandId, anything else on the origin).
       sessionStorage.removeItem('brandDomain');
       sessionStorage.removeItem('companyInfo');
-      sessionStorage.removeItem('aiInsights');
 
-      // Refresh brands in context and set the new brand as selected
-      console.log('🔄 Refreshing brand context...');
-      await refetchBrands(); // Refresh the brands list
+      // The create transaction has committed. Refreshing client caches is
+      // best-effort and must not turn that success into a retryable-looking
+      // failure, which could encourage a duplicate submission.
+      const syncResults = await Promise.allSettled([
+        refreshUserProfile(),
+        refetchBrands(),
+      ]);
 
-      // Set the newly created brand as the selected brand
-      console.log('✅ Setting new brand as selected:', brandId);
-      setSelectedBrandId(brandId);
+      const brandsRefreshed = syncResults[1].status === 'fulfilled';
+      if (brandsRefreshed) {
+        setSelectedBrandId(brandId);
+      }
 
-      console.log('✅ Brand setup completed successfully! (100 credits deducted)');
+      if (syncResults.some((result) => result.status === 'rejected')) {
+        showWarning(
+          'Brand created',
+          'The brand was saved, but some dashboard data could not refresh. Reload the page to sync it.'
+        );
+      }
 
       // Show comprehensive completion notification
       showSuccess(
@@ -504,17 +290,14 @@ Output format (return ONLY valid JSON array):
       setTimeout(() => {
         showInfo(
           'Ready to Process Queries',
-          'You can now process your queries to see how AI platforms respond to questions about your brand. Each query costs 10 credits.'
+          `You can now process your queries to see how AI platforms respond to questions about your brand. Each query costs ${USER_QUERY_CREDIT_COST} credits.`
         );
       }, 2000);
 
-      console.log('🎯 Redirecting directly to queries page...');
-
       // Navigate directly to queries page
-      router.replace('/dashboard/queries');
+      router.replace(brandsRefreshed ? '/dashboard/queries' : '/dashboard');
 
-    } catch (error) {
-      console.error('❌ Error during setup completion:', error);
+    } catch {
       // The atomic transaction either committed both writes or neither, so
       // there's no half-finished state to clean up. No refund needed.
       showError(
@@ -537,15 +320,6 @@ Output format (return ONLY valid JSON array):
 
   const getCategoryColor = getCategoryPillClasses;
 
-  // Group queries by keyword
-  const queriesByKeyword = generatedQueries.reduce((acc, query) => {
-    if (!acc[query.keyword]) {
-      acc[query.keyword] = [];
-    }
-    acc[query.keyword].push(query);
-    return acc;
-  }, {} as Record<string, GeneratedQuery[]>);
-
   // Filter queries based on selected topic AND intent
   const filteredQueries = generatedQueries.filter(
     (q) =>
@@ -554,10 +328,6 @@ Output format (return ONLY valid JSON array):
   );
 
   const availableTopics = Array.from(new Set(generatedQueries.map((q) => q.keyword)));
-
-  const filteredQueriesByKeyword = selectedTopic === 'all' 
-    ? queriesByKeyword 
-    : { [selectedTopic]: queriesByKeyword[selectedTopic] || [] };
 
   // Declared topics are what the user/onboarding explicitly registered —
   // they're what count against the 10-topic cap.
@@ -693,7 +463,20 @@ Output format (return ONLY valid JSON array):
 
   const handleSaveQuery = () => {
     const topic = resolveQueryTopic();
-    if (!newQuery.trim()) return;
+    const queryText = newQuery.trim();
+    if (!queryText) return;
+    if (queryText.length < 4 || queryText.length > 500) {
+      showError('Invalid query', 'Queries must be between 4 and 500 characters.');
+      return;
+    }
+    if (generatedQueries.length >= MAX_ONBOARDING_QUERIES) {
+      showError('Query limit reached', `Brand setup supports up to ${MAX_ONBOARDING_QUERIES} queries.`);
+      return;
+    }
+    if (generatedQueries.some((item) => item.query.trim().toLowerCase() === queryText.toLowerCase())) {
+      showError('Duplicate query', 'This query is already in the setup list.');
+      return;
+    }
     if (!topic) {
       showError('Topic required', 'Pick an existing topic or create a new one.');
       return;
@@ -724,9 +507,12 @@ Output format (return ONLY valid JSON array):
 
     const newQueryObject: GeneratedQuery = {
       keyword: topic,
-      query: newQuery.trim(),
+      query: queryText,
       category: selectedCategory,
-      containsBrand: newQuery.toLowerCase().includes(companyData?.companyName?.toLowerCase() || '') ? 1 : 0
+      containsBrand: matchCompetitorsInText(
+        queryText,
+        companyData ? [{ name: companyData.companyName, domain }] : []
+      ).length > 0 ? 1 : 0,
     };
 
     const newIndex = generatedQueries.length;
@@ -737,7 +523,7 @@ Output format (return ONLY valid JSON array):
       'Query Added Successfully!',
       isNewTopic
         ? `New topic "${topic}" created and query attached.`
-        : `Added "${newQuery.trim()}" to "${topic}" under ${selectedCategory.toLowerCase()}.`
+        : `Added "${queryText}" to "${topic}" under ${selectedCategory.toLowerCase()}.`
     );
 
     setNewQuery('');
@@ -818,13 +604,13 @@ Output format (return ONLY valid JSON array):
       <div className="flex flex-col items-center pt-8 pb-6">
         <div className="flex flex-col items-center space-y-2 mb-8">
           {/* Genos Logo */}
-          <div className="relative w-48 h-12">
+          <div className="relative w-48 h-[53px]">
             <Image
-              src="/logo_no_background.png"
+              src="/genos-wordmark.png"
               alt="Genos Logo"
-              width={192}
-              height={48}
-              className="w-full h-auto"
+              width={512}
+              height={141}
+              className="h-auto w-48"
               priority
             />
           </div>
@@ -890,7 +676,7 @@ Output format (return ONLY valid JSON array):
               className={`w-full flex items-center justify-center space-x-2 rounded-lg px-4 py-2 mb-6 transition-colors ${
                 canAddMoreTopics
                   ? 'text-primary border border-primary hover:bg-primary/5'
-                  : 'text-muted-foreground border border-gray-600 cursor-not-allowed'
+                  : 'text-muted-foreground border border-border cursor-not-allowed'
               }`}
             >
               <Plus className="h-4 w-4" />
@@ -959,7 +745,7 @@ Output format (return ONLY valid JSON array):
                   {selectedTopic === 'all' ? 'All Topics' : selectedTopic.charAt(0).toUpperCase() + selectedTopic.slice(1)}
                 </h1>
                 <div className="flex items-center space-x-4 text-sm text-muted-foreground">
-                  <span>📅 Last Queried {new Date().toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: '2-digit' })}</span>
+                  <span>Draft queries · not processed yet</span>
                 </div>
               </div>
               <div className="flex items-center space-x-4">
@@ -968,15 +754,14 @@ Output format (return ONLY valid JSON array):
                     {filteredQueries.length}/{generatedQueries.length} queries shown
                   </span>
                 </div>
-                {generatedQueries.length > 0 && (
-                  <button
-                    onClick={handleAddQuery}
-                    className="inline-flex items-center space-x-2 bg-primary text-primary-foreground px-4 py-2 rounded-lg hover:bg-primary/90 transition-colors"
-                  >
-                    <Plus className="h-4 w-4" />
-                    <span>Add a prompt</span>
-                  </button>
-                )}
+                <button
+                  onClick={handleAddQuery}
+                  disabled={generatedQueries.length >= MAX_ONBOARDING_QUERIES}
+                  className="inline-flex items-center space-x-2 bg-primary text-primary-foreground px-4 py-2 rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  <Plus className="h-4 w-4" />
+                  <span>Add a prompt</span>
+                </button>
               </div>
             </div>
 
@@ -985,7 +770,7 @@ Output format (return ONLY valid JSON array):
               <div className="text-center mb-8">
                 <button
                   onClick={generateQueries}
-                  disabled={isGenerating || !companyData}
+                  disabled={isGenerating || !companyData || creditsLoading || credits < QUERY_GENERATION_CREDIT_COST}
                   className="inline-flex items-center space-x-2 bg-primary text-primary-foreground px-8 py-4 rounded-xl hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {isGenerating ? (
@@ -996,12 +781,12 @@ Output format (return ONLY valid JSON array):
                   ) : (
                     <>
                       <Sparkles className="h-5 w-5" />
-                      <span>Find Search Queries</span>
+                      <span>Find Search Queries ({QUERY_GENERATION_CREDIT_COST} credits)</span>
                     </>
                   )}
                 </button>
                 <p className="text-sm text-muted-foreground mt-2">
-                  Finding Queries your Customers are asking AI
+                  Credits are charged only when valid queries are returned.
                 </p>
               </div>
             )}
@@ -1144,11 +929,11 @@ Output format (return ONLY valid JSON array):
                   {/* Table */}
                   <div className="bg-card border border-border rounded-lg overflow-hidden shadow-sm">
                     {/* Table Header */}
-                    <div className="grid grid-cols-10 gap-4 p-4 bg-card border-b border-gray-700 text-sm font-semibold text-foreground">
+                    <div className="grid grid-cols-10 gap-4 p-4 bg-card border-b border-border text-sm font-semibold text-foreground">
                       <div className="col-span-1">
                         <input 
                           type="checkbox" 
-                          className="rounded border-gray-600 bg-gray-700 focus:ring-primary focus:ring-2" 
+                          className="rounded border-border accent-primary focus:ring-primary focus:ring-2"
                           checked={areAllFilteredSelected}
                           onChange={(e) => handleSelectAll(e.target.checked)}
                           title={areAllFilteredSelected ? "Deselect all" : "Select all"}
@@ -1160,7 +945,7 @@ Output format (return ONLY valid JSON array):
                     </div>
                     
                     {/* Table Body */}
-                    <div className="divide-y divide-gray-700">
+                    <div className="divide-y divide-border">
                       {filteredQueries.map((query, index) => {
                         const actualIndex = generatedQueries.findIndex(q => q === query);
                         const isSelected = selectedQueries.has(actualIndex);
@@ -1170,7 +955,7 @@ Output format (return ONLY valid JSON array):
                           <div className="col-span-1">
                             <input 
                               type="checkbox" 
-                              className="rounded border-gray-600 bg-gray-700 focus:ring-primary focus:ring-2" 
+                              className="rounded border-border accent-primary focus:ring-primary focus:ring-2"
                               checked={isSelected}
                               onChange={(e) => handleSelectQuery(index, e.target.checked)}
                             />
@@ -1219,7 +1004,7 @@ Output format (return ONLY valid JSON array):
                 </div>
                 <button
                   onClick={generateQueries}
-                  className="inline-flex items-center space-x-2 bg-red-600 text-foreground px-4 py-2 rounded-lg hover:bg-red-700 transition-colors"
+                  className="inline-flex items-center space-x-2 rounded-lg bg-destructive px-4 py-2 text-destructive-foreground transition-colors hover:opacity-90"
                 >
                   <RefreshCw className="h-4 w-4" />
                   <span>Try Again</span>
@@ -1242,7 +1027,7 @@ Output format (return ONLY valid JSON array):
 
                           <button
                 onClick={handleComplete}
-                disabled={!queryState.result || queryState.loading || selectedQueries.size < 4 || isCompleting || creditsLoading || credits < 100}
+                disabled={queryState.loading || selectedQueries.size < 4 || isCompleting || creditsLoading || credits < BRAND_CREATION_CREDIT_COST}
                 className="flex items-center space-x-2 bg-primary text-primary-foreground px-6 py-3 rounded-xl hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {isCompleting ? (
@@ -1255,9 +1040,9 @@ Output format (return ONLY valid JSON array):
                     <RefreshCw className="h-5 w-5 animate-spin" />
                     <span>Loading account...</span>
                   </>
-                ) : credits < 100 ? (
+                ) : credits < BRAND_CREATION_CREDIT_COST ? (
                   <>
-                    <span>Insufficient Credits (Need 100)</span>
+                    <span>Insufficient Credits (Need {BRAND_CREATION_CREDIT_COST})</span>
                     <Check className="h-5 w-5" />
                   </>
                 ) : selectedQueries.size < 4 ? (
@@ -1267,7 +1052,7 @@ Output format (return ONLY valid JSON array):
                   </>
                 ) : (
                   <>
-                    <span>Complete Setup ({selectedQueries.size} queries, 100 credits)</span>
+                    <span>Complete Setup ({selectedQueries.size} queries, {BRAND_CREATION_CREDIT_COST} credits)</span>
                     <Check className="h-5 w-5" />
                   </>
                 )}
@@ -1303,8 +1088,7 @@ Output format (return ONLY valid JSON array):
                   // brand list, select the existing brand, then navigate.
                   sessionStorage.removeItem('brandDomain');
                   sessionStorage.removeItem('companyInfo');
-                  sessionStorage.removeItem('aiInsights');
-                  await refetchBrands();
+                  await refetchBrands().catch(() => undefined);
                   setSelectedBrandId(targetId!);
                   router.replace('/dashboard/queries');
                 }}
@@ -1345,7 +1129,7 @@ Output format (return ONLY valid JSON array):
                   value={newTopicName}
                   onChange={(e) => setNewTopicName(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  maxLength={50}
+                  maxLength={160}
                   placeholder="e.g. Vegan products, Eco-friendly bags"
                   className="w-full px-4 py-3 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent bg-background text-foreground"
                   autoFocus
@@ -1418,6 +1202,7 @@ Output format (return ONLY valid JSON array):
                   onChange={(e) => setNewQuery(e.target.value)}
                   onKeyDown={handleQueryKeyDown}
                   placeholder="e.g. what is the best tool for GEO? FYI it's Genos 😊"
+                  maxLength={500}
                   className="w-full px-4 py-3 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent bg-background text-foreground"
                   autoFocus
                 />
@@ -1484,7 +1269,7 @@ Output format (return ONLY valid JSON array):
                             handleConfirmNewTopic();
                           }
                         }}
-                        maxLength={50}
+                        maxLength={160}
                         placeholder="e.g. LLM Observability"
                         className="flex-1 px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent bg-background text-foreground"
                         autoFocus
@@ -1493,7 +1278,7 @@ Output format (return ONLY valid JSON array):
                         type="button"
                         onClick={handleConfirmNewTopic}
                         disabled={!newQueryTopicDraft.trim() || !canAddMoreTopics}
-                        className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         Add
                       </button>
@@ -1539,7 +1324,7 @@ Output format (return ONLY valid JSON array):
                           <div className="w-3 h-3 rounded bg-blue-500"></div>
                           <span className="font-medium text-foreground">Awareness</span>
                           {selectedCategory === 'Awareness' && (
-                            <span className="bg-blue-600 text-foreground text-xs px-2 py-1 rounded-full">
+                            <span className="rounded-full bg-primary px-2 py-1 text-xs text-primary-foreground">
                               AI Suggestion
                             </span>
                           )}
@@ -1631,7 +1416,7 @@ Output format (return ONLY valid JSON array):
               <button
                 onClick={handleSaveQuery}
                 disabled={!newQuery.trim() || !resolveQueryTopic()}
-                className="px-6 py-2 bg-blue-600 text-foreground rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="rounded-lg bg-primary px-6 py-2 text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Add Query
               </button>

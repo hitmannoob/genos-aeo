@@ -9,7 +9,9 @@ export const queryClient = new QueryClient({
       refetchOnWindowFocus: false,
     },
     mutations: {
-      retry: 1,
+      // Mutations can create paid provider work. Each screen presents an
+      // explicit retry path, so never replay side effects automatically.
+      retry: 0,
     },
   },
-}); 
+});

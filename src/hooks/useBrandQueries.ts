@@ -2,7 +2,6 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuthContext } from '@/context/AuthContext';
-import { toIsoString } from '@/lib/timestamps';
 import {
   getCanonicalGoogleResult,
   hasProviderContent,
@@ -73,12 +72,6 @@ async function fetchBrandQueries(brandId: string): Promise<ProcessedQueryResult[
     const dateA = new Date(a.date || 0).getTime();
     const dateB = new Date(b.date || 0).getTime();
     return dateB - dateA;
-  });
-
-  console.log('✅ Brand queries fetched:', {
-    brandName: brand.companyName,
-    queriesCount: queryResults.length,
-    lastProcessed: toIsoString((brand as { lastProcessedAt?: unknown }).lastProcessedAt) || 'Never',
   });
 
   return sortedQueries;

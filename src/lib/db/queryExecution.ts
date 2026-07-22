@@ -14,7 +14,6 @@ export interface QueryExecutionIdentity {
 export interface AcquireQueryExecutionArgs extends QueryExecutionIdentity {
   requestFingerprintSource: {
     query: string;
-    context?: string;
     persistResult?: boolean;
     brandId?: string;
     keyword?: string;
@@ -28,6 +27,16 @@ export type AcquireQueryExecutionResult<TResponse> =
   | { status: 'acquired'; docId: string }
   | { status: 'replay'; docId: string; response: TResponse }
   | { status: 'in_progress'; docId: string; retryAfterSeconds: number }
+  | {
+      status: 'previous_failure';
+      docId: string;
+      failure: {
+        code: string;
+        message: string;
+        httpStatus: number;
+        refundApplied?: boolean;
+      };
+    }
   | { status: 'conflict'; docId: string; message: string };
 
 export interface CompleteQueryExecutionArgs<TResponse> extends QueryExecutionIdentity {
@@ -45,7 +54,6 @@ function buildRequestFingerprint(source: AcquireQueryExecutionArgs['requestFinge
   return createHash('sha256')
     .update(JSON.stringify({
       query: source.query,
-      context: source.context || '',
       persistResult: !!source.persistResult,
       brandId: source.brandId || '',
       keyword: source.keyword || '',
@@ -104,15 +112,28 @@ export async function acquireQueryExecution<TResponse>(
   return withTransaction(async (client) => {
     const { appUserId, brandUuid } = await resolveIdentity(client, args);
 
+    // A row lock cannot serialize two first-time requests because no row
+    // exists yet. Lock the logical idempotency key before checking/inserting.
+    await client.query(
+      'select pg_advisory_xact_lock(hashtextextended($1, 0))',
+      [`${appUserId}\0${brandUuid || ''}\0${args.clientRequestId}`]
+    );
+
     const existingResult = await client.query<{
       id: string;
       request_fingerprint: string;
       status: 'processing' | 'completed' | 'failed';
       replay_response: TResponse | null;
       lease_expires_at: Date | string | null;
+      last_error: {
+        code?: unknown;
+        message?: unknown;
+        httpStatus?: unknown;
+        refundApplied?: unknown;
+      } | null;
     }>(
       `
-        select id, request_fingerprint, status, replay_response, lease_expires_at
+        select id, request_fingerprint, status, replay_response, lease_expires_at, last_error
         from query_execution_requests
         where user_id = $1
           and coalesce(brand_id, '00000000-0000-0000-0000-000000000000'::uuid)
@@ -175,6 +196,31 @@ export async function acquireQueryExecution<TResponse>(
       };
     }
 
+    // A failed execution is terminal for its idempotency key. Reacquiring it
+    // after a compensating refund would let the same debit key replay without
+    // deducting credits again, effectively making the retry free.
+    if (existing.status === 'failed') {
+      const lastError = existing.last_error;
+      return {
+        status: 'previous_failure',
+        docId: existing.id,
+        failure: {
+          code: typeof lastError?.code === 'string'
+            ? lastError.code
+            : 'REQUEST_PREVIOUSLY_FAILED',
+          message: typeof lastError?.message === 'string'
+            ? lastError.message
+            : 'This request previously failed. Start a new attempt with a new clientRequestId.',
+          httpStatus: typeof lastError?.httpStatus === 'number'
+            ? lastError.httpStatus
+            : 409,
+          ...(typeof lastError?.refundApplied === 'boolean' && {
+            refundApplied: lastError.refundApplied,
+          }),
+        },
+      };
+    }
+
     if (existing.status === 'processing' && existing.lease_expires_at) {
       const expiresAt = new Date(existing.lease_expires_at).getTime();
       if (expiresAt > Date.now()) {
@@ -210,7 +256,7 @@ export async function completeQueryExecution<TResponse>(
 ): Promise<void> {
   await withTransaction(async (client) => {
     const { appUserId, brandUuid } = await resolveIdentity(client, args);
-    await client.query(
+    const completed = await client.query(
       `
         update query_execution_requests
         set status = 'completed',
@@ -222,9 +268,14 @@ export async function completeQueryExecution<TResponse>(
           and coalesce(brand_id, '00000000-0000-0000-0000-000000000000'::uuid)
             = coalesce($2::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
           and client_request_id = $3
+          and status = 'processing'
+        returning id
       `,
       [appUserId, brandUuid, args.clientRequestId, JSON.stringify(args.replayResponse)]
     );
+    if (completed.rowCount !== 1) {
+      throw new Error('EXECUTION_COMPLETION_FAILED');
+    }
   });
 }
 
@@ -233,7 +284,7 @@ export async function failQueryExecution(
 ): Promise<void> {
   await withTransaction(async (client) => {
     const { appUserId, brandUuid } = await resolveIdentity(client, args);
-    await client.query(
+    const failed = await client.query(
       `
         update query_execution_requests
         set status = 'failed',
@@ -244,6 +295,8 @@ export async function failQueryExecution(
           and coalesce(brand_id, '00000000-0000-0000-0000-000000000000'::uuid)
             = coalesce($2::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
           and client_request_id = $3
+          and status = 'processing'
+        returning id
       `,
       [
         appUserId,
@@ -257,5 +310,8 @@ export async function failQueryExecution(
         }),
       ]
     );
+    if (failed.rowCount !== 1) {
+      throw new Error('EXECUTION_FAILURE_UPDATE_FAILED');
+    }
   });
 }

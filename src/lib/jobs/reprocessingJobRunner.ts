@@ -1,5 +1,7 @@
 import 'server-only';
 
+import { createHash } from 'node:crypto';
+
 import {
   acquireReprocessingJobRunner,
   completeReprocessingJob,
@@ -7,8 +9,14 @@ import {
   updateReprocessingJobProgress,
 } from './reprocessingJobs';
 import { executePersistedUserQueryServer } from '@/lib/userQueryExecutionServer';
+import { logger } from '@/lib/logger';
 
 const MAX_ERROR_ITEMS = 25;
+
+function buildJobRequestId(jobId: string, queryId: string): string {
+  const queryHash = createHash('sha256').update(queryId).digest('hex');
+  return `reprocess:${jobId}:${queryHash}`;
+}
 
 function appendError(
   errors: Array<{ queryId: string; message: string }>,
@@ -18,11 +26,27 @@ function appendError(
   return updated.slice(-MAX_ERROR_ITEMS);
 }
 
-function buildQueryContext(
-  brandName: string,
-  query: { keyword: string; category: string }
-): string {
-  return `This query is related to ${brandName} in the ${query.category} category. Topic: ${query.keyword}.`;
+function publicJobErrorMessage(code?: string): string {
+  switch (code) {
+    case 'INSUFFICIENT_CREDITS':
+      return 'Insufficient credits to continue processing.';
+    case 'NO_PROVIDERS_CONFIGURED':
+      return 'No AI providers are configured.';
+    case 'REQUEST_IN_PROGRESS':
+      return 'This query is already being processed.';
+    case 'ALL_PROVIDERS_FAILED':
+      return 'All AI providers failed. Reserved credits were refunded.';
+    case 'ALL_PROVIDERS_FAILED_REFUND_FAILED':
+      return 'AI providers failed and the automatic credit refund needs attention.';
+    case 'PERSISTENCE_FAILED_REFUNDED':
+      return 'The result could not be saved. Reserved credits were refunded.';
+    case 'PERSISTENCE_FAILED_REFUND_FAILED':
+      return 'The result could not be saved and the automatic credit refund needs attention.';
+    case 'PERSISTENCE_FAILED':
+      return 'The result could not be saved.';
+    default:
+      return 'Query processing failed. Please try again.';
+  }
 }
 
 export async function runReprocessingJob(
@@ -85,20 +109,36 @@ export async function runReprocessingJob(
       payload = await executePersistedUserQueryServer({
         userId: job.userId,
         query: currentQuery.query,
-        context: buildQueryContext(job.brandName, currentQuery),
         brandId: job.brandId,
-        brandName: job.brandName,
-        brandDomain: job.brandDomain,
         keyword: currentQuery.keyword,
         category: currentQuery.category,
         processingSessionId: job.processingSessionId,
         processingSessionTimestamp: job.processingSessionTimestamp,
-        clientRequestId: [job.id, currentQuery.queryId].join('::'),
+        clientRequestId: buildJobRequestId(job.id, currentQuery.queryId),
       });
     } catch (error) {
+      logger.error('Unexpected reprocessing query failure', error);
+      const errorMessage = 'Query processing failed due to an internal error.';
+      failedCount += 1;
+      attemptedCount += 1;
+      currentIndex += 1;
+      failedQueryIds = Array.from(new Set([...failedQueryIds, currentQuery.queryId]));
       errors = appendError(errors, {
         queryId: currentQuery.queryId,
-        message: error instanceof Error ? error.message : 'Internal fetch failed',
+        message: errorMessage,
+      });
+      await updateReprocessingJobProgress({
+        jobId,
+        successfulCount,
+        failedCount,
+        attemptedCount,
+        creditsUsed,
+        currentIndex,
+        currentQueryId: null,
+        completedQueryIds,
+        failedQueryIds,
+        errors,
+        status: 'processing',
       });
       terminalStatus = 'failed';
       break;
@@ -130,10 +170,7 @@ export async function runReprocessingJob(
       currentIndex += 1;
       failedQueryIds = Array.from(new Set([...failedQueryIds, currentQuery.queryId]));
 
-      const errorMessage =
-        payload?.message ||
-        payload?.error ||
-        'Request failed';
+      const errorMessage = publicJobErrorMessage(payload?.code);
 
       errors = appendError(errors, {
         queryId: currentQuery.queryId,

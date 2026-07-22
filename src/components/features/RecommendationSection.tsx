@@ -39,8 +39,7 @@ export default function RecommendationSection({
       <Card variant="elevated" className="overflow-hidden bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-900/20 dark:to-blue-900/20 border-purple-200 dark:border-purple-800">
         {/* Header */}
         <div 
-          className={`flex items-center justify-between p-6 ${expandable ? 'cursor-pointer' : ''}`}
-          onClick={expandable ? () => setIsExpanded(!isExpanded) : undefined}
+          className="flex items-center justify-between p-6"
         >
           <div className="flex items-center space-x-3">
             <div className="p-2 bg-gradient-to-br from-[#6F42C1] to-[#5A2D91] rounded-lg">
@@ -55,7 +54,13 @@ export default function RecommendationSection({
           </div>
           
           {expandable && (
-            <button className="p-2 rounded-lg hover:bg-accent transition-colors">
+            <button
+              type="button"
+              onClick={() => setIsExpanded((expanded) => !expanded)}
+              aria-expanded={isExpanded}
+              aria-label={isExpanded ? 'Collapse recommendations' : 'Expand recommendations'}
+              className="rounded-lg p-2 transition-colors hover:bg-accent"
+            >
               {isExpanded ? (
                 <ChevronUp className="h-5 w-5 text-muted-foreground" />
               ) : (
@@ -70,9 +75,11 @@ export default function RecommendationSection({
           <div className="px-6 pb-6">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {recommendations.map((rec) => (
-                <div 
+                <button
+                  type="button"
                   key={rec.id} 
-                  className="group bg-card border border-border rounded-xl p-4 hover:shadow-lg hover:shadow-black/25 hover:border-accent transition-all duration-300 cursor-pointer"
+                  aria-haspopup="dialog"
+                  className="group w-full cursor-pointer rounded-xl border border-border bg-card p-4 text-left transition-all duration-300 hover:border-accent hover:shadow-lg hover:shadow-black/25"
                   onClick={() => { setSelectedRec(rec); setModalOpen(true); }}
                 >
                   {/* Priority badge */}
@@ -114,7 +121,7 @@ export default function RecommendationSection({
                     </div>
                     <ArrowRight className="h-3 w-3 text-muted-foreground group-hover:text-primary transition-colors" />
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </div>
@@ -122,11 +129,18 @@ export default function RecommendationSection({
       </Card>
       {/* Modal for Recommendation Card */}
       {modalOpen && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-md w-full p-6 relative border border-gray-200 dark:border-gray-700">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="recommendation-dialog-title"
+            className="relative w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl"
+          >
             <button
+              type="button"
               onClick={() => setModalOpen(false)}
-              className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+              aria-label="Close recommendation"
+              className="absolute top-4 right-4 text-muted-foreground hover:text-foreground transition-colors"
             >
               <span className="text-xl">&times;</span>
             </button>
@@ -143,10 +157,10 @@ export default function RecommendationSection({
                   </span>
                 )}
               </div>
-              <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">
+              <h3 id="recommendation-dialog-title" className="mb-2 text-lg font-bold text-foreground">
                 {selectedRec?.title}
               </h3>
-              <div className="space-y-4 text-left text-gray-600 dark:text-gray-300">
+              <div className="space-y-4 text-left text-muted-foreground">
                 {selectedRec?.description && (
                   <p>{selectedRec.description}</p>
                 )}
@@ -157,7 +171,7 @@ export default function RecommendationSection({
 
                 {(selectedRec?.evidence || []).length > 0 && (
                   <div className="rounded-xl bg-muted/40 p-4">
-                    <h4 className="mb-2 text-sm font-semibold text-gray-900 dark:text-white">
+                    <h4 className="mb-2 text-sm font-semibold text-foreground dark:text-white">
                       Live Evidence
                     </h4>
                     <ul className="space-y-1 text-sm">

@@ -4,6 +4,8 @@ import signUp from "@/firebase/auth/signup";
 import googleSignIn from "@/firebase/auth/googleSignIn";
 import { useRouter } from 'next/navigation';
 import { useState } from "react";
+import type { FirebaseError } from 'firebase/app';
+import Link from 'next/link';
 
 function Page(): React.ReactElement {
   const [ email, setEmail ] = useState( '' );
@@ -20,34 +22,31 @@ function Page(): React.ReactElement {
     setIsLoading( true );
     setError( '' ); // Clear any previous errors
 
-    // Attempt to sign up with provided email and password
-    const { result, error: signUpError } = await signUp( email, password );
+    try {
+      const { error: signUpError } = await signUp(email.trim(), password);
 
-    if ( signUpError ) {
-      // Handle specific Firebase auth errors
-      let errorMessage = 'An error occurred during sign up. Please try again.';
-      
-      const firebaseError = signUpError as any;
-      if ( firebaseError.code === 'auth/email-already-in-use' ) {
-        errorMessage = 'This email is already registered. Please use a different email or try signing in.';
-      } else if ( firebaseError.code === 'auth/weak-password' ) {
-        errorMessage = 'Password is too weak. Please choose a stronger password.';
-      } else if ( firebaseError.code === 'auth/invalid-email' ) {
-        errorMessage = 'Please enter a valid email address.';
-      } else if ( firebaseError.code === 'auth/operation-not-allowed' ) {
-        errorMessage = 'Email/password accounts are not enabled. Please contact support.';
+      if (signUpError) {
+        let errorMessage = 'An error occurred during sign up. Please try again.';
+        const firebaseError = signUpError as FirebaseError;
+        if (firebaseError.code === 'auth/email-already-in-use') {
+          errorMessage = 'Unable to create an account with these details. Try signing in or use another method.';
+        } else if (firebaseError.code === 'auth/weak-password') {
+          errorMessage = 'Use a password with at least six characters.';
+        } else if (firebaseError.code === 'auth/invalid-email') {
+          errorMessage = 'Please enter a valid email address.';
+        } else if (firebaseError.code === 'auth/operation-not-allowed') {
+          errorMessage = 'Email/password accounts are not enabled. Please contact support.';
+        }
+        setError(errorMessage);
+        return;
       }
-      
-      setError( errorMessage );
-      setIsLoading( false );
-      return;
+
+      router.replace('/dashboard/add-brand/step-1');
+    } catch {
+      setError('An error occurred during sign up. Please try again.');
+    } finally {
+      setIsLoading(false);
     }
-
-    // Sign up successful
-    console.log( result );
-
-    // Redirect new users directly to brand setup (they will have 1000 credits)
-    router.push( "/dashboard/add-brand/step-1" );
   }
 
   // Handle Google sign-in
@@ -55,12 +54,13 @@ function Page(): React.ReactElement {
     setIsGoogleLoading( true );
     setError( '' ); // Clear any previous errors
 
-    const { result, error: googleError } = await googleSignIn();
+    try {
+      const { error: googleError } = await googleSignIn();
 
     if ( googleError ) {
       let errorMessage = 'An error occurred with Google sign-in. Please try again.';
       
-      const firebaseError = googleError as any;
+      const firebaseError = googleError as FirebaseError;
       if ( firebaseError.code === 'auth/popup-closed-by-user' ) {
         errorMessage = 'Sign-in was cancelled. Please try again.';
       } else if ( firebaseError.code === 'auth/popup-blocked' ) {
@@ -68,24 +68,26 @@ function Page(): React.ReactElement {
       }
       
       setError( errorMessage );
-      setIsGoogleLoading( false );
       return;
     }
 
-    console.log( result );
-    // Redirect new users directly to brand setup (they will have 1000 credits)
-    router.push( "/dashboard/add-brand/step-1" );
+      router.replace('/dashboard/add-brand/step-1');
+    } catch {
+      setError('An error occurred with Google sign-in. Please try again.');
+    } finally {
+      setIsGoogleLoading(false);
+    }
   }
 
   return (
-    <div className="flex justify-center items-center h-screen text-black">
-      <div className="w-96 bg-white rounded shadow p-6">
-        <h1 className="text-3xl font-bold mb-6">Registration</h1>
+    <main className="flex min-h-screen items-center justify-center bg-background px-4 py-10">
+      <div className="w-full max-w-sm rounded-xl border border-border bg-card p-6 text-foreground shadow-md">
+        <h1 className="mb-6 text-3xl font-bold">Create account</h1>
         
         {/* Error Message */}
         {error && (
-          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-            <p className="text-red-600 text-sm flex items-center">
+          <div role="alert" aria-live="polite" className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3">
+            <p className="flex items-center text-sm text-destructive">
               <svg className="w-4 h-4 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                 <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
               </svg>
@@ -109,7 +111,9 @@ function Page(): React.ReactElement {
               name="email"
               id="email"
               placeholder="example@mail.com"
-              className="w-full border border-gray-300 rounded px-3 py-2"
+              autoComplete="email"
+              value={email}
+              className="w-full rounded border border-input bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
           <div>
@@ -123,20 +127,19 @@ function Page(): React.ReactElement {
               }}
               required
               type="password"
+              minLength={6}
               name="password"
               id="password"
-              placeholder="password"
-              className="w-full border border-gray-300 rounded px-3 py-2"
+              placeholder="At least 6 characters"
+              autoComplete="new-password"
+              value={password}
+              className="w-full rounded border border-input bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
           <button
             type="submit"
             disabled={isLoading || isGoogleLoading}
-            className={`w-full font-semibold py-2 rounded flex items-center justify-center ${
-              isLoading 
-                ? 'bg-gray-400 cursor-not-allowed' 
-                : 'bg-blue-500 hover:bg-blue-600'
-            } text-white`}
+            className="flex w-full items-center justify-center rounded bg-primary py-2 font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isLoading ? (
               <>
@@ -149,24 +152,20 @@ function Page(): React.ReactElement {
           </button>
           
           <div className="flex items-center my-4">
-            <div className="flex-1 border-t border-gray-300"></div>
-            <span className="px-3 text-gray-500 text-sm">or</span>
-            <div className="flex-1 border-t border-gray-300"></div>
+            <div className="flex-1 border-t border-border"></div>
+            <span className="px-3 text-sm text-muted-foreground">or</span>
+            <div className="flex-1 border-t border-border"></div>
           </div>
           
           <button
             type="button"
             onClick={handleGoogleSignIn}
             disabled={isLoading || isGoogleLoading}
-            className={`w-full font-semibold py-2 px-4 rounded flex items-center justify-center border ${
-              isGoogleLoading 
-                ? 'bg-gray-100 cursor-not-allowed border-gray-300' 
-                : 'bg-white hover:bg-gray-50 border-gray-300'
-            } text-gray-700`}
+            className="flex w-full items-center justify-center rounded border border-border bg-card px-4 py-2 font-semibold text-card-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isGoogleLoading ? (
               <>
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-600 mr-2"></div>
+                <div className="mr-2 h-4 w-4 animate-spin rounded-full border-b-2 border-current"></div>
                 Signing up with Google...
               </>
             ) : (
@@ -183,12 +182,12 @@ function Page(): React.ReactElement {
           </button>
         </form>
         {/* Add this below the signup form */}
-        <div className="mt-4 text-center text-sm text-gray-600 dark:text-gray-300">
+        <div className="mt-4 text-center text-sm text-muted-foreground">
           Already have an account?{' '}
-          <a href="/signin" className="text-primary hover:underline">Login</a>
+          <Link href="/signin" className="text-primary hover:underline">Sign in</Link>
         </div>
       </div>
-    </div>
+    </main>
   );
 }
 

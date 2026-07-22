@@ -14,6 +14,7 @@ import {
   RefreshCw,
   AlertCircle,
 } from 'lucide-react';
+import { buildCsv } from '@/lib/csv';
 
 type Citation = LifetimeCitation;
 
@@ -114,16 +115,16 @@ export default function AllSearchesPage(): React.ReactElement {
   }, [filteredCitations]);
 
   const handleExport = () => {
-    const csvContent = [
-      ['Search Query', 'URL', 'Total Citations', 'Unique Queries', 'Providers'].join(','),
+    const csvContent = buildCsv([
+      ['Search Query', 'URL', 'Total Citations', 'Unique Queries', 'Providers'],
       ...searchStats.map(stat => [
-        `"${(stat.searchText || extractSearchQuery(stat.url)).replace(/"/g, '""')}"`,
+        stat.searchText || extractSearchQuery(stat.url),
         stat.url,
         stat.citations.length,
         stat.queries.size,
         Array.from(stat.providers).join(';')
-      ].join(','))
-    ].join('\n');
+      ])
+    ]);
 
     const blob = new Blob([csvContent], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
@@ -135,7 +136,7 @@ export default function AllSearchesPage(): React.ReactElement {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-muted/40">
       <DashboardLayout>
         <div className="p-6 space-y-8">
           {/* Header */}
@@ -150,29 +151,31 @@ export default function AllSearchesPage(): React.ReactElement {
           </div>
 
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">All Cited Google Searches</h1>
-            <p className="mt-2 text-gray-600">
+            <h1 className="text-3xl font-bold text-foreground">All Cited Google Searches</h1>
+            <p className="mt-2 text-muted-foreground">
               Complete list of all Google search results referenced in AI answers. These SERP pages represent SEO optimization opportunities.
             </p>
           </div>
 
           {/* Search and Filter Controls */}
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+          <div className="bg-card rounded-xl border border-border shadow-sm p-6">
             <div className="flex flex-col sm:flex-row gap-4">
               <div className="flex-1">
                 <input
                   type="text"
+                  aria-label="Search cited Google searches"
                   placeholder="Search by query text, URL, or content..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full rounded-lg border border-border bg-background px-4 py-2 text-foreground placeholder:text-muted-foreground focus:border-transparent focus:ring-2 focus:ring-primary"
                 />
               </div>
               <div className="flex gap-2">
                 <select
+                  aria-label="Filter Google searches by provider"
                   value={selectedProvider}
                   onChange={(e) => setSelectedProvider(e.target.value)}
-                  className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="rounded-lg border border-border bg-background px-4 py-2 text-foreground focus:border-transparent focus:ring-2 focus:ring-primary"
                 >
                   <option value="">All Providers</option>
                   <option value="chatgpt">ChatGPT</option>
@@ -189,7 +192,7 @@ export default function AllSearchesPage(): React.ReactElement {
                 </button>
               </div>
             </div>
-            <div className="mt-4 text-sm text-gray-600">
+            <div className="mt-4 text-sm text-muted-foreground">
               Showing {searchStats.length} search queries from {filteredCitations.length} citations
             </div>
           </div>
@@ -197,7 +200,7 @@ export default function AllSearchesPage(): React.ReactElement {
           {/* All Google Searches Table */}
           {queriesLoading ? (
             <Card className="p-6">
-              <div className="flex items-center space-x-2 text-gray-600">
+              <div className="flex items-center space-x-2 text-muted-foreground">
                 <RefreshCw className="h-4 w-4 animate-spin" />
                 <span>Loading citations...</span>
               </div>
@@ -211,11 +214,11 @@ export default function AllSearchesPage(): React.ReactElement {
             </Card>
           ) : searchStats.length === 0 ? (
             <Card className="p-6 text-center">
-              <div className="w-12 h-12 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
-                <Search className="w-6 h-6 text-gray-400" />
+              <div className="w-12 h-12 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
+                <Search className="w-6 h-6 text-muted-foreground" />
               </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">No Google Searches Found</h3>
-              <p className="text-gray-600">
+              <h3 className="text-lg font-semibold text-foreground mb-2">No Google Searches Found</h3>
+              <p className="text-muted-foreground">
                 {allCitations.length === 0 
                   ? 'Process some queries first to generate citations data.'
                   : 'No Google searches match your current filters. Try adjusting your search criteria.'
@@ -224,14 +227,14 @@ export default function AllSearchesPage(): React.ReactElement {
             </Card>
           ) : (
             <Card className="overflow-hidden">
-              <div className="px-6 py-4 border-b border-gray-100">
-                <h2 className="text-lg font-semibold text-gray-900">All Google Searches ({searchStats.length})</h2>
-                <p className="text-sm text-gray-600">Complete list of Google searches referenced in AI answers</p>
+              <div className="px-6 py-4 border-b border-border">
+                <h2 className="text-lg font-semibold text-foreground">All Google Searches ({searchStats.length})</h2>
+                <p className="text-sm text-muted-foreground">Complete list of Google searches referenced in AI answers</p>
               </div>
               
               {/* Mobile Card Layout */}
               <div className="block lg:hidden">
-                <div className="divide-y divide-gray-200">
+                <div className="divide-y divide-border">
                   {searchStats.map((searchStat, index) => {
                     return (
                       <div key={index} className="p-4 space-y-3">
@@ -254,13 +257,13 @@ export default function AllSearchesPage(): React.ReactElement {
                                 href={searchStat.url}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-gray-400 hover:text-gray-600 transition-colors"
+                                className="text-muted-foreground hover:text-muted-foreground transition-colors"
                                 title="View Google Search"
                               >
                                 <ExternalLink className="w-4 h-4" />
                               </a>
                             </div>
-                            <div className="text-xs text-gray-500 mt-1">
+                            <div className="text-xs text-muted-foreground mt-1">
                               SERP Page
                             </div>
                           </div>
@@ -270,9 +273,9 @@ export default function AllSearchesPage(): React.ReactElement {
                         <div className="flex items-center justify-between">
                           <div className="flex items-center space-x-2">
                             {searchStat.queries.size > 1 && (
-                              <span className="text-lg font-bold text-gray-900">{searchStat.queries.size}</span>
+                              <span className="text-lg font-bold text-foreground">{searchStat.queries.size}</span>
                             )}
-                            <span className="text-sm text-gray-600">
+                            <span className="text-sm text-muted-foreground">
                               {searchStat.queries.size === 1 ? 'answer' : 'answers'}
                             </span>
                           </div>
@@ -315,19 +318,19 @@ export default function AllSearchesPage(): React.ReactElement {
               {/* Desktop Table Layout */}
               <div className="hidden lg:block overflow-x-auto">
                 <table className="w-full min-w-full">
-                  <thead className="bg-gray-50">
+                  <thead className="bg-muted/40">
                     <tr>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
                         Google Search
                       </th>
-                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-4 py-3 text-center text-xs font-medium text-muted-foreground uppercase tracking-wider">
                         Answer Distribution
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
+                  <tbody className="bg-card divide-y divide-border">
                     {searchStats.map((searchStat, index) => (
-                      <tr key={index} className="hover:bg-gray-50">
+                      <tr key={index} className="hover:bg-muted/40">
                         <td className="px-4 py-4">
                           <div className="flex items-center space-x-3">
                             <div className="flex-shrink-0">
@@ -347,13 +350,13 @@ export default function AllSearchesPage(): React.ReactElement {
                                   href={searchStat.url}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                                  className="text-muted-foreground hover:text-muted-foreground transition-colors"
                                   title="View Google Search"
                                 >
                                   <ExternalLink className="w-4 h-4" />
                                 </a>
                               </div>
-                              <div className="text-xs text-gray-500 mt-1">
+                              <div className="text-xs text-muted-foreground mt-1">
                                 SERP Page
                               </div>
                             </div>
@@ -363,7 +366,7 @@ export default function AllSearchesPage(): React.ReactElement {
                           <div className="flex items-center justify-center">
                             <div className="flex items-center space-x-3">
                               {searchStat.queries.size > 1 && (
-                                <span className="text-lg font-bold text-gray-900">{searchStat.queries.size}</span>
+                                <span className="text-lg font-bold text-foreground">{searchStat.queries.size}</span>
                               )}
                             </div>
                             <div className="flex items-center space-x-2 ml-4">

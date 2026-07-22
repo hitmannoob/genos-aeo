@@ -11,7 +11,7 @@ export function calculateLiveCompetitorAnalyticsFromCorpus(
 } {
   const { brand, allResults } = corpus;
 
-  const competitors: Competitor[] = ((brand as any).competitors || []).map((name: string) => ({
+  const competitors: Competitor[] = (brand.competitors || []).map((name) => ({
     name,
     domain: undefined,
     aliases: undefined,
@@ -42,7 +42,7 @@ export function calculateLiveCompetitorAnalyticsFromCorpus(
   }
 
   const previousResults = latestSessionId
-    ? allResults.filter((r: any) => r.processingSessionId !== latestSessionId)
+    ? allResults.filter((r) => r.processingSessionId !== latestSessionId)
     : [];
 
   const previous = previousResults.length > 0

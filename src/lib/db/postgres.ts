@@ -29,6 +29,21 @@ function shouldUseSsl(databaseUrl: string): boolean {
   return !isLocalDatabaseUrl(databaseUrl);
 }
 
+function boundedIntegerFromEnv(
+  name: string,
+  fallback: number,
+  minimum: number,
+  maximum: number
+): number {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`);
+  }
+  return parsed;
+}
+
 export function getPostgresPool(): Pool {
   if (globalThis.__genosPostgresPool) {
     return globalThis.__genosPostgresPool;
@@ -39,9 +54,9 @@ export function getPostgresPool(): Pool {
 
   globalThis.__genosPostgresPool = new Pool({
     connectionString: databaseUrl,
-    max: Number(process.env.POSTGRES_POOL_MAX ?? 5),
-    idleTimeoutMillis: Number(process.env.POSTGRES_IDLE_TIMEOUT_MS ?? 30_000),
-    connectionTimeoutMillis: Number(process.env.POSTGRES_CONNECTION_TIMEOUT_MS ?? 10_000),
+    max: boundedIntegerFromEnv('POSTGRES_POOL_MAX', 5, 1, 100),
+    idleTimeoutMillis: boundedIntegerFromEnv('POSTGRES_IDLE_TIMEOUT_MS', 30_000, 1_000, 600_000),
+    connectionTimeoutMillis: boundedIntegerFromEnv('POSTGRES_CONNECTION_TIMEOUT_MS', 10_000, 1_000, 120_000),
     ssl: useSsl
       ? {
           rejectUnauthorized: process.env.POSTGRES_SSL_REJECT_UNAUTHORIZED !== 'false',

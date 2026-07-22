@@ -1,77 +1,110 @@
-// Load environment variables from .env.local
-require('dotenv').config({ path: '.env.local' });
+const path = require('node:path');
+const dotenv = require('dotenv');
 
-const requiredEnvVars = [
-  'OPENAI_API_KEY',
-  'PERPLEXITY_API_KEY', 
-  'DATAFORSEO_USERNAME',
-  'DATAFORSEO_PASSWORD',
-  'FIREBASE_CLIENT_EMAIL',
-  'FIREBASE_PRIVATE_KEY',
-  'NEXT_PUBLIC_FIREBASE_PROJECT_ID'
-];
-
-console.log('🔍 Validating Environment Configuration...\n');
-
-let allValid = true;
-let missingVars = [];
-
-requiredEnvVars.forEach(varName => {
-  const value = process.env[varName];
-  const isSet = !!value && value.trim() !== '';
-  console.log(`${isSet ? '✅' : '❌'} ${varName}: ${isSet ? 'SET' : 'MISSING'}`);
-  if (!isSet) {
-    allValid = false;
-    missingVars.push(varName);
-  }
+dotenv.config({
+  path: [path.resolve('.env.local'), path.resolve('.env')],
+  quiet: true,
 });
 
-console.log(`\n${allValid ? '✅ All required environment variables are set!' : '❌ Some environment variables are missing!'}`);
+const required = [
+  'DATABASE_URL',
+  'NEXT_PUBLIC_FIREBASE_API_KEY',
+  'NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN',
+  'NEXT_PUBLIC_FIREBASE_PROJECT_ID',
+  'NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID',
+  'NEXT_PUBLIC_FIREBASE_APP_ID',
+];
 
-if (!allValid) {
-  console.log('\n📝 Missing variables:');
-  missingVars.forEach(varName => {
-    console.log(`   - ${varName}`);
-  });
-  
-  console.log('\n🔧 Quick fixes:');
-  console.log('1. Create a .env.local file in your project root');
-  console.log('2. Add the missing environment variables');
-  console.log('3. Restart your development server');
-  console.log('4. See ENV_VARIABLES_SETUP.md for detailed setup instructions');
-  
-  console.log('\n📋 Example .env.local content:');
-  console.log('# OpenAI (for ChatGPT Search)');
-  console.log('OPENAI_API_KEY=sk-your_openai_api_key');
-  console.log('');
-  console.log('# Perplexity AI');
-  console.log('PERPLEXITY_API_KEY=pplx-your_perplexity_api_key');
-  console.log('');
-  console.log('# DataForSEO (for Google AI Overview)');
-  console.log('DATAFORSEO_USERNAME=your_dataforseo_username');
-  console.log('DATAFORSEO_PASSWORD=your_dataforseo_password');
-  console.log('');
-  console.log('# Firebase Admin SDK');
-  console.log('FIREBASE_CLIENT_EMAIL=your_service_account@project.iam.gserviceaccount.com');
-  console.log('FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\nYOUR_PRIVATE_KEY\\n-----END PRIVATE KEY-----\\n"');
-  console.log('NEXT_PUBLIC_FIREBASE_PROJECT_ID=your_project_id');
+function isPlaceholder(value) {
+  return /(^|[-_])your([-_]|$)|replace[_-]?with|YOUR_PRIVATE_KEY|example\.com|test-api-key|test-project/i
+    .test(value);
 }
 
-// Additional validation for specific formats
-if (process.env.OPENAI_API_KEY && !process.env.OPENAI_API_KEY.startsWith('sk-')) {
-  console.log('\n⚠️  Warning: OPENAI_API_KEY should start with "sk-"');
+function isConfigured(name) {
+  const value = process.env[name]?.trim();
+  return Boolean(value && !isPlaceholder(value));
 }
 
-if (process.env.PERPLEXITY_API_KEY && !process.env.PERPLEXITY_API_KEY.startsWith('pplx-')) {
-  console.log('\n⚠️  Warning: PERPLEXITY_API_KEY should start with "pplx-"');
+if (!process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+  required.push('FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY');
 }
 
-if (process.env.FIREBASE_PRIVATE_KEY && !process.env.FIREBASE_PRIVATE_KEY.includes('BEGIN PRIVATE KEY')) {
-  console.log('\n⚠️  Warning: FIREBASE_PRIVATE_KEY should include "BEGIN PRIVATE KEY"');
+const missing = required.filter((name) => !isConfigured(name));
+const hasOpenAi = Boolean(
+  isConfigured('OPENAI_API_KEY') || isConfigured('CHATGPT_SEARCH_API_KEY')
+);
+const hasGemini = Boolean(
+  isConfigured('GOOGLE_AI_API_KEY') || isConfigured('GEMINI_API_KEY')
+);
+const hasPerplexity = isConfigured('PERPLEXITY_API_KEY');
+const hasDataForSeo = Boolean(
+  isConfigured('DATAFORSEO_USERNAME') && isConfigured('DATAFORSEO_PASSWORD')
+);
+const clientUsesAuthEmulator = process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === 'true';
+const serverAuthEmulatorHost = process.env.FIREBASE_AUTH_EMULATOR_HOST?.trim();
+const geminiModel = process.env.GEMINI_MODEL?.trim();
+
+if (geminiModel === 'gemini-3.1-flash-lite-preview') {
+  missing.push('GEMINI_MODEL uses the retired gemini-3.1-flash-lite-preview model; use gemini-3.1-flash-lite');
 }
 
-console.log('\n🌐 Next steps:');
-console.log('1. Run: node validate-config.js (to re-check)');
-console.log('2. Test: curl http://localhost:3001/api/debug-providers');
-console.log('3. Start dev server: npm run dev');
-console.log('4. Try processing a query again'); 
+for (const secretName of ['SERVICE_API_SECRET', 'ADMIN_API_SECRET']) {
+  const value = process.env[secretName]?.trim();
+  if (value && (value.length < 32 || isPlaceholder(value))) {
+    missing.push(`${secretName} (must be a non-placeholder secret of at least 32 characters)`);
+  }
+}
+if (
+  process.env.SERVICE_API_SECRET?.trim()
+  && process.env.SERVICE_API_SECRET.trim() === process.env.ADMIN_API_SECRET?.trim()
+) {
+  missing.push('SERVICE_API_SECRET and ADMIN_API_SECRET must be different');
+}
+if (clientUsesAuthEmulator && !serverAuthEmulatorHost) {
+  missing.push('FIREBASE_AUTH_EMULATOR_HOST (required when the client emulator is enabled)');
+}
+if (
+  serverAuthEmulatorHost
+  && !/^(127\.0\.0\.1|localhost|\[::1\]):\d+$/.test(serverAuthEmulatorHost)
+) {
+  missing.push('FIREBASE_AUTH_EMULATOR_HOST must use a loopback host and explicit port');
+}
+
+try {
+  const databaseUrl = new URL(process.env.DATABASE_URL || '');
+  if (!['postgres:', 'postgresql:'].includes(databaseUrl.protocol)) {
+    missing.push('DATABASE_URL must use the postgres or postgresql scheme');
+  }
+  const localDatabase = ['localhost', '127.0.0.1', '::1'].includes(databaseUrl.hostname);
+  if (!localDatabase && process.env.POSTGRES_SSL !== 'true') {
+    missing.push('POSTGRES_SSL=true is required for a non-local database');
+  }
+  if (!localDatabase && process.env.POSTGRES_SSL_REJECT_UNAUTHORIZED === 'false') {
+    missing.push('POSTGRES_SSL_REJECT_UNAUTHORIZED must not be false for a non-local database');
+  }
+} catch {
+  if (process.env.DATABASE_URL?.trim()) {
+    missing.push('DATABASE_URL is not a valid URL');
+  }
+}
+
+console.log('Genos configuration check');
+for (const name of required) {
+  console.log(`${missing.includes(name) ? 'MISSING' : 'OK'}  ${name}`);
+}
+
+console.log(`\nProviders: OpenAI=${hasOpenAi ? 'yes' : 'no'}, Gemini=${hasGemini ? 'yes' : 'no'}, Perplexity=${hasPerplexity ? 'yes' : 'no'}, DataForSEO=${hasDataForSeo ? 'yes' : 'no'}`);
+
+if (!hasOpenAi && !hasGemini) {
+  missing.push('OPENAI_API_KEY or GOOGLE_AI_API_KEY');
+}
+if (!hasOpenAi && !hasPerplexity && !hasDataForSeo) {
+  missing.push('at least one monitoring provider');
+}
+
+if (missing.length > 0) {
+  console.error(`\nConfiguration incomplete: ${missing.join(', ')}`);
+  process.exitCode = 1;
+} else {
+  console.log('\nConfiguration is ready.');
+}

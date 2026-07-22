@@ -9,8 +9,7 @@ import { usePendingSingleQueries } from '@/context/PendingSingleQueriesContext';
 import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
 import { buildTrackedQueryIdentity } from '@/lib/queryResultUtils';
 import { brandQueriesQueryKey } from '@/hooks/useBrandQueries';
-
-const REQUIRED_CREDITS = 10;
+import { USER_QUERY_CREDIT_COST } from '@/lib/billing/creditCosts';
 
 interface SingleQueryDescriptor {
   query: string;
@@ -40,7 +39,7 @@ export default function ProcessSingleQueryButton({
 }: ProcessSingleQueryButtonProps): React.ReactElement {
   const { user, userProfile, refreshUserProfile } = useAuthContext();
   const { brands, refetchBrands } = useBrandContext();
-  const { showError } = useToast();
+  const { showError, showWarning } = useToast();
   const { addPending, removePending, getPending } = usePendingSingleQueries();
   const queryClient = useQueryClient();
   const [errored, setErrored] = useState(false);
@@ -48,7 +47,7 @@ export default function ProcessSingleQueryButton({
   const queryId = buildTrackedQueryIdentity(query);
   const targetBrand = brands.find((b) => b.id === brandId);
   const available = userProfile?.credits ?? 0;
-  const hasEnoughCredits = available >= REQUIRED_CREDITS;
+  const hasEnoughCredits = available >= USER_QUERY_CREDIT_COST;
   // The shared pending set lives in context, so even if this exact button
   // unmounts mid-fetch (user navigated away and a sibling instance now
   // renders the row), the "is in flight" signal survives.
@@ -62,7 +61,7 @@ export default function ProcessSingleQueryButton({
     : !targetBrand
     ? 'Brand not loaded'
     : !hasEnoughCredits
-    ? `Needs ${REQUIRED_CREDITS} credits (you have ${available})`
+    ? `Needs ${USER_QUERY_CREDIT_COST} credits (you have ${available})`
     : busy
     ? 'Processing…'
     : errored
@@ -83,9 +82,9 @@ export default function ProcessSingleQueryButton({
       if (!idToken) throw new Error('Failed to get authentication token');
 
       const sessionTimestamp = new Date().toISOString();
-      const rand = Math.random().toString(36).slice(2, 10);
-      const sessionId = `single-${brandId}-${Date.now()}-${rand}`;
-      const clientRequestId = `single::${brandId}::${queryId}::${Date.now()}-${rand}`;
+      const requestId = crypto.randomUUID();
+      const sessionId = `single-${requestId}`;
+      const clientRequestId = `single:${requestId}`;
 
       const response = await fetch('/api/user-query', {
         method: 'POST',
@@ -95,11 +94,8 @@ export default function ProcessSingleQueryButton({
         },
         body: JSON.stringify({
           query: query.query,
-          context: `This query is related to ${targetBrand.companyName} in the ${query.category} category. Topic: ${query.keyword}.`,
           persistResult: true,
           brandId: targetBrand.id,
-          brandName: targetBrand.companyName,
-          brandDomain: targetBrand.domain,
           keyword: query.keyword,
           category: query.category,
           processingSessionId: sessionId,
@@ -124,7 +120,16 @@ export default function ProcessSingleQueryButton({
       await queryClient.invalidateQueries({
         queryKey: brandQueriesQueryKey(user?.uid, brandId),
       });
-      await Promise.all([refreshUserProfile(), refetchBrands()]);
+      const syncResults = await Promise.allSettled([
+        refreshUserProfile(),
+        refetchBrands(),
+      ]);
+      if (syncResults.some((result) => result.status === 'rejected')) {
+        showWarning(
+          'Query processed',
+          'The result was saved, but some dashboard data could not refresh. Reload the page to sync it.'
+        );
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to process query';
       showError('Processing failed', message);

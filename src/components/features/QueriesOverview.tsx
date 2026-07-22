@@ -26,17 +26,21 @@ import type { UserBrand } from '@/types/userBrand';
 import { useReprocessingJob } from '@/hooks/useReprocessingJob';
 import { usePendingSingleQueries } from '@/context/PendingSingleQueriesContext';
 import { getCategoryPillClasses } from '@/lib/queryCategories';
-import { extractChatGPTCitations } from './ChatGPTResponseRenderer';
-import { extractGoogleAIOverviewCitations } from './GoogleAIOverviewRenderer';
-import { extractPerplexityCitations } from './PerplexityResponseRenderer';
-import { analyzeBrandMentions } from './BrandMentionCounter';
+import {
+  citationsForChatGPT,
+  citationsForGoogle,
+  citationsForPerplexity,
+} from '@/lib/citations/stored';
+import { analyzeBrandMentions } from '@/lib/brand-mentions';
+
+type TrackedBrandQuery = NonNullable<UserBrand['queries']>[number];
 
 // Add LoadingDots component
 const LoadingDots = () => (
   <span className="inline-flex items-center">
-    <span className="animate-[loading_1.4s_ease-in-out_infinite] rounded-full h-1 w-1 mx-0.5 bg-white"></span>
-    <span className="animate-[loading_1.4s_ease-in-out_0.2s_infinite] rounded-full h-1 w-1 mx-0.5 bg-white"></span>
-    <span className="animate-[loading_1.4s_ease-in-out_0.4s_infinite] rounded-full h-1 w-1 mx-0.5 bg-white"></span>
+    <span className="animate-[loading_1.4s_ease-in-out_infinite] rounded-full h-1 w-1 mx-0.5 bg-card"></span>
+    <span className="animate-[loading_1.4s_ease-in-out_0.2s_infinite] rounded-full h-1 w-1 mx-0.5 bg-card"></span>
+    <span className="animate-[loading_1.4s_ease-in-out_0.4s_infinite] rounded-full h-1 w-1 mx-0.5 bg-card"></span>
   </span>
 );
 
@@ -51,7 +55,7 @@ interface QueriesOverviewProps {
   brandOverride?: UserBrand; // Allow overriding the selected brand
   className?: string;
   onViewAll?: () => void; // Callback for "View All" action
-  onQueryClick?: (query: any, result: any) => void; // Callback for individual query clicks
+  onQueryClick?: (query: TrackedBrandQuery, result: QueryProcessingResult) => void;
 }
 
 export default function QueriesOverview({ 
@@ -115,8 +119,6 @@ export default function QueriesOverview({
   // batch scope without stale-state bugs.
   const batchQueriesRef = useRef<Set<string>>(new Set());
   const lastAttemptedCountRef = useRef(0);
-  // const processButtonRef = React.useRef<any>(null); // Removed as per edit hint
-
   // Use brand override if provided, otherwise use selected brand
   const brand = brandOverride || selectedBrand;
   const { queries: fetchedQueryResults, refetch: refetchQueryResults } = useBrandQueries({ brandId: brand?.id });
@@ -223,7 +225,7 @@ export default function QueriesOverview({
   // means "being processed right now." We check it first to preserve the
   // spinner on in-flight queries — including re-runs of queries that already
   // have prior data. Non-batch queries fall through to their real status.
-  const getQueryStatus = (query: any) => {
+  const getQueryStatus = (query: TrackedBrandQuery) => {
     const queryIdentity = buildTrackedQueryIdentity(query);
     const queryResult = findQueryResult(query);
 
@@ -251,7 +253,19 @@ export default function QueriesOverview({
     if (queryResult) {
       const processedDate = new Date(queryResult.date);
       const now = new Date();
-      const daysSinceProcessed = Math.floor((now.getTime() - processedDate.getTime()) / (1000 * 60 * 60 * 24));
+      const processedTime = processedDate.getTime();
+      if (Number.isNaN(processedTime)) {
+        return {
+          status: 'Processed',
+          color: 'bg-green-500 text-white',
+          description: 'Query has a stored result',
+          showLoader: false,
+        };
+      }
+      const daysSinceProcessed = Math.max(
+        0,
+        Math.floor((now.getTime() - processedTime) / (1000 * 60 * 60 * 24))
+      );
 
       if (daysSinceProcessed <= 7) {
         return {
@@ -278,24 +292,18 @@ export default function QueriesOverview({
   };
 
   // Helper function to analyze brand mentions for a specific query result
-  const getBrandAnalysisForQuery = (queryResult: any) => {
+  const getBrandAnalysisForQuery = (queryResult: QueryProcessingResult) => {
     if (!queryResult || !brand) return null;
 
     const brandName = brand.companyName || '';
     const brandDomain = brand.domain || '';
 
     // Extract citations for each provider
-    const chatgptCitations = queryResult.results?.chatgpt ? 
-      extractChatGPTCitations(queryResult.results.chatgpt.response || '') : [];
+    const chatgptCitations = citationsForChatGPT(queryResult.results?.chatgpt);
     const canonicalGoogleResult = getCanonicalGoogleResult(queryResult.results);
     const googleOverview = getGoogleResultText(canonicalGoogleResult);
-    const googleCitations = canonicalGoogleResult ?
-      extractGoogleAIOverviewCitations(googleOverview, {
-        ...canonicalGoogleResult,
-        aiOverview: googleOverview,
-      }) : [];
-    const perplexityCitations = queryResult.results?.perplexity ? 
-      extractPerplexityCitations(queryResult.results.perplexity.response || '', queryResult.results.perplexity) : [];
+    const googleCitations = citationsForGoogle(canonicalGoogleResult);
+    const perplexityCitations = citationsForPerplexity(queryResult.results?.perplexity);
 
     // Analyze brand mentions
     const analysis = analyzeBrandMentions(brandName, brandDomain, {
@@ -311,7 +319,7 @@ export default function QueriesOverview({
         response: queryResult.results.perplexity.response || '',
         citations: perplexityCitations
       } : undefined
-    }, (brand as any)?.competitors || []);
+    }, brand.competitors || []);
 
     return {
       analysis,
@@ -487,9 +495,9 @@ export default function QueriesOverview({
                     <th className="px-4 py-3 text-center text-sm font-medium text-muted-foreground">Status</th>
                     <th className="px-4 py-3 text-center text-sm font-medium text-muted-foreground">Topic</th>
                     <th className="px-4 py-3 text-center text-sm font-medium text-muted-foreground">Intent</th>
-                    <th className="px-4 py-3 text-center text-sm font-medium text-muted-foreground">Brand Mentions</th>
+                    <th className="px-4 py-3 text-center text-sm font-medium text-muted-foreground">Brand Response Hits</th>
                     <th className="px-4 py-3 text-center text-sm font-medium text-muted-foreground">Citations</th>
-                    <th className="px-4 py-3 text-center text-sm font-medium text-muted-foreground">Competitors Mentions</th>
+                    <th className="px-4 py-3 text-center text-sm font-medium text-muted-foreground">Competitor Response Hits</th>
                     <th className="px-4 py-3 text-center text-sm font-medium text-muted-foreground">Actions</th>
                   </tr>
                 </thead>
@@ -682,7 +690,7 @@ export default function QueriesOverview({
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation(); // Prevent row click when button is clicked
-                                  onQueryClick && onQueryClick(query, queryResult);
+                                  onQueryClick?.(query, queryResult);
                                 }}
                                 className="px-3 py-1.5 text-xs font-medium text-primary bg-primary/10 hover:bg-primary/20 rounded-lg transition-colors duration-200 group-hover:bg-primary group-hover:text-primary-foreground"
                                 title="View detailed AI responses"

@@ -2,11 +2,12 @@ import 'server-only';
 
 import { randomUUID } from 'crypto';
 import { withTransaction } from '@/lib/db/postgres';
-
-export const USER_QUERY_CREDIT_COST = 10;
-export const BRAND_CREATION_CREDIT_COST = 100;
-export const GENERIC_AI_QUERY_CREDIT_COST = 10;
-export const COMPANY_INFO_CREDIT_COST = 5;
+export {
+  USER_QUERY_CREDIT_COST,
+  BRAND_CREATION_CREDIT_COST,
+  QUERY_GENERATION_CREDIT_COST,
+  COMPANY_INFO_CREDIT_COST,
+} from './creditCosts';
 
 export interface CreditMutationResult {
   before: number;

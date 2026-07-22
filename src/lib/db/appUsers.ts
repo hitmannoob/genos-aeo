@@ -32,7 +32,7 @@ export function appUserRowToProfile(row: AppUserRow): UserProfile {
     createdAt: toIsoString(row.created_at),
     lastLoginAt: toIsoString(row.last_login_at),
     isNewUser: row.is_new_user,
-  } as UserProfile;
+  };
 }
 
 function normalizeEmail(decodedToken: DecodedIdToken): string {

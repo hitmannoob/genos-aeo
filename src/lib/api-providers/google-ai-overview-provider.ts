@@ -1,4 +1,4 @@
-import { BaseAPIProvider } from './base-provider';
+import { BaseAPIProvider, ProviderHttpError } from './base-provider';
 import { APIResponse, ProviderConfig, GoogleAIOverviewRequest, NormalizedCitation, parseDomain } from './types';
 
 export class GoogleAIOverviewProvider extends BaseAPIProvider {
@@ -29,10 +29,6 @@ export class GoogleAIOverviewProvider extends BaseAPIProvider {
     const startTime = Date.now();
     const requestId = `google-ai-overview-${Date.now()}`;
 
-    console.log('🚨🚨🚨 GOOGLE AI OVERVIEW EXECUTE CALLED 🚨🚨🚨');
-    console.log('Request:', JSON.stringify(request, null, 2));
-    console.log('🚨🚨🚨 GOOGLE AI OVERVIEW EXECUTE START 🚨🚨🚨');
-
     try {
       if (!this.validateRequest(request)) {
         throw new Error('Invalid request format');
@@ -45,8 +41,6 @@ export class GoogleAIOverviewProvider extends BaseAPIProvider {
       // Defaults are applied here with explicit documentation. Callers may
       // override any field via the request object (wired through
       // ProviderManager from APIRequest.metadata).
-      // TODO: wire these to the authenticated user's profile (locale /
-      // market preferences) so we pick the right region automatically.
       const payload = [{
         keyword: request.keyword,
         // Default DataForSEO location_code 2840 = United States.
@@ -60,10 +54,12 @@ export class GoogleAIOverviewProvider extends BaseAPIProvider {
         depth: request.depth ?? 10,
         group_organic_results: request.group_organic_results ?? true,
         load_async_ai_overview: request.load_async_ai_overview ?? true,
-        people_also_ask_click_depth: request.people_also_ask_click_depth ?? 4
+        // People Also Ask expansion is a separately billed enrichment. Only
+        // request it when a caller explicitly needs those expanded answers.
+        ...(request.people_also_ask_click_depth !== undefined && {
+          people_also_ask_click_depth: request.people_also_ask_click_depth,
+        }),
       }];
-
-      console.log('🔍 Google AI Overview Request Payload:', JSON.stringify(payload, null, 2));
 
       const response = await this.retryRequest(async () => {
         const fetchResponse = await fetch(this.apiUrl, {
@@ -72,54 +68,25 @@ export class GoogleAIOverviewProvider extends BaseAPIProvider {
             'Authorization': this.authHeader,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(payload)
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(this.config.timeout),
         });
 
         if (!fetchResponse.ok) {
-          throw new Error(`HTTP ${fetchResponse.status}: ${fetchResponse.statusText}`);
+          throw new ProviderHttpError(fetchResponse.status);
         }
 
-        const jsonResponse = await fetchResponse.json();
-        
-        // EXPLICIT RAW RESPONSE LOGGING
-        console.log('🚨🚨🚨 DATAFORSEO RAW RESPONSE START 🚨🚨🚨');
-        console.log(JSON.stringify(jsonResponse, null, 2));
-        console.log('🚨🚨🚨 DATAFORSEO RAW RESPONSE END 🚨🚨🚨');
-        
-        return jsonResponse;
+        const body = await fetchResponse.json();
+        const topStatus = Number(body?.status_code);
+        const task = body?.tasks?.[0];
+        const taskStatus = Number(task?.status_code);
+        if (topStatus !== 20_000 || taskStatus !== 20_000 || !Array.isArray(task?.result)) {
+          throw new Error('DataForSEO returned an unsuccessful task response');
+        }
+        return body;
       });
-
-      // Console log the complete raw response
-      console.log('🌐 Google AI Overview Complete Raw Response:', JSON.stringify(response, null, 2));
-      
-      // Log specific parts for easier debugging
-      console.log('📊 Google AI Overview Response Summary:', {
-        status: response.status_code,
-        statusMessage: response.status_message,
-        tasksCount: response.tasks?.length || 0,
-        hasResults: !!(response.tasks?.[0]?.result),
-        resultsCount: response.tasks?.[0]?.result?.length || 0,
-        cost: response.cost || 0
-      });
-
-      // Log the raw items array to see what's available
-      const items = response.tasks?.[0]?.result?.[0]?.items || [];
-      console.log('🔍 Raw Items Array:', JSON.stringify(items, null, 2));
-      console.log('📝 Item Types Found:', items.map((item: any) => item.type));
 
       const transformedData = this.transformResponse(response);
-      
-      // Console log the transformed data
-      console.log('✨ Google AI Overview Transformed Data:', JSON.stringify(transformedData, null, 2));
-      
-      // Log the content field specifically
-      console.log('📄 Content Field Value:', {
-        hasContent: !!transformedData.content,
-        contentLength: transformedData.content?.length || 0,
-        contentPreview: transformedData.content?.substring(0, 200) || 'No content',
-        aiOverview: transformedData.aiOverview,
-        hasAIOverview: transformedData.hasAIOverview
-      });
       
       const responseTime = Date.now() - startTime;
       const cost = this.calculateCost(response);
@@ -136,15 +103,6 @@ export class GoogleAIOverviewProvider extends BaseAPIProvider {
 
     } catch (error) {
       const responseTime = Date.now() - startTime;
-      
-      // Console log Google AI Overview errors
-      console.error('❌ Google AI Overview Request Error:', {
-        requestId,
-        error: (error as Error).message,
-        stack: (error as Error).stack,
-        responseTime,
-        request: JSON.stringify(request, null, 2)
-      });
       
       return {
         providerId: this.name,
@@ -179,8 +137,13 @@ export class GoogleAIOverviewProvider extends BaseAPIProvider {
     const peopleAlsoSearchResults = items.filter((item: any) => item.type === 'people_also_search');
     
     // Extract AI Overview content and references
-    let aiOverview = null;
-    let aiOverviewReferences = [];
+    let aiOverview: string | null = null;
+    let aiOverviewReferences: Array<{
+      domain: string;
+      url: string;
+      title: string;
+      text: string;
+    }> = [];
     
     // Look for AI Overview content - type: "ai_overview" with markdown property
     const aiOverviewItems = items.filter((item: any) => item.type === 'ai_overview');
@@ -188,13 +151,8 @@ export class GoogleAIOverviewProvider extends BaseAPIProvider {
       const aiOverviewItem = aiOverviewItems[0];
       if (aiOverviewItem.markdown) {
         aiOverview = aiOverviewItem.markdown;
-        console.log('✅ Found AI Overview with markdown content:', aiOverview.substring(0, 200) + '...');
       } else if (aiOverviewItem.text) {
         aiOverview = aiOverviewItem.text;
-        console.log('✅ Found AI Overview with text content:', aiOverview.substring(0, 200) + '...');
-      } else {
-        aiOverview = "AI Overview Present";
-        console.log('✅ Found AI Overview item but no markdown/text content');
       }
     }
     
@@ -207,31 +165,16 @@ export class GoogleAIOverviewProvider extends BaseAPIProvider {
         title: item.title || item.domain || '',
         text: item.text || item.title || item.domain || ''
       }));
-      console.log(`✅ Found ${aiOverviewReferences.length} AI Overview references:`, aiOverviewReferences);
     }
     
     // Simple AI Overview detection - check for "ai_overview" in item_types
-    const rawResponseString = JSON.stringify(rawResponse);
-    const hasAIOverviewInItemTypes = rawResponseString.includes('"item_types"') && 
-                                     rawResponseString.includes('"ai_overview"');
+    const hasAIOverviewInItemTypes = Array.isArray(result?.item_types)
+      && result.item_types.includes('ai_overview');
     
     // Enhanced detection - check for actual AI Overview items
     const hasAIOverviewItems = aiOverviewItems.length > 0;
-    const hasAIOverviewRefs = aiOverviewReferenceItems.length > 0;
-    
     // Final determination
     const hasAIOverview = hasAIOverviewItems || hasAIOverviewInItemTypes;
-    
-    if (hasAIOverview) {
-      console.log('✅ AI Overview detected:', {
-        hasItems: hasAIOverviewItems,
-        hasReferences: hasAIOverviewRefs,
-        contentLength: aiOverview?.length || 0,
-        referencesCount: aiOverviewReferences.length
-      });
-    } else {
-      console.log('❌ No AI Overview detected');
-    }
     
     return {
       status: rawResponse.status_code,
@@ -252,9 +195,6 @@ export class GoogleAIOverviewProvider extends BaseAPIProvider {
 
       // Canonical normalized citation list for downstream aggregation
       normalizedCitations: GoogleAIOverviewProvider.extractNormalizedCitations(rawResponse),
-      
-      // Raw response for browser console debugging
-      rawDataForSEOResponse: rawResponse,
       
       // Organic search results
       organicResults: organicResults,
@@ -292,21 +232,15 @@ export class GoogleAIOverviewProvider extends BaseAPIProvider {
         totalResults: result?.total_count,
         timesTaken: result?.time_taken_displayed
       },
-      
-      // Raw response for debugging
-      rawResponse: rawResponse
     };
   }
 
   // Build the canonical NormalizedCitation list from a raw DataForSEO AI Overview
   // response.
   //
-  // Decision (2026-04): this includes both `ai_overview_reference` items
-  // (genuine AI Overview citations) AND `organic` result URLs. The existing
-  // citation-counting code downstream already treats organic results as
-  // citations, so including them here keeps the migration behavior-compatible.
-  // The `rawKind` field ('ai-overview-reference' vs 'organic-result') lets
-  // later consumers filter organics out if/when product wants stricter counts.
+  // Only AI Overview references are citations. Organic search results remain
+  // available in `organicResults`, but counting them as AI citations inflates
+  // the dashboard's visibility and citation metrics.
   static extractNormalizedCitations(rawResponse: any): NormalizedCitation[] {
     const items = rawResponse?.tasks?.[0]?.result?.[0]?.items || [];
     const out: NormalizedCitation[] = [];
@@ -331,8 +265,6 @@ export class GoogleAIOverviewProvider extends BaseAPIProvider {
       if (!item || typeof item !== 'object') return;
       if (item.type === 'ai_overview_reference') {
         push(item.url, 'ai-overview-reference', item.title || item.domain);
-      } else if (item.type === 'organic') {
-        push(item.url, 'organic-result', item.title);
       }
     });
 
@@ -340,24 +272,14 @@ export class GoogleAIOverviewProvider extends BaseAPIProvider {
   }
 
   protected calculateCost(response: any): number {
-    // DataForSEO pricing - typically around $0.0001 per request
-    // The actual cost is usually provided in the response
-    return response.cost || 0.0001;
+    const taskCosts = Array.isArray(response?.tasks)
+      ? response.tasks.map((task: any) => Number(task?.cost ?? 0))
+      : [];
+    if (taskCosts.length > 0 && taskCosts.every((cost: number) => Number.isFinite(cost) && cost >= 0)) {
+      return taskCosts.reduce((sum: number, cost: number) => sum + cost, 0);
+    }
+    const reportedCost = Number(response?.cost ?? 0);
+    return Number.isFinite(reportedCost) && reportedCost >= 0 ? reportedCost : 0;
   }
 
-  async healthCheck(): Promise<boolean> {
-    try {
-      const testRequest: GoogleAIOverviewRequest = {
-        keyword: 'test search query',
-        location_code: 2840,
-        language_code: 'en',
-        device: 'desktop'
-      };
-      
-      const result = await this.execute(testRequest);
-      return result.status === 'success';
-    } catch {
-      return false;
-    }
-  }
-} 
+}

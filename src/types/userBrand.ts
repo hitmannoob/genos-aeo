@@ -1,17 +1,5 @@
 import type { QueryProcessingResult } from '@/lib/queryResultUtils';
 
-export interface BrandBasicData {
-  brandMentions: number;
-  brandMentionsChange: number;
-  brandValidity: number;
-  brandValidityChange: number;
-  lastUpdated: string;
-  linkValidity: number;
-  linkValidityChange: number;
-  sentimentChange: number;
-  sentimentScore: number;
-}
-
 export interface UserBrand {
   id: string;
   userId: string;
@@ -21,6 +9,7 @@ export interface UserBrand {
   shortDescription?: string;
   productsAndServices?: string[];
   keywords?: string[];
+  competitors?: string[];
   queries?: Array<{
     keyword: string;
     query: string;
@@ -46,9 +35,8 @@ export interface UserBrand {
     completedAt: string;
     requestId: string | null;
   } | null;
-  brandsbasicData?: BrandBasicData;
   queryProcessingResults?: QueryProcessingResult[];
-  lastProcessedAt?: any;
+  lastProcessedAt?: unknown;
 }
 
 export type { QueryProcessingResult } from '@/lib/queryResultUtils';

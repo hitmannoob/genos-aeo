@@ -1,4 +1,4 @@
-import { BaseAPIProvider } from './base-provider';
+import { BaseAPIProvider, ProviderHttpError } from './base-provider';
 import { APIResponse, ProviderConfig, PerplexityRequest, NormalizedCitation, parseDomain } from './types';
 
 export class PerplexityProvider extends BaseAPIProvider {
@@ -8,7 +8,7 @@ export class PerplexityProvider extends BaseAPIProvider {
   constructor(config: ProviderConfig) {
     super('perplexity', 'ai', config);
     this.apiKey = config.apiKey;
-    this.apiUrl = 'https://api.perplexity.ai/chat/completions';
+    this.apiUrl = 'https://api.perplexity.ai/v1/sonar';
   }
 
   async execute(request: PerplexityRequest & { _userId?: string }): Promise<APIResponse> {
@@ -36,12 +36,12 @@ export class PerplexityProvider extends BaseAPIProvider {
             content: request.prompt || request.input || 'Please provide information on this topic.'
           }
         ],
-        temperature: request.temperature || 0.7,
-        max_tokens: request.max_tokens || 1000,
-        top_p: request.top_p || 1,
+        temperature: request.temperature ?? 0.7,
+        max_tokens: request.max_tokens ?? 1000,
+        top_p: request.top_p ?? 1,
         stream: false,
-        presence_penalty: request.presence_penalty || 0,
-        frequency_penalty: request.frequency_penalty || 0,
+        presence_penalty: request.presence_penalty ?? 0,
+        frequency_penalty: request.frequency_penalty ?? 0,
         // Experimental search parameters for better results
         ...(request.search_domain_filter && { search_domain_filter: request.search_domain_filter }),
         ...(request.search_recency_filter && { search_recency_filter: request.search_recency_filter }),
@@ -49,8 +49,6 @@ export class PerplexityProvider extends BaseAPIProvider {
         ...(request.return_images && { return_images: request.return_images }),
         ...(request.return_related_questions && { return_related_questions: request.return_related_questions })
       };
-
-      console.log('🔍 Perplexity Request Payload:', JSON.stringify(payload, null, 2));
 
       const response = await this.retryRequest(async () => {
         const fetchResponse = await fetch(this.apiUrl, {
@@ -60,55 +58,23 @@ export class PerplexityProvider extends BaseAPIProvider {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${this.apiKey}`,
           },
-          body: JSON.stringify(payload)
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(this.config.timeout),
         });
 
         if (!fetchResponse.ok) {
-          const errorText = await fetchResponse.text();
-          throw new Error(`HTTP ${fetchResponse.status}: ${fetchResponse.statusText} - ${errorText}`);
+          throw new ProviderHttpError(fetchResponse.status);
         }
 
         return await fetchResponse.json();
       });
 
-      // Enhanced console logging for Perplexity
-      console.log('🚨🚨🚨 PERPLEXITY COMPLETE RAW RESPONSE 🚨🚨🚨');
-      console.log(JSON.stringify(response, null, 2));
-      console.log('🚨🚨🚨 PERPLEXITY RAW RESPONSE END 🚨🚨🚨');
-      
-      // Log specific parts for easier debugging
-      console.log('🌐 Perplexity Response Summary:', {
-        model: response.model || 'sonar-pro',
-        hasChoices: !!response.choices,
-        choicesCount: response.choices?.length || 0,
-        hasContent: !!response.choices?.[0]?.message?.content,
-        contentLength: response.choices?.[0]?.message?.content?.length || 0,
-        contentPreview: response.choices?.[0]?.message?.content?.substring(0, 200) + '...',
-        usage: response.usage,
-        hasCitations: !!response.citations,
-        citationsCount: response.citations?.length || 0,
-        citations: response.citations || [],
-        hasSearchResults: !!response.search_results,
-        searchResultsCount: response.search_results?.length || 0,
-        searchResults: response.search_results || []
-      });
-
       const transformedData = this.transformResponse(response);
-      
-      // Console log the transformed data
-      console.log('✨ Perplexity Transformed Data:', JSON.stringify(transformedData, null, 2));
-      
+      if (!transformedData.content.trim()) {
+        throw new Error('Perplexity returned an empty response');
+      }
       const responseTime = Date.now() - startTime;
       const cost = this.calculateCost(response);
-
-      console.log('✅ Perplexity completed:', {
-        status: 'success',
-        responseTime,
-        cost,
-        hasContent: !!transformedData.content,
-        citationsCount: transformedData.citations?.length || 0,
-        searchResultsCount: transformedData.searchResults?.length || 0
-      });
 
       return {
         providerId: this.name,
@@ -122,14 +88,6 @@ export class PerplexityProvider extends BaseAPIProvider {
 
     } catch (error) {
       const responseTime = Date.now() - startTime;
-      
-      console.error('❌ Perplexity Request Error:', {
-        requestId,
-        error: (error as Error).message,
-        stack: (error as Error).stack,
-        responseTime,
-        request: JSON.stringify(request, null, 2)
-      });
       
       return {
         providerId: this.name,
@@ -198,7 +156,6 @@ export class PerplexityProvider extends BaseAPIProvider {
         citationsCount: rawResponse.citations?.length || 0,
         searchResultsCount: rawResponse.search_results?.length || 0
       },
-      rawResponse: rawResponse
     };
   }
 
@@ -301,25 +258,25 @@ export class PerplexityProvider extends BaseAPIProvider {
   }
 
   protected calculateCost(response: any): number {
-    // Perplexity Sonar pricing (approximate)
-    // Sonar models: ~$0.005 per 1K tokens
-    const totalTokens = response.usage?.total_tokens || 0;
-    const costPer1KTokens = 0.005;
-    return (totalTokens / 1000) * costPer1KTokens;
+    const reportedCost = Number(response.usage?.cost?.total_cost ?? response.cost);
+    if (Number.isFinite(reportedCost) && reportedCost >= 0) return reportedCost;
+
+    const inputRate = Number(process.env.PERPLEXITY_INPUT_PRICE_PER_MILLION);
+    const outputRate = Number(process.env.PERPLEXITY_OUTPUT_PRICE_PER_MILLION);
+    const requestRate = Number(process.env.PERPLEXITY_PRICE_PER_REQUEST ?? 0);
+    if (
+      !Number.isFinite(inputRate) || inputRate < 0
+      || !Number.isFinite(outputRate) || outputRate < 0
+      || !Number.isFinite(requestRate) || requestRate < 0
+    ) {
+      return 0;
+    }
+
+    return (
+      (Number(response.usage?.prompt_tokens ?? 0) / 1_000_000) * inputRate
+      + (Number(response.usage?.completion_tokens ?? 0) / 1_000_000) * outputRate
+      + requestRate
+    );
   }
 
-  async healthCheck(): Promise<boolean> {
-    try {
-      const testRequest: PerplexityRequest = {
-        prompt: 'What is the current date?',
-        model: 'sonar-pro',
-        max_tokens: 50
-      };
-      
-      const result = await this.execute(testRequest);
-      return result.status === 'success';
-    } catch {
-      return false;
-    }
-  }
-} 
+}

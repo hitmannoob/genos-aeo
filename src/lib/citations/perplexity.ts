@@ -157,8 +157,5 @@ export function extractPerplexityCitations(text: string, perplexityData?: Perple
     }
   }
 
-  // First citation is intentionally dropped — Perplexity duplicates the lead source.
-  const filteredCitations = citations.length > 0 ? citations.slice(1) : citations;
-
-  return filteredCitations;
+  return citations;
 }

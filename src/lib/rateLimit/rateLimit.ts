@@ -1,6 +1,9 @@
 import { createHash } from 'crypto';
 import { withTransaction } from '@/lib/db/postgres';
 
+const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+let nextCleanupAt = 0;
+
 export interface RateLimitArgs {
   bucketId: string;
   limit: number;
@@ -20,86 +23,89 @@ function buildDocId(bucketId: string): string {
 export async function consumeRateLimit(
   args: RateLimitArgs
 ): Promise<RateLimitResult> {
+  if (!Number.isInteger(args.limit) || args.limit <= 0) {
+    throw new Error('Rate-limit count must be a positive integer');
+  }
+  if (!Number.isInteger(args.windowMs) || args.windowMs <= 0) {
+    throw new Error('Rate-limit window must be a positive integer');
+  }
+
   const bucketId = buildDocId(args.bucketId);
 
   return withTransaction(async (client) => {
+    const now = Date.now();
+    if (now >= nextCleanupAt) {
+      nextCleanupAt = now + CLEANUP_INTERVAL_MS;
+      await client.query(`
+        delete from rate_limit_buckets
+        where bucket_id in (
+          select bucket_id
+          from rate_limit_buckets
+          where expires_at < now() - interval '1 day'
+          order by expires_at
+          limit 500
+        )
+      `);
+    }
+
     const result = await client.query<{
       count: number;
-      window_start_at: Date | string;
+      expires_at: Date | string;
     }>(
       `
-        select count, window_start_at
-        from rate_limit_buckets
-        where bucket_id = $1
-        for update
-      `,
-      [bucketId]
-    );
-
-    const existing = result.rows[0];
-    const nowMs = Date.now();
-    const windowStartMs = existing
-      ? new Date(existing.window_start_at).getTime()
-      : 0;
-    const currentCount = Number(existing?.count ?? 0);
-    const windowExpired = !existing || !windowStartMs || nowMs - windowStartMs >= args.windowMs;
-
-    if (windowExpired) {
-      await client.query(
-        `
-          insert into rate_limit_buckets (
-            bucket_id,
-            count,
-            limit_count,
-            window_ms,
-            window_start_at,
-            expires_at
-          )
-          values ($1, 1, $2, $3, now(), now() + ($3::int * interval '1 millisecond'))
-          on conflict (bucket_id) do update set
-            count = 1,
-            limit_count = excluded.limit_count,
-            window_ms = excluded.window_ms,
-            window_start_at = excluded.window_start_at,
-            expires_at = excluded.expires_at,
-            updated_at = now()
-        `,
-        [bucketId, args.limit, args.windowMs]
-      );
-
-      return {
-        allowed: true,
-        remaining: Math.max(0, args.limit - 1),
-        retryAfterSeconds: 0,
-      };
-    }
-
-    if (currentCount >= args.limit) {
-      const retryAfterSeconds = Math.max(1, Math.ceil((windowStartMs + args.windowMs - nowMs) / 1000));
-      return {
-        allowed: false,
-        remaining: 0,
-        retryAfterSeconds,
-      };
-    }
-
-    await client.query(
-      `
-        update rate_limit_buckets
-        set count = count + 1,
-            limit_count = $2,
-            window_ms = $3,
-            expires_at = window_start_at + ($3::int * interval '1 millisecond'),
-            updated_at = now()
-        where bucket_id = $1
+        insert into rate_limit_buckets (
+          bucket_id,
+          count,
+          limit_count,
+          window_ms,
+          window_start_at,
+          expires_at
+        )
+        values ($1, 1, $2, $3, now(), now() + ($3::int * interval '1 millisecond'))
+        on conflict (bucket_id) do update set
+          count = case
+            when rate_limit_buckets.expires_at <= now() then 1
+            else rate_limit_buckets.count + 1
+          end,
+          limit_count = excluded.limit_count,
+          window_ms = excluded.window_ms,
+          window_start_at = case
+            when rate_limit_buckets.expires_at <= now() then now()
+            else rate_limit_buckets.window_start_at
+          end,
+          expires_at = case
+            when rate_limit_buckets.expires_at <= now()
+              then now() + (excluded.window_ms::int * interval '1 millisecond')
+            else rate_limit_buckets.expires_at
+          end,
+          updated_at = now()
+        where rate_limit_buckets.expires_at <= now()
+           or rate_limit_buckets.count < excluded.limit_count
+        returning count, expires_at
       `,
       [bucketId, args.limit, args.windowMs]
     );
 
+    const consumed = result.rows[0];
+    if (consumed) {
+      const count = Number(consumed.count);
+      return {
+        allowed: true,
+        remaining: Math.max(0, args.limit - count),
+        retryAfterSeconds: 0,
+      };
+    }
+
+    const blocked = await client.query<{ expires_at: Date | string }>(
+      'select expires_at from rate_limit_buckets where bucket_id = $1',
+      [bucketId]
+    );
+    const expiresAtMs = new Date(blocked.rows[0]?.expires_at ?? Date.now()).getTime();
+
     return {
-      allowed: true,
-      remaining: Math.max(0, args.limit - currentCount - 1),
-      retryAfterSeconds: 0,
+      allowed: false,
+      remaining: 0,
+      retryAfterSeconds: Math.max(1, Math.ceil((expiresAtMs - Date.now()) / 1000)),
     };
   });
 }

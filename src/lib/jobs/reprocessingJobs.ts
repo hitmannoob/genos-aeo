@@ -229,11 +229,11 @@ export async function createReprocessingJob(args: {
   brandDomain: string;
   queries: Array<{ query: string; keyword?: string; category?: string }>;
   creditsRequired: number;
-}): Promise<ReprocessingJobClient> {
+}): Promise<{ job: ReprocessingJobClient; reusedExistingJob: boolean }> {
   const processingSessionTimestamp = new Date();
   const normalizedQueries = args.queries.map(normalizeJobQuery);
 
-  const jobId = await withTransaction(async (client) => {
+  const creation = await withTransaction(async (client) => {
     const brandResult = await client.query<{ user_id: string; brand_id: string }>(
       `
         select u.id as user_id, b.id as brand_id
@@ -242,6 +242,7 @@ export async function createReprocessingJob(args: {
         where u.firebase_uid = $1
           and (b.id::text = $2 or b.legacy_firestore_id = $2)
         limit 1
+        for update of b
       `,
       [args.userId, args.brandId]
     );
@@ -249,6 +250,24 @@ export async function createReprocessingJob(args: {
     const identity = brandResult.rows[0];
     if (!identity) {
       throw new Error('Brand not found');
+    }
+
+    // The brand row lock serializes job creation for one brand. This makes
+    // the active-job check and insert atomic even when two POSTs arrive at
+    // the same time.
+    const existingJob = await client.query<{ id: string }>(
+      `
+        select id
+        from reprocessing_jobs
+        where brand_id = $1
+          and status in ('queued', 'processing')
+        order by created_at desc
+        limit 1
+      `,
+      [identity.brand_id]
+    );
+    if (existingJob.rows[0]) {
+      return { id: existingJob.rows[0].id, reusedExistingJob: true };
     }
 
     const jobResult = await client.query<{ id: string }>(
@@ -280,25 +299,35 @@ export async function createReprocessingJob(args: {
         `
           insert into reprocessing_job_items (
             job_id,
+            brand_id,
+            user_id,
             query,
             keyword,
             category,
             position
           )
-          values ($1, $2, $3, $4, $5)
+          values ($1, $2, $3, $4, $5, $6, $7)
         `,
-        [jobResult.rows[0].id, query.query, query.keyword, query.category, index]
+        [
+          jobResult.rows[0].id,
+          identity.brand_id,
+          identity.user_id,
+          query.query,
+          query.keyword,
+          query.category,
+          index,
+        ]
       );
     }
 
-    return jobResult.rows[0].id;
+    return { id: jobResult.rows[0].id, reusedExistingJob: false };
   });
 
-  const job = await getReprocessingJob(jobId);
+  const job = await getReprocessingJob(creation.id);
   if (!job) {
     throw new Error('Failed to create reprocessing job');
   }
-  return job;
+  return { job, reusedExistingJob: creation.reusedExistingJob };
 }
 
 export async function getReprocessingJob(

@@ -183,6 +183,7 @@ export default function CitationsTable({ citations, queries = [] }: CitationsTab
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
             type="text"
+            aria-label="Search citations"
             placeholder="Search citations…"
             value={searchTerm}
             onChange={(e) => { setSearchTerm(e.target.value); setPage(1); }}
@@ -191,6 +192,7 @@ export default function CitationsTable({ citations, queries = [] }: CitationsTab
         </div>
 
         <select
+          aria-label="Filter citations by platform"
           value={selectedProvider}
           onChange={(e) => { setSelectedProvider(e.target.value); setPage(1); }}
           className="px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary bg-background text-foreground"
@@ -202,6 +204,7 @@ export default function CitationsTable({ citations, queries = [] }: CitationsTab
         </select>
 
         <select
+          aria-label="Filter citations by prompt"
           value={selectedPrompt}
           onChange={(e) => { setSelectedPrompt(e.target.value); setPage(1); }}
           className="px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary bg-background text-foreground max-w-xs truncate"
@@ -215,6 +218,7 @@ export default function CitationsTable({ citations, queries = [] }: CitationsTab
 
         {topicOptions.length > 0 && (
           <select
+            aria-label="Filter citations by topic"
             value={selectedTopic}
             onChange={(e) => { setSelectedTopic(e.target.value); setPage(1); }}
             className="px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary bg-background text-foreground"
@@ -257,6 +261,7 @@ export default function CitationsTable({ citations, queries = [] }: CitationsTab
           )}
           <span className="text-sm text-muted-foreground">Show</span>
           <select
+            aria-label="Citations per page"
             value={itemsPerPage}
             onChange={(e) => { setItemsPerPage(Number(e.target.value)); setPage(1); }}
             className="px-2 py-1 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary bg-background text-foreground"
@@ -278,6 +283,8 @@ export default function CitationsTable({ citations, queries = [] }: CitationsTab
           return (
             <button
               key={intent}
+              type="button"
+              aria-pressed={active}
               onClick={() => toggleIntent(intent)}
               className={`inline-flex items-center space-x-1 px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
                 active ? getIntentColor(intent) : 'bg-background text-muted-foreground border-border hover:bg-muted'

@@ -3,6 +3,8 @@ import signIn from "@/firebase/auth/signIn";
 import googleSignIn from "@/firebase/auth/googleSignIn";
 import { useRouter } from 'next/navigation';
 import { useState } from "react";
+import type { FirebaseError } from 'firebase/app';
+import Link from 'next/link';
 
 function Page(): React.ReactElement {
   const [ email, setEmail ] = useState( '' );
@@ -19,38 +21,31 @@ function Page(): React.ReactElement {
     setIsLoading( true );
     setError( '' ); // Clear any previous errors
 
-    // Attempt to sign in with provided email and password
-    const { result, error: signInError } = await signIn( email, password );
+    try {
+      const { error: signInError } = await signIn(email.trim(), password);
 
-    if ( signInError ) {
-      // Handle specific Firebase auth errors
-      let errorMessage = 'An error occurred during sign in. Please try again.';
-      
-      const firebaseError = signInError as any;
-      if ( firebaseError.code === 'auth/user-not-found' ) {
-        errorMessage = 'No account found with this email. Please check your email or sign up.';
-      } else if ( firebaseError.code === 'auth/wrong-password' ) {
-        errorMessage = 'Incorrect password. Please try again.';
-      } else if ( firebaseError.code === 'auth/invalid-email' ) {
-        errorMessage = 'Please enter a valid email address.';
-      } else if ( firebaseError.code === 'auth/user-disabled' ) {
-        errorMessage = 'This account has been disabled. Please contact support.';
-      } else if ( firebaseError.code === 'auth/too-many-requests' ) {
-        errorMessage = 'Too many failed attempts. Please try again later.';
+      if (signInError) {
+        let errorMessage = 'An error occurred during sign in. Please try again.';
+        const firebaseError = signInError as FirebaseError;
+        if (['auth/user-not-found', 'auth/wrong-password', 'auth/invalid-credential'].includes(firebaseError.code)) {
+          errorMessage = 'The email or password is incorrect.';
+        } else if (firebaseError.code === 'auth/invalid-email') {
+          errorMessage = 'Please enter a valid email address.';
+        } else if (firebaseError.code === 'auth/user-disabled') {
+          errorMessage = 'This account has been disabled. Please contact support.';
+        } else if (firebaseError.code === 'auth/too-many-requests') {
+          errorMessage = 'Too many failed attempts. Please try again later.';
+        }
+        setError(errorMessage);
+        return;
       }
-      
-      setError( errorMessage );
-      setIsLoading( false );
-      return;
+
+      router.replace('/dashboard');
+    } catch {
+      setError('An error occurred during sign in. Please try again.');
+    } finally {
+      setIsLoading(false);
     }
-
-    // Sign in successful
-    console.log( result );
-
-    // Redirect to the dashboard page
-    // Typically you would want to redirect them to a protected page an add a check to see if they are admin or 
-    // create a new page for admin
-    router.push( "/dashboard" );
   }
 
   // Handle Google sign-in
@@ -58,37 +53,39 @@ function Page(): React.ReactElement {
     setIsGoogleLoading( true );
     setError( '' ); // Clear any previous errors
 
-    const { result, error: googleError } = await googleSignIn();
+    try {
+      const { error: googleError } = await googleSignIn();
 
-    if ( googleError ) {
-      let errorMessage = 'An error occurred with Google sign-in. Please try again.';
-      
-      const firebaseError = googleError as any;
-      if ( firebaseError.code === 'auth/popup-closed-by-user' ) {
-        errorMessage = 'Sign-in was cancelled. Please try again.';
-      } else if ( firebaseError.code === 'auth/popup-blocked' ) {
-        errorMessage = 'Pop-up was blocked by your browser. Please allow pop-ups and try again.';
+      if (googleError) {
+        let errorMessage = 'An error occurred with Google sign-in. Please try again.';
+        const firebaseError = googleError as FirebaseError;
+        if (firebaseError.code === 'auth/popup-closed-by-user') {
+          errorMessage = 'Sign-in was cancelled. Please try again.';
+        } else if (firebaseError.code === 'auth/popup-blocked') {
+          errorMessage = 'Pop-up was blocked by your browser. Please allow pop-ups and try again.';
+        }
+        setError(errorMessage);
+        return;
       }
-      
-      setError( errorMessage );
-      setIsGoogleLoading( false );
-      return;
-    }
 
-    console.log( result );
-    router.push( "/dashboard" );
+      router.replace('/dashboard');
+    } catch {
+      setError('An error occurred with Google sign-in. Please try again.');
+    } finally {
+      setIsGoogleLoading(false);
+    }
   }
 
   return (
-    <div className="flex flex-col items-center justify-center h-screen">
+    <main className="flex min-h-screen flex-col items-center justify-center bg-background px-4 py-10">
       <div className="w-full max-w-xs">
-        <form onSubmit={handleForm} className="bg-white shadow-md rounded px-8 pt-6 pb-8 mb-4">
-          <h1 className="text-3xl font-bold mb-6 text-black">Sign In</h1>
+        <form onSubmit={handleForm} className="mb-4 rounded-xl border border-border bg-card px-8 pb-8 pt-6 shadow-md">
+          <h1 className="mb-6 text-3xl font-bold text-foreground">Sign in</h1>
           
           {/* Error Message */}
           {error && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-              <p className="text-red-600 text-sm flex items-center">
+            <div role="alert" aria-live="polite" className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3">
+              <p className="flex items-center text-sm text-destructive">
                 <svg className="w-4 h-4 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                   <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
                 </svg>
@@ -97,7 +94,7 @@ function Page(): React.ReactElement {
             </div>
           )}
           <div className="mb-4">
-            <label htmlFor="email" className="block text-gray-700 text-sm font-bold mb-2">
+            <label htmlFor="email" className="mb-2 block text-sm font-bold text-foreground">
               Email
             </label>
             <input
@@ -110,11 +107,13 @@ function Page(): React.ReactElement {
               name="email"
               id="email"
               placeholder="example@mail.com"
-              className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+              autoComplete="email"
+              value={email}
+              className="w-full appearance-none rounded border border-input bg-background px-3 py-2 text-foreground shadow focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
           <div className="mb-6">
-            <label htmlFor="password" className="block text-gray-700 text-sm font-bold mb-2">
+            <label htmlFor="password" className="mb-2 block text-sm font-bold text-foreground">
               Password
             </label>
             <input
@@ -126,19 +125,17 @@ function Page(): React.ReactElement {
               type="password"
               name="password"
               id="password"
-              placeholder="password"
-              className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+              placeholder="Password"
+              autoComplete="current-password"
+              value={password}
+              className="w-full appearance-none rounded border border-input bg-background px-3 py-2 text-foreground shadow focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
           <div className="flex items-center justify-between">
             <button
               type="submit"
               disabled={isLoading || isGoogleLoading}
-              className={`w-full font-semibold py-2 rounded flex items-center justify-center ${
-                isLoading 
-                  ? 'bg-gray-400 cursor-not-allowed' 
-                  : 'bg-blue-500 hover:bg-blue-600'
-              } text-white`}
+              className="flex w-full items-center justify-center rounded bg-primary py-2 font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isLoading ? (
                 <>
@@ -152,24 +149,20 @@ function Page(): React.ReactElement {
           </div>
           
           <div className="flex items-center my-4">
-            <div className="flex-1 border-t border-gray-300"></div>
-            <span className="px-3 text-gray-500 text-sm">or</span>
-            <div className="flex-1 border-t border-gray-300"></div>
+            <div className="flex-1 border-t border-border"></div>
+            <span className="px-3 text-sm text-muted-foreground">or</span>
+            <div className="flex-1 border-t border-border"></div>
           </div>
           
           <button
             type="button"
             onClick={handleGoogleSignIn}
             disabled={isLoading || isGoogleLoading}
-            className={`w-full font-semibold py-2 px-4 rounded flex items-center justify-center border ${
-              isGoogleLoading 
-                ? 'bg-gray-100 cursor-not-allowed border-gray-300' 
-                : 'bg-white hover:bg-gray-50 border-gray-300'
-            } text-gray-700`}
+            className="flex w-full items-center justify-center rounded border border-border bg-card px-4 py-2 font-semibold text-card-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isGoogleLoading ? (
               <>
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-600 mr-2"></div>
+                <div className="mr-2 h-4 w-4 animate-spin rounded-full border-b-2 border-current"></div>
                 Signing in with Google...
               </>
             ) : (
@@ -186,12 +179,12 @@ function Page(): React.ReactElement {
           </button>
         </form>
         {/* Add this below the signin form */}
-        <div className="mt-4 text-center text-sm text-gray-600 dark:text-gray-300">
+        <div className="mt-4 text-center text-sm text-muted-foreground">
           Don&apos;t have an account?{' '}
-          <a href="/signup" className="text-primary hover:underline">Register</a>
+          <Link href="/signup" className="text-primary hover:underline">Register</Link>
         </div>
       </div>
-    </div>
+    </main>
   );
 }
 

@@ -29,7 +29,7 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const addToast = (toast: Omit<Toast, 'id'>) => {
-    const id = Math.random().toString(36).substr(2, 9);
+    const id = crypto.randomUUID();
     const newToast: Toast = { ...toast, id };
     setToasts(prev => [...prev, newToast]);
   };
@@ -68,7 +68,7 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
       {children}
       
       {/* Toast Container */}
-      <div className="fixed top-4 right-4 z-50 space-y-2">
+      <div className="fixed left-4 right-4 top-4 z-50 ml-auto max-w-md space-y-2 sm:left-auto">
         {toasts.map(toast => (
           <ToastComponent
             key={toast.id}
@@ -79,4 +79,4 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
       </div>
     </ToastContext.Provider>
   );
-}; 
+};

@@ -33,6 +33,7 @@ interface UseLifetimeCitationsReturn {
 export function useLifetimeCitations(options: UseLifetimeCitationsOptions = {}): UseLifetimeCitationsReturn {
   const { brandId, autoRefresh = false, refreshInterval = 30000 } = options;
   const lifetimeQuery = useLifetimeBrandAnalytics(brandId);
+  const refetchLifetime = lifetimeQuery.refetch;
   const analytics = lifetimeQuery.data || null;
   const citations = useMemo(
     () => analytics?.allCitations || [],
@@ -42,10 +43,10 @@ export function useLifetimeCitations(options: UseLifetimeCitationsOptions = {}):
   useEffect(() => {
     if (!autoRefresh || !brandId) return;
     const interval = setInterval(() => {
-      void lifetimeQuery.refetch();
+      void refetchLifetime();
     }, refreshInterval);
     return () => clearInterval(interval);
-  }, [autoRefresh, brandId, lifetimeQuery, refreshInterval]);
+  }, [autoRefresh, brandId, refetchLifetime, refreshInterval]);
 
   const stats = {
     totalCitations: citations.length,

@@ -2,7 +2,25 @@ import { Competitor, MatchResult, matchCompetitorsInText } from '@/lib/competito
 import {
   getCanonicalGoogleResult,
   getGoogleResultText,
+  type QueryProcessingResult,
 } from '@/lib/queryResultUtils';
+
+type ProviderKey = 'chatgpt' | 'google' | 'perplexity';
+
+interface ProviderMentionStats {
+  mentions: number;
+  queriesWithMentions: number;
+}
+
+interface CompetitorStat {
+  totalMentions: number;
+  queriesWithMentions: number;
+  visibilityScore: number;
+  mentionTrend: 'increasing' | 'decreasing' | 'stable';
+  averageMentionsPerQuery: number;
+  topProvider: string;
+  providerBreakdown: Record<ProviderKey, ProviderMentionStats>;
+}
 
 export interface CompetitorAnalyticsData {
   id?: string;
@@ -22,20 +40,7 @@ export interface CompetitorAnalyticsData {
   uniqueCompetitorsDetected: number;
   
   // Per-competitor breakdown
-  competitorStats: {
-    [competitorName: string]: {
-      totalMentions: number;
-      visibilityScore: number; // Percentage of queries mentioning this competitor
-      mentionTrend: 'increasing' | 'decreasing' | 'stable';
-      averageMentionsPerQuery: number;
-      topProvider: string; // Provider that mentions this competitor most
-      providerBreakdown: {
-        chatgpt: { mentions: number; queriesWithMentions: number };
-        google: { mentions: number; queriesWithMentions: number };
-        perplexity: { mentions: number; queriesWithMentions: number };
-      };
-    };
-  };
+  competitorStats: Record<string, CompetitorStat>;
   
   // Provider-specific aggregated data
   providerStats: {
@@ -66,8 +71,8 @@ export interface CompetitorAnalyticsData {
   };
   
   // Timestamps
-  lastUpdated: any;
-  createdAt: any;
+  lastUpdated: string;
+  createdAt: string;
 }
 
 export interface CompetitorAnalysisResult {
@@ -184,12 +189,12 @@ export function calculateCumulativeCompetitorAnalytics(
   processingSessionId: string,
   processingSessionTimestamp: string,
   competitors: Competitor[],
-  queryResults: any[]
+  queryResults: QueryProcessingResult[]
 ): CompetitorAnalyticsData {
   // Initialize counters
   let totalCompetitorMentions = 0;
   let queriesWithCompetitorMentions = 0;
-  const competitorStats: { [name: string]: any } = {};
+  const competitorStats: Record<string, CompetitorStat> = {};
   const providerStats = {
     chatgpt: { queriesProcessed: 0, competitorMentions: 0, uniqueCompetitors: new Set() },
     google: { queriesProcessed: 0, competitorMentions: 0, uniqueCompetitors: new Set() },
@@ -201,6 +206,10 @@ export function calculateCumulativeCompetitorAnalytics(
     competitorStats[comp.name] = {
       totalMentions: 0,
       queriesWithMentions: 0,
+      visibilityScore: 0,
+      mentionTrend: 'stable',
+      averageMentionsPerQuery: 0,
+      topProvider: 'none',
       providerBreakdown: {
         chatgpt: { mentions: 0, queriesWithMentions: 0 },
         google: { mentions: 0, queriesWithMentions: 0 },
@@ -221,16 +230,18 @@ export function calculateCumulativeCompetitorAnalytics(
     });
     
     let hasCompetitorMention = false;
+    const competitorsMentionedInQuery = new Set<string>();
     
     // Process results for each provider
     Object.entries(queryAnalysis).forEach(([providerKey, analysis]) => {
-      const provider = providerKey as keyof typeof providerStats;
+      const provider = providerKey as ProviderKey;
       providerStats[provider].queriesProcessed++;
       providerStats[provider].competitorMentions += analysis.totalCompetitorMentions;
       
       Object.entries(analysis.competitors).forEach(([compName, compData]) => {
         if (compData.mentioned) {
           hasCompetitorMention = true;
+          competitorsMentionedInQuery.add(compName);
           providerStats[provider].uniqueCompetitors.add(compName);
           
           // Update competitor stats
@@ -238,13 +249,16 @@ export function calculateCumulativeCompetitorAnalytics(
           competitorStats[compName].providerBreakdown[provider].mentions += compData.mentionCount;
           
           if (compData.mentionCount > 0) {
-            competitorStats[compName].queriesWithMentions++;
             competitorStats[compName].providerBreakdown[provider].queriesWithMentions++;
           }
         }
       });
       
       totalCompetitorMentions += analysis.totalCompetitorMentions;
+    });
+
+    competitorsMentionedInQuery.forEach((compName) => {
+      competitorStats[compName].queriesWithMentions++;
     });
     
     if (hasCompetitorMention) {
@@ -254,7 +268,7 @@ export function calculateCumulativeCompetitorAnalytics(
   
   // Calculate final metrics
   const competitorVisibilityScore = queryResults.length > 0 ? (queriesWithCompetitorMentions / queryResults.length) * 100 : 0;
-  const uniqueCompetitorsDetected = Object.values(competitorStats).filter((stats: any) => stats.totalMentions > 0).length;
+  const uniqueCompetitorsDetected = Object.values(competitorStats).filter((stats) => stats.totalMentions > 0).length;
   
   // Finalize competitor stats
   Object.keys(competitorStats).forEach(compName => {
@@ -281,7 +295,7 @@ export function calculateCumulativeCompetitorAnalytics(
   
   // Calculate insights
   const topCompetitor = Object.entries(competitorStats)
-    .sort(([,a], [,b]) => (b as any).totalMentions - (a as any).totalMentions)[0]?.[0] || 'none';
+    .sort(([,a], [,b]) => b.totalMentions - a.totalMentions)[0]?.[0] || 'none';
   
   const mostCompetitiveProvider = Object.entries(providerStats)
     .sort(([,a], [,b]) => b.competitorMentions - a.competitorMentions)[0]?.[0] || 'none';
@@ -310,8 +324,8 @@ export function calculateCumulativeCompetitorAnalytics(
     competitorStats: Object.fromEntries(
       Object.entries(competitorStats).map(([name, stats]) => [name, {
         ...stats,
-        visibilityScore: Math.round((stats as any).visibilityScore * 100) / 100,
-        averageMentionsPerQuery: Math.round((stats as any).averageMentionsPerQuery * 100) / 100
+        visibilityScore: Math.round(stats.visibilityScore * 100) / 100,
+        averageMentionsPerQuery: Math.round(stats.averageMentionsPerQuery * 100) / 100
       }])
     ),
     providerStats: {
@@ -335,7 +349,7 @@ export function calculateCumulativeCompetitorAnalytics(
       competitiveIntensity,
       marketPosition
     },
-    lastUpdated: new Date(),
-    createdAt: new Date()
+    lastUpdated: new Date().toISOString(),
+    createdAt: new Date().toISOString()
   };
 }

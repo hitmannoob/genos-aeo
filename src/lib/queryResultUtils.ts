@@ -1,6 +1,7 @@
 // Canonical stored query-result shape shared by persistence, analytics, and
 // legacy adapters. Keep this file Firebase-free so both client and server code
 // can import it without dragging storage / auth dependencies along.
+import { USER_QUERY_CREDIT_COST } from '@/lib/billing/creditCosts';
 
 export interface BaseStoredProviderResult {
   response: string;
@@ -8,6 +9,15 @@ export interface BaseStoredProviderResult {
   timestamp: string;
   responseTime?: number;
   tokenCount?: any;
+  /** Canonical provider citations. Present on newly persisted results. */
+  citationData?: StoredCitation[];
+}
+
+export interface StoredCitation {
+  url: string;
+  text: string;
+  source?: string;
+  type?: string;
 }
 
 export interface ChatGPTStoredResult extends BaseStoredProviderResult {
@@ -120,7 +130,7 @@ export function buildTrackedQueryIdentity(source: QueryIdentitySource): string {
     normalizeIdentityPart(source.query, ''),
     normalizeIdentityPart(source.keyword, 'unknown'),
     normalizeIdentityPart(source.category, 'unknown'),
-  ].join('::');
+  ].map((part) => `${part.length}:${part}`).join('');
 }
 
 export function getCanonicalGoogleResult(
@@ -139,6 +149,61 @@ export function getGoogleResultText(
   }
 
   return result.response || '';
+}
+
+/**
+ * Return the structured citation list stored with a provider response.
+ * `undefined` means this is a historical row and callers may use their legacy
+ * text extractor. An empty array is authoritative: the provider returned no
+ * citations and text must not be reinterpreted as citation data.
+ */
+export function getStoredCitations(
+  result?: BaseStoredProviderResult
+): StoredCitation[] | undefined {
+  return Array.isArray(result?.citationData) ? result.citationData : undefined;
+}
+
+function normalizeStoredCitations(value: unknown): StoredCitation[] {
+  if (!Array.isArray(value)) return [];
+
+  const seen = new Set<string>();
+  const citations: StoredCitation[] = [];
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== 'object') continue;
+    const raw = candidate as Record<string, unknown>;
+    if (typeof raw.url !== 'string') continue;
+
+    let url: URL;
+    try {
+      url = new URL(raw.url);
+    } catch {
+      continue;
+    }
+    if (
+      (url.protocol !== 'https:' && url.protocol !== 'http:')
+      || url.username
+      || url.password
+    ) continue;
+
+    const canonicalUrl = url.toString();
+    if (seen.has(canonicalUrl)) continue;
+    seen.add(canonicalUrl);
+
+    const sourceProvider = typeof raw.sourceProvider === 'string'
+      ? raw.sourceProvider
+      : undefined;
+    const rawKind = typeof raw.rawKind === 'string' ? raw.rawKind : undefined;
+    citations.push({
+      url: canonicalUrl,
+      text:
+        (typeof raw.title === 'string' && raw.title.trim())
+        || (typeof raw.domain === 'string' && raw.domain.trim())
+        || url.hostname,
+      source: sourceProvider,
+      type: rawKind,
+    });
+  }
+  return citations;
 }
 
 export function hasProviderContent(
@@ -206,6 +271,7 @@ export function buildQueryResult(args: BuildQueryResultArgs): QueryProcessingRes
         responseTime: r.responseTime,
         webSearchUsed: r.data?.webSearchUsed || false,
         citations: r.data?.annotations?.length || 0,
+        citationData: normalizeStoredCitations(r.data?.normalizedCitations),
       };
     } else if (r.providerId === 'google-ai-overview') {
       queryResult.results.googleAI = {
@@ -219,6 +285,7 @@ export function buildQueryResult(args: BuildQueryResultArgs): QueryProcessingRes
         location: r.data?.location || 'Unknown',
         aiOverview: r.data?.aiOverview || undefined,
         aiOverviewReferencesCount: r.data?.aiOverviewReferences?.length || 0,
+        citationData: normalizeStoredCitations(r.data?.normalizedCitations),
         hasAIOverview: r.data?.hasAIOverview || false,
         serpFeaturesCount: r.data?.serpFeatures?.length || 0,
         relatedSearchesCount: r.data?.relatedSearches?.length || 0,
@@ -245,13 +312,14 @@ export function buildQueryResult(args: BuildQueryResultArgs): QueryProcessingRes
         structuredCitationsCount: r.data?.structuredCitations?.length || 0,
         hasMetadata: !!(r.data?.metadata),
         hasUsageStats: !!(r.data?.usage),
+        citationData: normalizeStoredCitations(r.data?.normalizedCitations),
       };
     }
   }
 
   if (userQueryResponse?.userCredits) {
     queryResult.creditInfo = {
-      creditsDeducted: userQueryResponse.userCredits.deducted ?? 10,
+      creditsDeducted: userQueryResponse.userCredits.deducted ?? USER_QUERY_CREDIT_COST,
       creditsAfter: userQueryResponse.userCredits.after,
       totalCost: userQueryResponse.totalCost,
     };

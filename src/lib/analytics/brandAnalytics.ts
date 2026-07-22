@@ -1,8 +1,12 @@
 import { analyzeBrandMentions } from '@/lib/brand-mentions';
-import { extractChatGPTCitations } from '@/lib/citations/chatgpt';
-import { extractGoogleAIOverviewCitations } from '@/lib/citations/googleAIOverview';
-import { extractPerplexityCitations } from '@/lib/citations/perplexity';
-import { matchesWord } from '@/lib/competitor-matching';
+import {
+  citationsForChatGPT,
+  citationsForGoogle,
+  citationsForPerplexity,
+} from '@/lib/citations/stored';
+import { isSameOrSubdomain, matchesWord } from '@/lib/competitor-matching';
+import type { Citation } from '@/lib/citations/types';
+import { logger } from '@/lib/logger';
 import { toIsoString } from '@/lib/timestamps';
 import {
   buildTrackedQueryIdentity,
@@ -26,6 +30,7 @@ export interface BrandAnalyticsData {
   totalQueriesProcessed: number;
 
   // Cumulative metrics across all queries in this session
+  /** Provider responses that mention the brand at least once. */
   totalBrandMentions: number;
   brandVisibilityScore: number; // Calculated as (providers with brand mentions / total providers) across all queries
   totalCitations: number;
@@ -62,10 +67,9 @@ export interface BrandAnalyticsData {
     topProviders: string[]; // Array of top performing providers (useful for ties)
     brandVisibilityTrend: 'improving' | 'declining' | 'stable';
     /**
-     * Average brand mentions per AI response (i.e. totalBrandMentions / totalProviders).
-     * Matches the "response" unit used by brandVisibilityScore: if N providers each return a
-     * response and the brand is mentioned in M responses, the brand mention density across
-     * responses is M/N. Prefer this field over averageBrandMentionsPerQuery.
+     * Fraction of AI responses mentioning the brand (0 to 1). Retained under
+     * its legacy name for API compatibility; brandVisibilityScore is the same
+     * measurement expressed as a percentage.
      */
     averageBrandMentionsPerResponse: number;
     /** Average citations per AI response (totalCitations / totalProviders). */
@@ -92,8 +96,8 @@ export interface BrandAnalyticsData {
   };
 
   // Timestamps
-  lastUpdated: any;
-  createdAt: any;
+  lastUpdated: string;
+  createdAt: string;
 }
 
 // Interface for individual citation data in lifetime analytics
@@ -124,6 +128,7 @@ export interface LifetimeBrandAnalytics {
   // Lifetime aggregated metrics
   totalQueriesProcessed: number;
   totalProcessingSessions: number;
+  /** Provider responses that mention the brand at least once. */
   totalBrandMentions: number;
   brandVisibilityScore: number;
   totalCitations: number;
@@ -169,7 +174,7 @@ export interface LifetimeBrandAnalytics {
   insights: {
     topPerformingProvider: string;
     topProviders: string[];
-    /** Average brand mentions per AI response. See BrandAnalyticsData for details. */
+    /** Response mention fraction. See BrandAnalyticsData for details. */
     averageBrandMentionsPerResponse: number;
     /** Average citations per AI response. */
     averageCitationsPerResponse: number;
@@ -190,7 +195,7 @@ export interface LifetimeBrandAnalytics {
   };
 
   // Timestamps
-  calculatedAt: any;
+  calculatedAt: string;
 }
 
 function buildLifetimeTrendData(
@@ -201,13 +206,12 @@ function buildLifetimeTrendData(
   const byDay: Record<string, { date: string; brandMentions: number; citations: number }> = {};
 
   queryResults.forEach((queryResult) => {
-    const day = queryResult.date
-      ? new Date(queryResult.date).toISOString().slice(0, 10)
+    const queryDate = queryResult.date ? new Date(queryResult.date) : null;
+    const day = queryDate && !Number.isNaN(queryDate.getTime())
+      ? queryDate.toISOString().slice(0, 10)
       : 'Unknown';
 
-    const chatgptCitations = queryResult.results?.chatgpt
-      ? extractChatGPTCitations(queryResult.results.chatgpt.response || '')
-      : [];
+    const chatgptCitations = citationsForChatGPT(queryResult.results?.chatgpt);
 
     const canonicalGoogleResult = getCanonicalGoogleResult(queryResult.results);
     const googleResult = canonicalGoogleResult
@@ -216,16 +220,9 @@ function buildLifetimeTrendData(
           aiOverview: getGoogleResultText(canonicalGoogleResult),
         }
       : undefined;
-    const googleCitations = googleResult
-      ? extractGoogleAIOverviewCitations(googleResult.aiOverview || '', googleResult)
-      : [];
+    const googleCitations = citationsForGoogle(googleResult);
 
-    const perplexityCitations = queryResult.results?.perplexity
-      ? extractPerplexityCitations(
-          queryResult.results.perplexity.response || '',
-          queryResult.results.perplexity
-        )
-      : [];
+    const perplexityCitations = citationsForPerplexity(queryResult.results?.perplexity);
 
     const analysis = analyzeBrandMentions(
       brandName,
@@ -319,12 +316,7 @@ export function calculateLifetimeBrandAnalyticsFromCorpus(
   userId: string,
   corpus: BrandQueryCorpus
 ): LifetimeBrandAnalytics {
-  const {
-    brand,
-    currentResults,
-    historicalResults,
-    allResults,
-  } = corpus;
+  const { brand, allResults } = corpus;
   const brandId = brand.id;
   const brandName = brand.companyName;
   const brandDomain = brand.domain;
@@ -365,22 +357,6 @@ export function calculateLifetimeBrandAnalyticsFromCorpus(
     };
   }
 
-  console.log(`📊 Analytics data collection summary:`, {
-    totalQueries: allResults.length,
-    totalSessions: totalProcessingSessions,
-    brandDocumentQueries: currentResults.length,
-    historicalQueries: historicalResults.length,
-    brandId,
-    brandName,
-  });
-
-  const querySourceBreakdown = allResults.reduce((acc, q) => {
-    const isLegacy = q.processingSessionId?.startsWith('legacy_');
-    acc[isLegacy ? 'historical' : 'current'] = (acc[isLegacy ? 'historical' : 'current'] || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
-  console.log('🔍 Query source breakdown:', querySourceBreakdown);
-
   const sessionAnalytics = calculateCumulativeAnalytics(
     userId,
     brandId,
@@ -408,7 +384,7 @@ export function calculateLifetimeBrandAnalyticsFromCorpus(
     }
   };
 
-  const checkBrandMention = (text: string, url: string, brandNameValue: string, brandDomainValue?: string): boolean => {
+  const checkBrandMention = (text: string, brandNameValue: string): boolean => {
     if (!brandNameValue || !text) return false;
     return matchesWord(text, brandNameValue);
   };
@@ -420,7 +396,7 @@ export function calculateLifetimeBrandAnalyticsFromCorpus(
       const urlHost = parsed.hostname.toLowerCase().replace(/^www\./, '');
       const brandHost = brandDomainValue.toLowerCase().replace(/^www\./, '').trim();
       if (!urlHost || !brandHost) return false;
-      return urlHost === brandHost;
+      return isSameOrSubdomain(urlHost, brandHost);
     } catch {
       return false;
     }
@@ -436,9 +412,9 @@ export function calculateLifetimeBrandAnalyticsFromCorpus(
 
     if (query.results?.chatgpt?.response) {
       try {
-        const chatgptCitations = extractChatGPTCitations(query.results.chatgpt.response);
+        const chatgptCitations = citationsForChatGPT(query.results.chatgpt);
 
-        chatgptCitations.forEach((citation: any) => {
+        chatgptCitations.forEach((citation: Citation) => {
           const domain = extractDomainFromUrl(citation.url);
           if (!domain) return;
 
@@ -454,24 +430,21 @@ export function calculateLifetimeBrandAnalyticsFromCorpus(
             domain,
             timestamp: queryTimestamp,
             type: 'text_extraction',
-            isBrandMention: checkBrandMention(citation.text, citation.url, brandName, brandDomain),
+            isBrandMention: checkBrandMention(citation.text, brandName),
             isDomainCitation: checkDomainCitation(citation.url, brandDomain),
             processingSessionId: query.processingSessionId || 'unknown',
           });
         });
       } catch (error) {
-        console.warn('⚠️ Error extracting ChatGPT citations:', error);
+        logger.warn('Failed to extract ChatGPT citations', error);
       }
     }
 
     if (canonicalGoogleResult && googleOverview) {
       try {
-        const googleCitations = extractGoogleAIOverviewCitations(googleOverview, {
-          ...canonicalGoogleResult,
-          aiOverview: googleOverview,
-        });
+        const googleCitations = citationsForGoogle(canonicalGoogleResult);
 
-        googleCitations.forEach((citation: any) => {
+        googleCitations.forEach((citation: Citation) => {
           const domain = extractDomainFromUrl(citation.url);
           if (!domain) return;
 
@@ -487,21 +460,21 @@ export function calculateLifetimeBrandAnalyticsFromCorpus(
             domain,
             timestamp: queryTimestamp,
             type: 'ai_overview',
-            isBrandMention: checkBrandMention(citation.text, citation.url, brandName, brandDomain),
+            isBrandMention: checkBrandMention(citation.text, brandName),
             isDomainCitation: checkDomainCitation(citation.url, brandDomain),
             processingSessionId: query.processingSessionId || 'unknown',
           });
         });
       } catch (error) {
-        console.warn('⚠️ Error extracting Google AI citations:', error);
+        logger.warn('Failed to extract Google AI citations', error);
       }
     }
 
     if (query.results?.perplexity?.response) {
       try {
-        const perplexityCitations = extractPerplexityCitations(query.results.perplexity.response, query.results.perplexity);
+        const perplexityCitations = citationsForPerplexity(query.results.perplexity);
 
-        perplexityCitations.forEach((citation: any) => {
+        perplexityCitations.forEach((citation: Citation) => {
           const domain = extractDomainFromUrl(citation.url);
           if (!domain) return;
 
@@ -517,13 +490,13 @@ export function calculateLifetimeBrandAnalyticsFromCorpus(
             domain,
             timestamp: queryTimestamp,
             type: citation.type || 'structured',
-            isBrandMention: checkBrandMention(citation.text, citation.url, brandName, brandDomain),
+            isBrandMention: checkBrandMention(citation.text, brandName),
             isDomainCitation: checkDomainCitation(citation.url, brandDomain),
             processingSessionId: query.processingSessionId || 'unknown',
           });
         });
       } catch (error) {
-        console.warn('⚠️ Error extracting Perplexity citations:', error);
+        logger.warn('Failed to extract Perplexity citations', error);
       }
     }
   });
@@ -571,7 +544,7 @@ export function calculateCumulativeAnalytics(
   brandDomain: string,
   processingSessionId: string,
   processingSessionTimestamp: string,
-  queryResults: any[]
+  queryResults: QueryProcessingResult[]
 ): BrandAnalyticsData {
 
   const providerStats = {
@@ -590,16 +563,9 @@ export function calculateCumulativeAnalytics(
     const canonicalGoogleResult = getCanonicalGoogleResult(queryResult.results);
     const googleOverview = getGoogleResultText(canonicalGoogleResult);
 
-    const chatgptCitations = queryResult.results?.chatgpt ?
-      extractChatGPTCitations(queryResult.results.chatgpt.response || '') : [];
-    const googleCitations = canonicalGoogleResult
-      ? extractGoogleAIOverviewCitations(googleOverview, {
-          ...canonicalGoogleResult,
-          aiOverview: googleOverview,
-        })
-      : [];
-    const perplexityCitations = queryResult.results?.perplexity ?
-      extractPerplexityCitations(queryResult.results.perplexity.response || '', queryResult.results.perplexity) : [];
+    const chatgptCitations = citationsForChatGPT(queryResult.results?.chatgpt);
+    const googleCitations = citationsForGoogle(canonicalGoogleResult);
+    const perplexityCitations = citationsForPerplexity(queryResult.results?.perplexity);
 
     const analysis = analyzeBrandMentions(brandName, brandDomain, {
       chatgpt: queryResult.results?.chatgpt ? {
@@ -656,9 +622,10 @@ export function calculateCumulativeAnalytics(
     topProviders = [];
   } else {
     const providerRankings = Object.entries(providerStats)
-      .filter(([_, stats]) => stats.queriesProcessed > 0)
+      .filter(([, stats]) => stats.queriesProcessed > 0)
       .map(([provider, stats]) => ({
         provider,
+        mentionRate: stats.brandMentions / stats.queriesProcessed,
         brandMentions: stats.brandMentions,
         domainCitationsRatio: stats.citations > 0 ? stats.domainCitations / stats.citations : 0,
         totalCitations: stats.citations,
@@ -670,8 +637,8 @@ export function calculateCumulativeAnalytics(
       topProviders = [];
     } else {
       providerRankings.sort((a, b) => {
-        if (a.brandMentions !== b.brandMentions) {
-          return b.brandMentions - a.brandMentions;
+        if (Math.abs(a.mentionRate - b.mentionRate) > 0.001) {
+          return b.mentionRate - a.mentionRate;
         }
 
         if (Math.abs(a.domainCitationsRatio - b.domainCitationsRatio) > 0.001) {
@@ -690,7 +657,7 @@ export function calculateCumulativeAnalytics(
         topProviders = [];
       } else {
         const tiedProviders = providerRankings.filter(p =>
-          p.brandMentions === topProvider.brandMentions &&
+          Math.abs(p.mentionRate - topProvider.mentionRate) < 0.001 &&
           Math.abs(p.domainCitationsRatio - topProvider.domainCitationsRatio) < 0.001 &&
           (p.brandMentions > 0 || p.domainCitations > 0)
         );
@@ -733,16 +700,17 @@ export function calculateCumulativeAnalytics(
 
   const providerRankingDetails: { [provider: string]: { rank: number; brandMentions: number; domainCitationsRatio: number; totalCitations: number; } } = {};
   const providerRankings = Object.entries(providerStats)
-    .filter(([_, stats]) => stats.queriesProcessed > 0)
+    .filter(([, stats]) => stats.queriesProcessed > 0)
     .map(([provider, stats]) => ({
       provider,
+      mentionRate: stats.brandMentions / stats.queriesProcessed,
       brandMentions: stats.brandMentions,
       domainCitationsRatio: stats.citations > 0 ? stats.domainCitations / stats.citations : 0,
       totalCitations: stats.citations,
       domainCitations: stats.domainCitations
     }))
     .sort((a, b) => {
-      if (a.brandMentions !== b.brandMentions) return b.brandMentions - a.brandMentions;
+      if (Math.abs(a.mentionRate - b.mentionRate) > 0.001) return b.mentionRate - a.mentionRate;
       if (Math.abs(a.domainCitationsRatio - b.domainCitationsRatio) > 0.001) return b.domainCitationsRatio - a.domainCitationsRatio;
       return b.totalCitations - a.totalCitations;
     });

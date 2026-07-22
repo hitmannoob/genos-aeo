@@ -5,6 +5,12 @@ import {
   type DataSanityCheckOptions,
 } from '@/lib/dataSanityServer';
 import { isAdminEmail } from '@/lib/adminEmails';
+import {
+  configuredServiceSecret,
+  parseBearerToken,
+  secretsMatch,
+} from '@/lib/serverAuth';
+import { logger } from '@/lib/logger';
 
 interface AuthenticatedActor {
   uid?: string;
@@ -41,8 +47,8 @@ async function authenticateAdminRequest(
   | { actor: AuthenticatedActor }
   | { error: string; code: string; status: number }
 > {
-  const authorization = request.headers.get('authorization');
-  if (!authorization) {
+  const token = parseBearerToken(request);
+  if (!request.headers.get('authorization')) {
     return {
       error: 'Missing authorization header.',
       code: 'NO_AUTH_HEADER',
@@ -50,7 +56,6 @@ async function authenticateAdminRequest(
     };
   }
 
-  const token = authorization.split(' ')[1];
   if (!token) {
     return {
       error: 'Missing bearer token.',
@@ -59,8 +64,9 @@ async function authenticateAdminRequest(
     };
   }
 
-  const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret && token === cronSecret) {
+  const serviceSecret = configuredServiceSecret(process.env.ADMIN_API_SECRET)
+    ?? configuredServiceSecret(process.env.SERVICE_API_SECRET);
+  if (serviceSecret && secretsMatch(token, serviceSecret)) {
     return {
       actor: {
         mode: 'service',
@@ -69,7 +75,7 @@ async function authenticateAdminRequest(
   }
 
   try {
-    const decodedToken = await auth.verifyIdToken(token);
+    const decodedToken = await auth.verifyIdToken(token, true);
     if (!decodedToken?.uid) {
       return {
         error: 'Invalid Firebase ID token.',
@@ -94,8 +100,9 @@ async function authenticateAdminRequest(
       },
     };
   } catch (error) {
+    logger.warn('Admin data-sanity authentication failed', error);
     return {
-      error: error instanceof Error ? error.message : 'Token verification failed.',
+      error: 'Token verification failed.',
       code: 'TOKEN_VERIFICATION_FAILED',
       status: 401,
     };
@@ -109,7 +116,10 @@ function buildOptionsFromSearchParams(searchParams: URLSearchParams): DataSanity
     maxBrands: parseInteger(searchParams.get('maxBrands')),
     maxIssues: parseInteger(searchParams.get('maxIssues')),
     maxLedgerDocs: parseInteger(searchParams.get('maxLedgerDocs')),
-    includeAnalytics: parseBoolean(searchParams.get('includeAnalytics'), true),
+    includeProviderResults: parseBoolean(
+      searchParams.get('includeProviderResults') ?? searchParams.get('includeAnalytics'),
+      true
+    ),
     includeLedger: parseBoolean(searchParams.get('includeLedger'), true),
   };
 }
@@ -121,7 +131,10 @@ function buildOptionsFromBody(body: Record<string, unknown>): DataSanityCheckOpt
     maxBrands: parseInteger(body.maxBrands),
     maxIssues: parseInteger(body.maxIssues),
     maxLedgerDocs: parseInteger(body.maxLedgerDocs),
-    includeAnalytics: parseBoolean(body.includeAnalytics, true),
+    includeProviderResults: parseBoolean(
+      body.includeProviderResults ?? body.includeAnalytics,
+      true
+    ),
     includeLedger: parseBoolean(body.includeLedger, true),
   };
 }
@@ -150,10 +163,11 @@ async function handleRun(
       report,
     });
   } catch (error) {
+    logger.error('Data-sanity checks failed', error);
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to run data sanity checks.',
+        error: 'Failed to run data sanity checks.',
         code: 'DATA_SANITY_CHECK_FAILED',
       },
       { status: 500 }

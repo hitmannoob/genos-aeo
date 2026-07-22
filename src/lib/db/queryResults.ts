@@ -9,16 +9,17 @@ import {
   type UserQueryApiResponse,
 } from '@/lib/queryResultUtils';
 import type { APIResponse, NormalizedCitation } from '@/lib/api-providers/types';
+import { isSameOrSubdomain, matchesWord } from '@/lib/competitor-matching';
 
-export interface PersistOneQueryResultServerArgs {
+export interface PersistOneQueryResultServerArgs<TReplayResponse = never> {
   brandId: string;
   userId: string;
-  companyName: string;
-  brandDomain: string;
   query: QueryProcessingInput;
   processingSessionId: string;
   processingSessionTimestamp: string;
   userQueryResponse: UserQueryApiResponse;
+  executionRequestId: string;
+  buildExecutionReplayResponse?: (queryResult: QueryProcessingResult) => TReplayResponse;
 }
 
 interface BrandIdentity {
@@ -53,7 +54,7 @@ function normalizeProviderKey(providerId: string): 'chatgptsearch' | 'google-ai-
   ) {
     return providerId;
   }
-  return 'chatgptsearch';
+  throw new Error(`Unsupported provider id: ${providerId}`);
 }
 
 function getProviderResponseText(result: APIResponse): string | null {
@@ -116,7 +117,11 @@ async function resolveBrandQueryId(
       select id
       from brand_queries
       where brand_id = $1
-        and tracked_identity = md5($2 || '::' || $3 || '::' || $4)
+        and tracked_identity = md5(
+          length($2::text)::text || ':' || $2::text ||
+          length($3::text)::text || ':' || $3::text ||
+          length($4::text)::text || ':' || $4::text
+        )
       limit 1
     `,
     [
@@ -143,7 +148,6 @@ async function insertCitations(args: {
 }): Promise<void> {
   const citations = citationRowsFromProviderResult(args.result);
   const normalizedBrandDomain = normalizeDomain(args.brandDomain);
-  const normalizedCompanyName = args.companyName.toLowerCase();
 
   for (const [index, citation] of citations.entries()) {
     const domain = normalizeDomain(citation.domain);
@@ -183,20 +187,21 @@ async function insertCitations(args: {
         citation.sourceProvider,
         citation.rawKind,
         index + 1,
-        searchableText.includes(normalizedCompanyName),
-        domain === normalizedBrandDomain,
+        matchesWord(searchableText, args.companyName),
+        isSameOrSubdomain(domain, normalizedBrandDomain),
         JSON.stringify(citation),
       ]
     );
   }
 }
 
-export async function persistOneQueryResultSql(
-  args: PersistOneQueryResultServerArgs
+export async function persistOneQueryResultSql<TReplayResponse = never>(
+  args: PersistOneQueryResultServerArgs<TReplayResponse>
 ): Promise<{
   queryResult: QueryProcessingResult;
   updatedResults: QueryProcessingResult[];
   sessionResults: QueryProcessingResult[];
+  executionReplayResponse?: TReplayResponse;
 }> {
   const queryResult = buildQueryResult(args);
 
@@ -205,7 +210,8 @@ export async function persistOneQueryResultSql(
     const brandQueryId = await resolveBrandQueryId(client, brand.brandUuid, args.query);
     const providerResults = (args.userQueryResponse.results || []) as unknown as APIResponse[];
     const completedAt = new Date();
-    const status = providerResults.every((result) => result.status === 'success')
+    const status = providerResults.length > 0
+      && providerResults.every((result) => result.status === 'success')
       ? 'completed'
       : 'partial';
 
@@ -215,7 +221,11 @@ export async function persistOneQueryResultSql(
         from query_runs
         where brand_id = $1
           and processing_session_id = $2
-          and tracked_identity = md5($3 || '::' || $4 || '::' || $5)
+          and tracked_identity = md5(
+            length($3::text)::text || ':' || $3::text ||
+            length($4::text)::text || ':' || $4::text ||
+            length($5::text)::text || ':' || $5::text
+          )
         limit 1
       `,
       [
@@ -237,7 +247,8 @@ export async function persistOneQueryResultSql(
               credits_after = $4,
               total_provider_cost = $5,
               raw_result = $6::jsonb,
-              completed_at = $7
+              completed_at = $7,
+              execution_request_id = $8
           where id = $1
         `,
         [
@@ -248,6 +259,7 @@ export async function persistOneQueryResultSql(
           Number(args.userQueryResponse.totalCost ?? 0),
           JSON.stringify(queryResult),
           completedAt,
+          args.executionRequestId,
         ]
       );
     } else {
@@ -257,6 +269,7 @@ export async function persistOneQueryResultSql(
             user_id,
             brand_id,
             brand_query_id,
+            execution_request_id,
             processing_session_id,
             processing_session_timestamp,
             query,
@@ -271,8 +284,8 @@ export async function persistOneQueryResultSql(
             completed_at
           )
           values (
-            $1, $2, $3, $4, $5::timestamptz, $6, $7, $8, 'user-query', $9,
-            $10, $11, $12, $13::jsonb, $14
+            $1, $2, $3, $4, $5, $6::timestamptz, $7, $8, $9, 'user-query', $10,
+            $11, $12, $13, $14::jsonb, $15
           )
           returning id
         `,
@@ -280,6 +293,7 @@ export async function persistOneQueryResultSql(
           brand.appUserId,
           brand.brandUuid,
           brandQueryId,
+          args.executionRequestId,
           args.processingSessionId,
           args.processingSessionTimestamp,
           args.query.query,
@@ -330,6 +344,7 @@ export async function persistOneQueryResultSql(
           JSON.stringify({
             requestId: result.requestId,
             timestamp: result.timestamp,
+            cacheHit: result.cacheHit === true,
           }),
           JSON.stringify(result.data || {}),
         ]
@@ -348,6 +363,33 @@ export async function persistOneQueryResultSql(
       });
     }
 
+    let executionReplayResponse: TReplayResponse | undefined;
+    if (args.buildExecutionReplayResponse) {
+      executionReplayResponse = args.buildExecutionReplayResponse(queryResult);
+      const completion = await client.query(
+        `
+          update query_execution_requests
+          set status = 'completed',
+              replay_response = $3::jsonb,
+              completed_at = now(),
+              lease_expires_at = null,
+              last_error = null
+          where id = $1
+            and user_id = $2
+            and status = 'processing'
+          returning id
+        `,
+        [
+          args.executionRequestId,
+          brand.appUserId,
+          JSON.stringify(executionReplayResponse),
+        ]
+      );
+      if (completion.rowCount !== 1) {
+        throw new Error('EXECUTION_COMPLETION_FAILED');
+      }
+    }
+
     const updatedResults = await getQueryResultsByBrandUuid(brand.brandUuid, client);
     const sessionResults = updatedResults.filter(
       (result) => result.processingSessionId === args.processingSessionId
@@ -357,6 +399,7 @@ export async function persistOneQueryResultSql(
       queryResult,
       updatedResults,
       sessionResults,
+      ...(executionReplayResponse !== undefined && { executionReplayResponse }),
     };
   });
 }

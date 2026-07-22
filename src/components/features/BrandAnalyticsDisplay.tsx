@@ -1,7 +1,7 @@
 'use client'
 import React, { useState, useCallback } from 'react';
 import { BrandAnalyticsData, LifetimeBrandAnalytics } from '@/lib/analytics/brandAnalytics';
-import { Award, Eye, MessageSquare, Calendar, Clock, BarChart3, Quote, Globe } from 'lucide-react';
+import { Award, MessageSquare, Calendar, Clock, BarChart3, Quote, Globe } from 'lucide-react';
 import InfoTooltip from '@/components/shared/InfoTooltip';
 
 interface BrandAnalyticsDisplayProps {
@@ -9,7 +9,30 @@ interface BrandAnalyticsDisplayProps {
   lifetimeAnalytics?: LifetimeBrandAnalytics | null;
   showDetails?: boolean;
   className?: string;
-  citationAnalytics?: any; // For citation overview cards
+  citationAnalytics?: CitationAnalyticsSummary | null;
+}
+
+interface CitationAnalyticsSummary {
+  totalCitations: number;
+  domainCitations: number;
+  brandMentions: number;
+  uniqueDomains: number;
+  domainCitationRate: number;
+  brandMentionRate: number;
+}
+
+function timestampToDate(timestamp: unknown): Date | null {
+  if (typeof timestamp === 'string' || typeof timestamp === 'number' || timestamp instanceof Date) {
+    const date = new Date(timestamp);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  if (timestamp && typeof timestamp === 'object' && 'seconds' in timestamp) {
+    const seconds = (timestamp as { seconds?: unknown }).seconds;
+    if (typeof seconds === 'number' && Number.isFinite(seconds)) {
+      return new Date(seconds * 1000);
+    }
+  }
+  return null;
 }
 
 const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({ 
@@ -27,13 +50,9 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
     return 'lifetime';
   });
   
-  const formatDate = useCallback((timestamp: any) => {
-    if (!timestamp) return 'Unknown';
-    
-    const date = timestamp.seconds ? 
-      new Date(timestamp.seconds * 1000) : 
-      new Date(timestamp);
-    
+  const formatDate = useCallback((timestamp: unknown) => {
+    const date = timestampToDate(timestamp);
+    if (!date) return 'Unknown';
     return date.toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'long', 
@@ -66,7 +85,7 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
           </svg>
         );
       default:
-        return <Award className="w-5 h-5 text-gray-600" />;
+        return <Award className="w-5 h-5 text-muted-foreground" />;
     }
   }, []);
 
@@ -93,7 +112,7 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
     title: string,
     indicator: React.ReactNode,
     isLifetime: boolean,
-    citationData?: any
+    citationData?: CitationAnalyticsSummary | null
   ) => {
     const latestAnalytics = !isLifetime ? analytics as BrandAnalyticsData : null;
     const lifetimeAnalytics = isLifetime ? analytics as LifetimeBrandAnalytics : null;
@@ -106,7 +125,7 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
     );
 
     const sectionSummary = isLifetime && lifetimeAnalytics
-      ? `${formatCountLabel(lifetimeAnalytics.totalQueriesProcessed, 'tracked query')} across ${formatCountLabel(lifetimeAnalytics.totalProcessingSessions, 'processing session')}`
+      ? `${formatCountLabel(lifetimeAnalytics.totalQueriesProcessed, 'processed query', 'processed queries')} across ${formatCountLabel(lifetimeAnalytics.totalProcessingSessions, 'processing session')}`
       : `${formatCountLabel(analytics.totalQueriesProcessed, 'query')} in the latest processing session`;
 
     const headerMeta = latestAnalytics?.processingSessionTimestamp
@@ -120,11 +139,11 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
           <div>
             <div className="flex items-center space-x-2">
               {indicator}
-              <span className="text-sm font-semibold text-gray-700">{title}</span>
+              <span className="text-sm font-semibold text-foreground">{title}</span>
             </div>
-            <p className="mt-1 text-xs text-gray-500">{sectionSummary}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{sectionSummary}</p>
           </div>
-          <div className="flex items-center space-x-2 text-xs text-gray-500">
+          <div className="flex items-center space-x-2 text-xs text-muted-foreground">
             {isLifetime ? (
               <>
                 <Calendar className="h-4 w-4" />
@@ -184,9 +203,9 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
                 </div>
                 <div>
                   <p className="text-yellow-600 text-xs font-medium inline-flex items-center">
-                    Brand Mentions
+                    Brand-reference Citations
                     <InfoTooltip>
-                      Citations where your brand's name appears in the AI's response or in the cited source's title. Different from Domain Citations: a competitor's blog mentioning you still counts here.
+                      Citations whose source text or title mentions your brand. This is different from response mentions and from citations linking to your own domain.
                     </InfoTooltip>
                   </p>
                   <p className="text-yellow-900 text-lg font-bold">{citationData.brandMentions}</p>
@@ -217,29 +236,31 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
         {showDetails && (
           <>
             {/* Provider Performance */}
-            <div className="bg-gray-50 p-4 rounded-xl">
-              <h4 className="text-sm font-semibold text-gray-700 mb-3">Provider Performance</h4>
+            <div className="bg-muted/40 p-4 rounded-xl">
+              <h4 className="text-sm font-semibold text-foreground mb-3">Provider Performance</h4>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 {processedProviderStats.map((providerData) => (
-                  <div key={providerData.provider} className="bg-white p-3 rounded-lg border border-gray-200">
+                  <div key={providerData.provider} className="bg-card p-3 rounded-lg border border-border">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
                         {providerData.icon}
-                        <span className="text-xs font-medium text-gray-600">{formatProviderName(providerData.provider)}</span>
+                        <span className="text-xs font-medium text-muted-foreground">{formatProviderName(providerData.provider)}</span>
                       </div>
-                      <span className="text-xs text-gray-500">{providerData.queriesProcessed} queries</span>
+                      <span className="text-xs text-muted-foreground">
+                        {formatCountLabel(providerData.queriesProcessed, 'query', 'queries')}
+                      </span>
                     </div>
                     <div className="space-y-1">
                       <div className="flex justify-between">
-                        <span className="text-xs text-gray-500">Mentions:</span>
+                        <span className="text-xs text-muted-foreground">Responses mentioning brand:</span>
                         <span className="text-xs font-medium">{providerData.brandMentions}</span>
                       </div>
                         <div className="flex justify-between">
-                        <span className="text-xs text-gray-500">Citations:</span>
+                        <span className="text-xs text-muted-foreground">Citations:</span>
                         <span className="text-xs font-medium">{providerData.citations}</span>
                         </div>
                         <div className="flex justify-between">
-                        <span className="text-xs text-gray-500">Domain Citations:</span>
+                        <span className="text-xs text-muted-foreground">Domain Citations:</span>
                         <span className="text-xs font-medium">{providerData.domainCitations}</span>
                       </div>
                     </div>
@@ -249,26 +270,26 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
                         </div>
 
             {/* Additional Insights */}
-            <div className="bg-gray-50 p-4 rounded-xl">
-              <h4 className="text-sm font-semibold text-gray-700 mb-3">Insights</h4>
+            <div className="bg-muted/40 p-4 rounded-xl">
+              <h4 className="text-sm font-semibold text-foreground mb-3">Insights</h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                         <div className="flex justify-between">
-                    <span className="text-xs text-gray-500">{isLifetime ? 'Tracked Queries:' : 'Session Queries:'}</span>
+                    <span className="text-xs text-muted-foreground">{isLifetime ? 'Processed Queries:' : 'Session Queries:'}</span>
                     <span className="text-xs font-medium">{analytics.totalQueriesProcessed}</span>
                         </div>
 
                   <div className="flex justify-between items-center">
-                    <span className="text-xs text-gray-500 inline-flex items-center">
-                      Avg Mentions/Response:
+                    <span className="text-xs text-muted-foreground inline-flex items-center">
+                      Response Mention Rate:
                       <InfoTooltip>
-                        Total brand mentions divided by total AI responses processed. Higher values mean the AI tends to reference your brand multiple times within a single answer.
+                        Percentage of processed provider responses that mention your brand at least once.
                       </InfoTooltip>
                     </span>
-                    <span className="text-xs font-medium">{analytics.insights.averageBrandMentionsPerResponse}</span>
+                    <span className="text-xs font-medium">{analytics.brandVisibilityScore.toFixed(1)}%</span>
                   </div>
                           <div className="flex justify-between items-center">
-                    <span className="text-xs text-gray-500 inline-flex items-center">
+                    <span className="text-xs text-muted-foreground inline-flex items-center">
                       Avg Citations/Response:
                       <InfoTooltip>
                         Total citations divided by total AI responses. Indicates how source-heavy the AI's answers are for your queries.
@@ -279,12 +300,12 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
                           </div>
                 <div className="space-y-2">
                   <div className="flex justify-between">
-                    <span className="text-xs text-gray-500">Top Provider:</span>
+                    <span className="text-xs text-muted-foreground">Top Provider:</span>
                     <span className="text-xs font-medium">{formatProviderName(analytics.insights.topPerformingProvider)}</span>
                       </div>
                   {analytics.insights.topProviders && analytics.insights.topProviders.length > 1 && (
                     <div className="flex justify-between">
-                      <span className="text-xs text-gray-500">All Top Providers:</span>
+                      <span className="text-xs text-muted-foreground">All Top Providers:</span>
                       <span className="text-xs font-medium">{analytics.insights.topProviders.map(formatProviderName).join(', ')}</span>
                     </div>
                   )}
@@ -294,8 +315,8 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
 
             {/* Lifetime Info (only show for lifetime analytics) */}
             {isLifetime && 'firstQueryProcessed' in analytics && (
-            <div className="pt-4 border-t border-gray-100">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between text-sm text-gray-600">
+            <div className="pt-4 border-t border-border">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between text-sm text-muted-foreground">
                     <div>
                       <span className="font-medium">First Query:</span> {analytics.firstQueryProcessed ? formatDate(analytics.firstQueryProcessed) : 'Unknown'}
                     </div>
@@ -314,14 +335,14 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
   // If no data available
   if (!latestAnalytics && !lifetimeAnalytics) {
   return (
-      <div className={`bg-white rounded-xl border border-gray-200 shadow-sm ${className}`}>
+      <div className={`bg-card rounded-xl border border-border shadow-sm ${className}`}>
           <div className="p-6">
             <div className="text-center py-8">
-              <div className="w-12 h-12 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
-                <BarChart3 className="w-6 h-6 text-gray-400" />
+              <div className="w-12 h-12 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
+                <BarChart3 className="w-6 h-6 text-muted-foreground" />
               </div>
-              <h3 className="text-sm font-medium text-gray-900 mb-2">No Analytics Available</h3>
-              <p className="text-xs text-gray-600">Process some queries to generate analytics data</p>
+              <h3 className="text-sm font-medium text-foreground mb-2">No Analytics Available</h3>
+              <p className="text-xs text-muted-foreground">Process some queries to generate analytics data</p>
             </div>
           </div>
         </div>
@@ -329,17 +350,17 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
   }
 
   return (
-    <div className={`bg-white rounded-xl border border-gray-200 shadow-sm ${className}`}>
+    <div className={`bg-card rounded-xl border border-border shadow-sm ${className}`}>
       <div className="p-6">
         {/* Tab Navigation */}
-        <div className="flex space-x-1 bg-gray-100 p-1 rounded-lg mb-6">
+        <div className="flex space-x-1 bg-muted p-1 rounded-lg mb-6">
           {lifetimeAnalytics && (
             <button
               onClick={() => setActiveTab('lifetime')}
               className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 ${
                 activeTab === 'lifetime'
-                  ? 'bg-white text-primary shadow-sm'
-                  : 'text-gray-600 hover:text-gray-900'
+                  ? 'bg-card text-primary shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
               }`}
             >
               <div className="flex items-center justify-center space-x-2">
@@ -353,8 +374,8 @@ const BrandAnalyticsDisplay = React.memo<BrandAnalyticsDisplayProps>(({
               onClick={() => setActiveTab('latest')}
               className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 ${
                 activeTab === 'latest'
-                  ? 'bg-white text-primary shadow-sm'
-                  : 'text-gray-600 hover:text-gray-900'
+                  ? 'bg-card text-primary shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
               }`}
             >
               <div className="flex items-center justify-center space-x-2">

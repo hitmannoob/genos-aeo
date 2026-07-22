@@ -1,4 +1,4 @@
-import { getAuth, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, onAuthStateChanged, type User } from 'firebase/auth';
 import firebase_app from '@/firebase/config';
 
 // Initialize Firebase auth instance
@@ -8,7 +8,7 @@ const auth = getAuth(firebase_app);
  * Wait for Firebase auth to be ready
  * @returns Promise<User | null> - The authenticated user or null
  */
-function waitForAuthReady(): Promise<any> {
+function waitForAuthReady(): Promise<User | null> {
   return new Promise((resolve) => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       unsubscribe();
@@ -27,7 +27,6 @@ export async function getFirebaseIdToken(): Promise<string | null> {
     const user = await waitForAuthReady();
     
     if (!user) {
-      console.warn('⚠️ No authenticated user found');
       return null;
     }
 
@@ -36,8 +35,7 @@ export async function getFirebaseIdToken(): Promise<string | null> {
     
     return idToken;
     
-  } catch (error) {
-    console.error('❌ Error getting Firebase ID token:', error);
+  } catch {
     return null;
   }
 }
@@ -62,7 +60,7 @@ export async function getFirebaseIdTokenWithRetry(
       if (attempt < maxRetries) {
         await new Promise(resolve => setTimeout(resolve, delay));
       }
-    } catch (error) {
+    } catch {
       if (attempt < maxRetries) {
         await new Promise(resolve => setTimeout(resolve, delay));
       }
@@ -70,4 +68,4 @@ export async function getFirebaseIdTokenWithRetry(
   }
   
   return null;
-} 
+}

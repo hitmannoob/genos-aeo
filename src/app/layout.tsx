@@ -7,11 +7,20 @@ import { PendingSingleQueriesProvider } from '@/context/PendingSingleQueriesCont
 import { QueryProvider } from '@/providers/QueryProvider';
 import { JobSideEffectsObserver } from '@/components/JobSideEffectsObserver';
 import './globals.css';
+import type { Metadata } from 'next';
 
 // Metadata for the application
-export const metadata = {
-  title: 'Genos Dashboard',
-  description: 'Intelligent brand analysis and query optimization platform',
+export const metadata: Metadata = {
+  title: {
+    default: 'Genos',
+    template: '%s | Genos',
+  },
+  description: 'Track brand visibility and citations across AI answer engines.',
+  manifest: '/site.webmanifest',
+  icons: {
+    icon: '/favicon.ico',
+    apple: '/apple-touch-icon.png',
+  },
 };
 
 // Root layout component for the application

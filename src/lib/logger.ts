@@ -1,10 +1,7 @@
 // Tiny logging shim. In development every level forwards to console; in
 // production debug/info are dropped while warn/error still ship (so Sentry
-// breadcrumbs and real failures still surface). New code should import
-// from here instead of calling console.* directly.
-//
-// Existing console.* calls are intentionally left in place for now —
-// migrating them is a follow-up. Use this for any new logging.
+// breadcrumbs and real failures still surface). Application code imports this
+// shim; command-line scripts write directly to stdout/stderr for operators.
 
 const isProd = process.env.NODE_ENV === 'production';
 

@@ -13,6 +13,7 @@ import {
   getCategoryAccentClasses,
   getCategorySolidClass,
 } from '@/lib/queryCategories';
+import type { QueryProcessingResult } from '@/lib/queryResultUtils';
 import {
   Search,
   RefreshCw,
@@ -24,9 +25,9 @@ import {
 export default function QueriesContent(): React.ReactElement {
   const { selectedBrand, brands, loading: brandLoading, refetchBrands } = useBrandContext();
   const { user } = useAuthContext();
-  const { showSuccess, showError } = useToast();
+  const { showSuccess, showError, showWarning } = useToast();
   const [showResults, setShowResults] = useState(false);
-  const [selectedQuery, setSelectedQuery] = useState<any>(null);
+  const [selectedQuery, setSelectedQuery] = useState<QueryProcessingResult | null>(null);
   
   
   // Add Query Modal State
@@ -43,13 +44,13 @@ export default function QueriesContent(): React.ReactElement {
   // later show up for re-use.
   const existingTopics: string[] = React.useMemo(() => {
     if (!selectedBrand) return [];
-    const fromKeywords: string[] = Array.isArray((selectedBrand as any).keywords)
-      ? (selectedBrand as any).keywords
+    const fromKeywords: string[] = Array.isArray(selectedBrand.keywords)
+      ? selectedBrand.keywords
       : [];
-    const fromQueries: string[] = Array.isArray((selectedBrand as any).queries)
-      ? (selectedBrand as any).queries
-          .map((q: any) => (typeof q?.keyword === 'string' ? q.keyword : ''))
-          .filter((k: string) => k.length > 0 && k !== 'custom')
+    const fromQueries: string[] = Array.isArray(selectedBrand.queries)
+      ? selectedBrand.queries
+          .map((query) => query.keyword)
+          .filter((keyword) => keyword.length > 0 && keyword !== 'custom')
       : [];
     const seen = new Set<string>();
     const merged: string[] = [];
@@ -130,20 +131,23 @@ export default function QueriesContent(): React.ReactElement {
         action: 'addKeyword',
         keyword: draft,
       });
-      await refetchBrands();
       setSelectedTopic(draft);
       setIsCreatingNewTopic(false);
       setNewTopicDraft('');
-    } catch (e) {
-      console.error('❌ Error adding topic:', e);
-      showError('Failed to add topic', 'Please try again.');
+      await refetchBrands().catch(() => {
+        showWarning('Topic added', 'Reload the page to refresh the topic list.');
+      });
+    } catch (error) {
+      showError(
+        'Failed to add topic',
+        error instanceof Error ? error.message : 'Please try again.'
+      );
     }
   };
 
   const handleSaveQuery = async () => {
     const topic = resolveTopic();
     if (!newQuery.trim() || !selectedBrand || !user) {
-      console.error('Missing required data for saving query');
       return;
     }
     if (!topic) {
@@ -154,18 +158,10 @@ export default function QueriesContent(): React.ReactElement {
     setIsSaving(true);
 
     try {
-      // Register the topic on the brand first if it's new. arrayUnion silently
-      // no-ops if it already exists, so it's safe to call even when the user
-      // picked an existing topic.
+      // addQuery updates the query and its topic in one server transaction.
       const isNewTopic =
         isCreatingNewTopic &&
         !existingTopics.some(t => t.toLowerCase() === topic.toLowerCase());
-      if (isNewTopic) {
-        await postBrandMutation({
-          action: 'addKeyword',
-          keyword: topic,
-        });
-      }
 
       await postBrandMutation({
         action: 'addQuery',
@@ -177,17 +173,20 @@ export default function QueriesContent(): React.ReactElement {
       resetModal();
       setShowAddQueryModal(false);
 
-      await refetchBrands();
-
       showSuccess(
         'Query added',
         isNewTopic
           ? `New topic "${topic}" created and query attached.`
           : 'Your new query is ready to process.'
       );
+      await refetchBrands().catch(() => {
+        showWarning('Query added', 'Reload the page to refresh the query list.');
+      });
     } catch (error) {
-      console.error('❌ Error saving query:', error);
-      showError('Failed to add query', 'Please try again in a moment.');
+      showError(
+        'Failed to add query',
+        error instanceof Error ? error.message : 'Please try again in a moment.'
+      );
     } finally {
       setIsSaving(false);
     }
@@ -230,7 +229,7 @@ export default function QueriesContent(): React.ReactElement {
           <p className="text-muted-foreground mb-4">
             Add your first brand to start tracking queries.
           </p>
-          <Link href="/dashboard/add-brand/step-1" className="bg-primary text-white px-4 py-2 rounded-lg hover:bg-primary/90 transition-colors">
+          <Link href="/dashboard/add-brand/step-1" className="rounded-lg bg-primary px-4 py-2 text-primary-foreground transition-colors hover:bg-primary/90">
             Add Brand
           </Link>
         </div>
@@ -267,6 +266,7 @@ export default function QueriesContent(): React.ReactElement {
           </div>
           <div className="flex items-center space-x-2">
             <button
+              type="button"
               onClick={handleAddQuery}
               className="bg-primary/10 text-primary px-4 py-2 rounded-full hover:bg-primary/20 transition-colors"
             >
@@ -318,12 +318,19 @@ export default function QueriesContent(): React.ReactElement {
         {/* Add Query Modal */}
         {showAddQueryModal && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-card border border-border rounded-2xl w-full max-w-lg shadow-xl flex flex-col max-h-[90vh]">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="add-query-title"
+              className="flex max-h-[90vh] w-full max-w-lg flex-col rounded-2xl border border-border bg-card shadow-xl"
+            >
               {/* Modal Header — fixed */}
               <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-border/50 flex-shrink-0">
-                <h3 className="text-lg font-semibold text-foreground">Add New Query</h3>
+                <h3 id="add-query-title" className="text-lg font-semibold text-foreground">Add New Query</h3>
                 <button
+                  type="button"
                   onClick={handleCancelQuery}
+                  aria-label="Close add-query form"
                   className="text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <X className="h-5 w-5" />
@@ -338,10 +345,11 @@ export default function QueriesContent(): React.ReactElement {
 
                 {/* Query Input */}
                 <div>
-                  <label className="block text-sm font-medium text-foreground mb-2">
+                  <label htmlFor="new-query" className="block text-sm font-medium text-foreground mb-2">
                     Query
                   </label>
                   <input
+                    id="new-query"
                     type="text"
                     value={newQuery}
                     onChange={(e) => setNewQuery(e.target.value)}
@@ -370,6 +378,7 @@ export default function QueriesContent(): React.ReactElement {
                           <button
                             key={topic}
                             type="button"
+                            aria-pressed={selected}
                             onClick={() => setSelectedTopic(topic)}
                             className={`px-3 py-1.5 rounded-full text-sm border transition-colors max-w-full break-words text-left ${
                               selected
@@ -399,6 +408,7 @@ export default function QueriesContent(): React.ReactElement {
                       <div className="flex gap-2">
                         <input
                           type="text"
+                          aria-label="New topic name"
                           value={newTopicDraft}
                           onChange={(e) => setNewTopicDraft(e.target.value)}
                           onKeyDown={(e) => {
@@ -416,7 +426,7 @@ export default function QueriesContent(): React.ReactElement {
                           type="button"
                           onClick={() => void handleConfirmNewTopic()}
                           disabled={!newTopicDraft.trim()}
-                          className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           Add
                         </button>
@@ -465,10 +475,12 @@ export default function QueriesContent(): React.ReactElement {
                         description: 'Pricing, "Where to buy?", purchase decisions',
                       },
                     ].map(({ category, description }) => (
-                      <div
+                      <button
+                        type="button"
                         key={category}
                         onClick={() => setSelectedCategory(category)}
-                        className={`p-4 rounded-lg border cursor-pointer transition-colors ${
+                        aria-pressed={selectedCategory === category}
+                        className={`w-full cursor-pointer rounded-lg border p-4 text-left transition-colors ${
                           selectedCategory === category
                             ? getCategoryAccentClasses(category)
                             : 'border-border hover:bg-muted/30'
@@ -485,7 +497,7 @@ export default function QueriesContent(): React.ReactElement {
                             </p>
                           </div>
                         </div>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 </div>
@@ -494,15 +506,17 @@ export default function QueriesContent(): React.ReactElement {
               {/* Modal Footer — fixed */}
               <div className="flex items-center justify-end space-x-3 px-6 py-4 border-t border-border/50 flex-shrink-0">
                 <button
+                  type="button"
                   onClick={handleCancelQuery}
                   className="px-4 py-2 text-muted-foreground hover:text-foreground transition-colors"
                 >
                   Cancel
                 </button>
                 <button
+                  type="button"
                   onClick={handleSaveQuery}
                   disabled={!newQuery.trim() || !resolveTopic() || isSaving}
-                  className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="rounded-lg bg-primary px-6 py-2 text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isSaving ? 'Adding...' : 'Add Query'}
                 </button>

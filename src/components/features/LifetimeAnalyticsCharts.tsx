@@ -4,13 +4,9 @@ import type { LifetimeBrandAnalytics } from '@/lib/analytics/brandAnalytics';
 
 interface LifetimeAnalyticsChartsProps {
   lifetimeAnalytics: LifetimeBrandAnalytics;
-  brandId: string;
 }
 
-const COLORS = ['#0D9488', '#764F94', '#E5E7EB'];
-
-export default function LifetimeAnalyticsCharts({ lifetimeAnalytics, brandId }: LifetimeAnalyticsChartsProps) {
-  void brandId;
+export default function LifetimeAnalyticsCharts({ lifetimeAnalytics }: LifetimeAnalyticsChartsProps) {
 
   // --- Trend Line Data ---
   const trendData = useMemo(() => {
@@ -55,10 +51,10 @@ export default function LifetimeAnalyticsCharts({ lifetimeAnalytics, brandId }: 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
       {/* Trend Line Chart */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+      <div className="bg-card rounded-xl border border-border shadow-sm p-6">
         <h3 className="text-lg font-semibold mb-4">Mentions Over Time</h3>
         {trendData.length === 0 ? (
-          <div className="text-center text-gray-500">No data available</div>
+          <div className="text-center text-muted-foreground">No data available</div>
         ) : (
           <ResponsiveContainer width="100%" height={260}>
             <LineChart data={trendData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
@@ -72,14 +68,14 @@ export default function LifetimeAnalyticsCharts({ lifetimeAnalytics, brandId }: 
           </ResponsiveContainer>
         )}
         {trendData.length > 0 && trendData.length < 3 && (
-          <div className="text-xs text-gray-500 mt-2 text-center">
+          <div className="text-xs text-muted-foreground mt-2 text-center">
             Not enough data yet! We usually need 2-3 data points to show a clear line chart. More data will be available after next analysis.
           </div>
         )}
       </div>
 
       {/* Donut Chart for Brand Visibility */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 flex flex-col items-center justify-center">
+      <div className="bg-card rounded-xl border border-border shadow-sm p-6 flex flex-col items-center justify-center">
         <h3 className="text-lg font-semibold mb-4">Brand Visibility</h3>
         <ResponsiveContainer width={220} height={220}>
           <PieChart>
@@ -103,12 +99,12 @@ export default function LifetimeAnalyticsCharts({ lifetimeAnalytics, brandId }: 
         </ResponsiveContainer>
         <div className="mt-4 text-center">
           <span className="text-2xl font-bold text-primary">{donutData[0].value}%</span>
-          <span className="ml-2 text-gray-600">Visible</span>
+          <span className="ml-2 text-muted-foreground">Visible</span>
         </div>
       </div>
 
       {/* Provider Comparison Bar Chart (full width) */}
-      <div className="md:col-span-2 bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+      <div className="md:col-span-2 bg-card rounded-xl border border-border shadow-sm p-6">
         <h3 className="text-lg font-semibold mb-4">Provider Comparison</h3>
         <ResponsiveContainer width="100%" height={300}>
           <BarChart data={barData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>

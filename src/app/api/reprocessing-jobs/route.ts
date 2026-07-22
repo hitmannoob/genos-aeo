@@ -8,8 +8,16 @@ import {
 } from '@/lib/jobs/reprocessingJobs';
 import { buildTrackedQueryIdentity } from '@/lib/queryResultUtils';
 import { runReprocessingJob } from '@/lib/jobs/reprocessingJobRunner';
+import { USER_QUERY_CREDIT_COST } from '@/lib/billing/serverCredits';
+import { z } from 'zod';
+import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
+
+const createJobSchema = z.object({
+  brandId: z.string().trim().min(1).max(200),
+  queriesFilter: z.array(z.string().trim().min(1).max(1_000)).max(100).optional(),
+}).strict();
 
 export async function GET(request: NextRequest) {
   const authResult = await authenticateApiRequest(request);
@@ -17,60 +25,69 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
   }
 
-  const brandId = request.nextUrl.searchParams.get('brandId');
-  if (!brandId) {
-    return NextResponse.json({ error: 'brandId is required' }, { status: 400 });
-  }
+  try {
+    const brandIdResult = z.string().trim().min(1).max(200).safeParse(
+      request.nextUrl.searchParams.get('brandId')
+    );
+    if (!brandIdResult.success) {
+      return NextResponse.json({ error: 'brandId is required' }, { status: 400 });
+    }
+    const brandId = brandIdResult.data;
 
-  const activeJob = await findActiveReprocessingJobForBrand(authResult.uid, brandId);
-  if (!activeJob) {
-    return NextResponse.json({ success: true, job: null });
-  }
+    const activeJob = await findActiveReprocessingJobForBrand(authResult.uid, brandId);
+    if (!activeJob) {
+      return NextResponse.json({ success: true, job: null });
+    }
 
-  if (shouldResumeReprocessingJob(activeJob)) {
-    after(async () => {
-      await runReprocessingJob(activeJob.id);
+    if (shouldResumeReprocessingJob(activeJob)) {
+      after(async () => {
+        try {
+          await runReprocessingJob(activeJob.id);
+        } catch (error) {
+          logger.error('Failed to resume reprocessing job', error);
+        }
+      });
+    }
+
+    return NextResponse.json({
+      success: true,
+      job: activeJob,
     });
+  } catch (error) {
+    logger.error('Failed to load active reprocessing job', error);
+    return NextResponse.json({ error: 'Failed to load reprocessing job' }, { status: 500 });
   }
-
-  return NextResponse.json({
-    success: true,
-    job: activeJob,
-  });
 }
 
 export async function POST(request: NextRequest) {
-  const authResult = await authenticateApiRequest(request, { requireProfile: true });
-  if (!authResult?.profile) {
-    return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-  }
-
   try {
-    const body = await request.json();
-    const brandId = typeof body?.brandId === 'string' ? body.brandId : '';
-    const queriesFilter = Array.isArray(body?.queriesFilter)
-      ? body.queriesFilter.filter((value: unknown): value is string => typeof value === 'string')
-      : [];
-
-    if (!brandId) {
-      return NextResponse.json({ error: 'brandId is required' }, { status: 400 });
+    const authResult = await authenticateApiRequest(request, { requireProfile: true });
+    if (!authResult?.profile) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
+
+    const body = await request.json().catch(() => null);
+    const parsedBody = createJobSchema.safeParse(body);
+    if (!parsedBody.success) {
+      return NextResponse.json({ error: 'Invalid reprocessing request' }, { status: 400 });
+    }
+    const { brandId, queriesFilter = [] } = parsedBody.data;
 
     const brand = await getBrandSql(brandId, authResult.uid);
     if (!brand) {
       return NextResponse.json({ error: 'Brand not found' }, { status: 404 });
     }
 
-    const allQueries = Array.isArray((brand as any).queries) ? (brand as any).queries : [];
+    const allQueries = brand.queries ?? [];
     const queries = queriesFilter.length > 0
-      ? allQueries.filter((query: any) => queriesFilter.includes(buildTrackedQueryIdentity(query)))
+      ? allQueries.filter((query) => queriesFilter.includes(buildTrackedQueryIdentity(query)))
       : allQueries;
 
     if (queries.length === 0) {
       return NextResponse.json({ error: 'No queries to process' }, { status: 400 });
     }
 
-    const creditsRequired = queries.length * 10;
+    const creditsRequired = queries.length * USER_QUERY_CREDIT_COST;
     const availableCredits = Number(authResult.profile.credits ?? 0);
     if (availableCredits < creditsRequired) {
       return NextResponse.json({
@@ -85,7 +102,11 @@ export async function POST(request: NextRequest) {
     if (existingActiveJob) {
       if (shouldResumeReprocessingJob(existingActiveJob)) {
         after(async () => {
-          await runReprocessingJob(existingActiveJob.id);
+          try {
+            await runReprocessingJob(existingActiveJob.id);
+          } catch (error) {
+            logger.error('Failed to resume existing reprocessing job', error);
+          }
         });
       }
 
@@ -96,7 +117,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const job = await createReprocessingJob({
+    const creation = await createReprocessingJob({
       userId: authResult.uid,
       brandId: brand.id,
       brandName: brand.companyName,
@@ -106,16 +127,20 @@ export async function POST(request: NextRequest) {
     });
 
     after(async () => {
-      await runReprocessingJob(job.id);
+      try {
+        await runReprocessingJob(creation.job.id);
+      } catch (error) {
+        logger.error('Failed to run new reprocessing job', error);
+      }
     });
 
     return NextResponse.json({
       success: true,
-      job,
-      reusedExistingJob: false,
+      job: creation.job,
+      reusedExistingJob: creation.reusedExistingJob,
     });
   } catch (error) {
-    console.error('❌ /api/reprocessing-jobs POST failed:', error);
+    logger.error('Failed to create reprocessing job', error);
     return NextResponse.json({ error: 'Failed to create reprocessing job' }, { status: 500 });
   }
 }

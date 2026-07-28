@@ -114,9 +114,11 @@ export async function acquireQueryExecution<TResponse>(
 
     // A row lock cannot serialize two first-time requests because no row
     // exists yet. Lock the logical idempotency key before checking/inserting.
+    // PostgreSQL text values cannot contain NUL bytes, so use an unambiguous
+    // JSON encoding instead of a NUL-delimited string.
     await client.query(
       'select pg_advisory_xact_lock(hashtextextended($1, 0))',
-      [`${appUserId}\0${brandUuid || ''}\0${args.clientRequestId}`]
+      [JSON.stringify([appUserId, brandUuid, args.clientRequestId])]
     );
 
     const existingResult = await client.query<{

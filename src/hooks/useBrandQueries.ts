@@ -7,7 +7,6 @@ import {
   hasProviderContent,
   type QueryProcessingResult,
 } from '@/lib/queryResultUtils';
-import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
 
 export type ProcessedQueryResult = QueryProcessingResult;
 
@@ -36,16 +35,10 @@ export function brandQueriesQueryKey(uid: string | undefined, brandId: string | 
 }
 
 async function fetchBrandQueries(brandId: string): Promise<ProcessedQueryResult[]> {
-  const idToken = await getFirebaseIdTokenWithRetry(3, 1000);
-  if (!idToken) {
-    throw new Error('Failed to get authentication token');
-  }
-
   const response = await fetch(
     `/api/brands/${encodeURIComponent(brandId)}?includeQueryResults=true`,
     {
       method: 'GET',
-      headers: { Authorization: `Bearer ${idToken}` },
     }
   );
 

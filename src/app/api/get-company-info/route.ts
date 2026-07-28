@@ -54,8 +54,8 @@ export async function POST(request: NextRequest) {
     const authResult = await authenticateApiRequest(request);
     if (!authResult) {
       return NextResponse.json(
-        { success: false, error: 'Authentication required' },
-        { status: 401 }
+        { success: false, error: 'Local profile unavailable' },
+        { status: 503 }
       );
     }
 
@@ -152,12 +152,12 @@ export async function POST(request: NextRequest) {
     const prompt = buildCompanyInfoPrompt(domain, websiteMetadata || undefined);
     
     // Initialize provider manager
-    const providerManager = new ProviderManager();
+    const providerManager = new ProviderManager(authResult.openRouterApiKey || undefined);
     
     const preferredProviders = [
       'chatgptsearch',
       'perplexity',
-      ...(websiteMetadata ? ['google-gemini'] : []),
+      ...(websiteMetadata ? ['google-ai-overview'] : []),
     ];
     const availableProviders = new Set(providerManager.getAvailableProviders());
     const providers = preferredProviders.filter((provider) => availableProviders.has(provider));

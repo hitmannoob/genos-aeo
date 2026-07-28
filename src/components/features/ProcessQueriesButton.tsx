@@ -85,7 +85,7 @@ export default function ProcessQueriesButton({
 
   const handleProcessQueries = async () => {
     if (!user?.uid) {
-      setLocalError('Please sign in to process queries');
+      setLocalError('Add an OpenRouter key to process queries');
       return;
     }
     if (!targetBrand) {
@@ -165,7 +165,7 @@ export default function ProcessQueriesButton({
   if (iconOnly) {
     const isDisabled = processing || isSubmitting || !user || !hasEnoughCredits;
     const tooltip = !user
-      ? 'Sign in to process'
+      ? 'Add an OpenRouter key to process'
       : !hasEnoughCredits
       ? `Needs ${requiredCredits} credits (you have ${availableCredits})`
       : displayStatus === 'error'
@@ -288,7 +288,7 @@ export default function ProcessQueriesButton({
           `}
           title={
             !user
-              ? 'Please sign in to process queries'
+              ? 'Add an OpenRouter key to process queries'
               : !hasEnoughCredits
               ? `Need ${requiredCredits} credits, you have ${availableCredits}`
               : ''

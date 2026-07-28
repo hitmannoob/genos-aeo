@@ -1,8 +1,9 @@
 import 'server-only';
 
-import type { DecodedIdToken } from 'firebase-admin/auth';
 import { sql } from './postgres';
 import type { UserProfile } from '@/types/userProfile';
+
+export const LOCAL_USER_ID = 'local-user';
 
 interface AppUserRow {
   id: string;
@@ -35,17 +36,8 @@ export function appUserRowToProfile(row: AppUserRow): UserProfile {
   };
 }
 
-function normalizeEmail(decodedToken: DecodedIdToken): string {
-  return decodedToken.email || `${decodedToken.uid}@firebase.local`;
-}
-
-function normalizeDisplayName(decodedToken: DecodedIdToken): string {
-  const name = decodedToken.name || decodedToken.email?.split('@')[0] || 'User';
-  return name.trim() || 'User';
-}
-
-export async function getAppUserProfileByFirebaseUid(
-  firebaseUid: string
+export async function getAppUserProfileByUserId(
+  userId: string
 ): Promise<UserProfile | null> {
   const result = await sql<AppUserRow>(
     `
@@ -64,15 +56,13 @@ export async function getAppUserProfileByFirebaseUid(
       where firebase_uid = $1
       limit 1
     `,
-    [firebaseUid]
+    [userId]
   );
 
   return result.rows[0] ? appUserRowToProfile(result.rows[0]) : null;
 }
 
-export async function upsertAppUserFromFirebaseToken(
-  decodedToken: DecodedIdToken
-): Promise<UserProfile> {
+export async function ensureLocalAppUserProfile(): Promise<UserProfile> {
   const result = await sql<AppUserRow>(
     `
       insert into app_users (
@@ -85,10 +75,6 @@ export async function upsertAppUserFromFirebaseToken(
       )
       values ($1, $2, $3, $4, true, now())
       on conflict (firebase_uid) do update set
-        email = excluded.email,
-        display_name = excluded.display_name,
-        photo_url = coalesce(excluded.photo_url, app_users.photo_url),
-        is_new_user = false,
         last_login_at = now()
       returning
         id,
@@ -103,10 +89,10 @@ export async function upsertAppUserFromFirebaseToken(
         last_login_at
     `,
     [
-      decodedToken.uid,
-      normalizeEmail(decodedToken),
-      normalizeDisplayName(decodedToken),
-      decodedToken.picture || null,
+      LOCAL_USER_ID,
+      'local@genos.local',
+      'Local user',
+      null,
     ]
   );
 

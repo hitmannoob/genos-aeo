@@ -74,9 +74,8 @@ function Page(): React.ReactElement {
   }, [lifetimeAnalytics?.allCitations, selectedBrand]);
 
   useEffect(() => {
-    // Only redirect if not loading and user is null
     if (!authLoading && user == null) {
-      router.replace('/signin');
+      router.replace('/');
     }
   }, [user, authLoading, router]);
 

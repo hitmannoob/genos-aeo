@@ -1,13 +1,16 @@
 import { NextRequest } from 'next/server';
 import { createHash, timingSafeEqual } from 'node:crypto';
-import type { DecodedIdToken } from 'firebase-admin/auth';
-import { auth } from '@/firebase/firebase-admin';
-import { getAppUserProfileByFirebaseUid } from '@/lib/db/appUsers';
+import {
+  getAppUserProfileByUserId,
+  LOCAL_USER_ID,
+} from '@/lib/db/appUsers';
+import { OPENROUTER_KEY_HEADER } from '@/lib/openRouterKey';
 import type { UserProfile } from '@/types/userProfile';
 
 export interface AuthenticatedApiRequest {
   uid: string;
   token: string;
+  openRouterApiKey: string | null;
   profile?: UserProfile;
 }
 
@@ -23,6 +26,11 @@ export function parseBearerToken(request: NextRequest): string | null {
   return match?.[1] || null;
 }
 
+export function getOpenRouterApiKey(request: NextRequest): string | null {
+  const key = request.headers.get(OPENROUTER_KEY_HEADER)?.trim();
+  return key || null;
+}
+
 export function secretsMatch(candidate: string, expected: string): boolean {
   const candidateHash = createHash('sha256').update(candidate).digest();
   const expectedHash = createHash('sha256').update(expected).digest();
@@ -34,41 +42,27 @@ export function configuredServiceSecret(value: string | undefined): string | nul
   return secret && secret.length >= 32 ? secret : null;
 }
 
-export async function verifyFirebaseRequestToken(
-  request: NextRequest
-): Promise<{ token: string; decodedToken: DecodedIdToken } | null> {
-  const token = parseBearerToken(request);
-  if (!token) return null;
-
-  try {
-    const decodedToken = await auth.verifyIdToken(token, true);
-    return decodedToken?.uid ? { token, decodedToken } : null;
-  } catch {
-    return null;
-  }
-}
-
 export async function authenticateApiRequest(
   request: NextRequest,
   options: AuthenticateApiRequestOptions = {}
 ): Promise<AuthenticatedApiRequest | null> {
-  const verified = await verifyFirebaseRequestToken(request);
-  if (!verified) return null;
-  const { token, decodedToken } = verified;
+  const openRouterApiKey = getOpenRouterApiKey(request);
 
   if (!options.requireProfile) {
     return {
-      uid: decodedToken.uid,
-      token,
+      uid: LOCAL_USER_ID,
+      token: '',
+      openRouterApiKey,
     };
   }
 
-  const profile = await getAppUserProfileByFirebaseUid(decodedToken.uid);
+  const profile = await getAppUserProfileByUserId(LOCAL_USER_ID);
   if (!profile) return null;
 
   return {
-    uid: decodedToken.uid,
-    token,
+    uid: LOCAL_USER_ID,
+    token: '',
+    openRouterApiKey,
     profile,
   };
 }

@@ -50,7 +50,8 @@ function publicJobErrorMessage(code?: string): string {
 }
 
 export async function runReprocessingJob(
-  jobId: string
+  jobId: string,
+  openRouterApiKey?: string,
 ): Promise<void> {
   const acquired = await acquireReprocessingJobRunner(jobId);
   if (!acquired.acquired || !acquired.job) {
@@ -108,6 +109,7 @@ export async function runReprocessingJob(
     try {
       payload = await executePersistedUserQueryServer({
         userId: job.userId,
+        openRouterApiKey,
         query: currentQuery.query,
         brandId: job.brandId,
         keyword: currentQuery.keyword,
@@ -193,7 +195,7 @@ export async function runReprocessingJob(
 
       if (
         payload?.code === 'INSUFFICIENT_CREDITS' ||
-        payload?.code === 'AUTHENTICATION_REQUIRED' ||
+        payload?.code === 'LOCAL_PROFILE_REQUIRED' ||
         payload?.code === 'CREDIT_DEDUCTION_FAILED' ||
         payload?.code === 'PERSISTENCE_FAILED' ||
         payload?.code === 'PERSISTENCE_FAILED_REFUND_FAILED' ||

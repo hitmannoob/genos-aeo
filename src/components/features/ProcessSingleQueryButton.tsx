@@ -6,7 +6,7 @@ import { useAuthContext } from '@/context/AuthContext';
 import { useBrandContext } from '@/context/BrandContext';
 import { useToast } from '@/context/ToastContext';
 import { usePendingSingleQueries } from '@/context/PendingSingleQueriesContext';
-import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
+import { getOpenRouterKeyWithRetry, OPENROUTER_KEY_HEADER } from '@/lib/openRouterKey';
 import { buildTrackedQueryIdentity } from '@/lib/queryResultUtils';
 import { brandQueriesQueryKey } from '@/hooks/useBrandQueries';
 import { USER_QUERY_CREDIT_COST } from '@/lib/billing/creditCosts';
@@ -57,7 +57,7 @@ export default function ProcessSingleQueryButton({
   const disabled = busy || !user || !hasEnoughCredits || !targetBrand;
 
   const tooltip = !user
-    ? 'Sign in to process'
+    ? 'Add an OpenRouter key to process'
     : !targetBrand
     ? 'Brand not loaded'
     : !hasEnoughCredits
@@ -78,8 +78,8 @@ export default function ProcessSingleQueryButton({
 
     let success = false;
     try {
-      const idToken = await getFirebaseIdTokenWithRetry(3, 1000);
-      if (!idToken) throw new Error('Failed to get authentication token');
+      const openRouterKey = await getOpenRouterKeyWithRetry(3, 1000);
+      if (!openRouterKey) throw new Error('Add an OpenRouter API key to continue');
 
       const sessionTimestamp = new Date().toISOString();
       const requestId = crypto.randomUUID();
@@ -90,7 +90,7 @@ export default function ProcessSingleQueryButton({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${idToken}`,
+          [OPENROUTER_KEY_HEADER]: openRouterKey,
         },
         body: JSON.stringify({
           query: query.query,

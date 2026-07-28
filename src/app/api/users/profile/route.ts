@@ -1,23 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
-  getAppUserProfileByFirebaseUid,
-  upsertAppUserFromFirebaseToken,
+  ensureLocalAppUserProfile,
+  getAppUserProfileByUserId,
+  LOCAL_USER_ID,
 } from '@/lib/db/appUsers';
-import { verifyFirebaseRequestToken } from '@/lib/serverAuth';
 import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
+  void request;
   try {
-    const decodedToken = (await verifyFirebaseRequestToken(request))?.decodedToken;
-    if (!decodedToken?.uid) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
-
-    const profile = await getAppUserProfileByFirebaseUid(decodedToken.uid);
+    const profile = await getAppUserProfileByUserId(LOCAL_USER_ID);
     if (!profile) {
-      return NextResponse.json({ error: 'User profile not found' }, { status: 404 });
+      return NextResponse.json({ error: 'Local profile not found' }, { status: 404 });
     }
 
     return NextResponse.json({
@@ -31,13 +27,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  void request;
   try {
-    const decodedToken = (await verifyFirebaseRequestToken(request))?.decodedToken;
-    if (!decodedToken?.uid) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
-
-    const profile = await upsertAppUserFromFirebaseToken(decodedToken);
+    const profile = await ensureLocalAppUserProfile();
 
     return NextResponse.json({
       success: true,

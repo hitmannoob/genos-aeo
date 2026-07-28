@@ -21,8 +21,7 @@ import {
 import { buildQueryGenerationPrompt, parseQueryGenerationResponse } from '@/lib/prompts/queryGeneration';
 import { logger } from '@/lib/logger';
 
-const providerManager = new ProviderManager();
-const PREFERRED_PROVIDERS = ['chatgptsearch', 'google-gemini'];
+const PREFERRED_PROVIDERS = ['chatgptsearch', 'google-ai-overview'];
 
 export async function POST(request: NextRequest) {
   let executionIdentity: { userId: string; clientRequestId: string } | null = null;
@@ -54,8 +53,9 @@ export async function POST(request: NextRequest) {
   try {
   const authResult = await authenticateApiRequest(request);
   if (!authResult) {
-    return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 });
+    return NextResponse.json({ success: false, error: 'Local profile unavailable' }, { status: 503 });
   }
+  const providerManager = new ProviderManager(authResult.openRouterApiKey || undefined);
 
   const body = await request.json().catch(() => null);
   const parsedInput = QueryGenerationInputSchema.safeParse(body);

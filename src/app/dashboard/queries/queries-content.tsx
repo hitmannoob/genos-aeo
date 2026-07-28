@@ -8,7 +8,6 @@ import { useAuthContext } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import AIResponseModal from './AIResponseModal';
 import WebLogo from '@/components/shared/WebLogo';
-import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
 import {
   getCategoryAccentClasses,
   getCategorySolidClass,
@@ -78,16 +77,10 @@ export default function QueriesContent(): React.ReactElement {
       throw new Error('No brand selected');
     }
 
-    const idToken = await getFirebaseIdTokenWithRetry(3, 500);
-    if (!idToken) {
-      throw new Error('Failed to get authentication token');
-    }
-
     const response = await fetch(`/api/brands/${selectedBrand.id}/queries`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${idToken}`,
       },
       body: JSON.stringify(body),
     });

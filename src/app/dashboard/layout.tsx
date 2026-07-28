@@ -20,9 +20,9 @@ export default function DashboardLayout({ children }: DashboardLayoutProps): Rea
   const pathname = usePathname();
 
   useEffect(() => {
-    // Only redirect if not loading and user is null
+    // The local workspace requires only a browser-stored OpenRouter key.
     if (!loading && user == null) {
-      router.replace('/signin');
+      router.replace('/');
     }
   }, [user, loading, router]);
 
@@ -45,7 +45,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps): Rea
     }
   }, [user, userProfile, loading, brandsLoading, brandsError, brands.length, pathname, router]);
 
-  // Show loading while auth state is being determined
+  // Show loading while local workspace state is being determined.
   if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -54,11 +54,11 @@ export default function DashboardLayout({ children }: DashboardLayoutProps): Rea
     );
   }
 
-  // If user is not authenticated, show loading while redirecting
+  // If no OpenRouter key is configured, return to local setup.
   if (!user) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-foreground text-lg">Redirecting to sign in...</div>
+        <div className="text-foreground text-lg">Returning to setup...</div>
       </div>
     );
   }
@@ -85,6 +85,5 @@ export default function DashboardLayout({ children }: DashboardLayoutProps): Rea
     );
   }
 
-  // If user is authenticated, render the children
   return <>{children}</>;
 }

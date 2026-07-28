@@ -3,12 +3,13 @@ import { z } from 'zod';
 import {
   authenticateApiRequest,
   configuredServiceSecret,
+  getOpenRouterApiKey,
   parseBearerToken,
   secretsMatch,
 } from '@/lib/serverAuth';
 import { USER_QUERY_CREDIT_COST } from '@/lib/billing/serverCredits';
 import { consumeRateLimit } from '@/lib/rateLimit/rateLimit';
-import { getAppUserProfileByFirebaseUid } from '@/lib/db/appUsers';
+import { getAppUserProfileByUserId } from '@/lib/db/appUsers';
 import {
   executeUserQueryServer,
   type UserQueryWorkflowResult,
@@ -55,7 +56,7 @@ const UserQueryRequestSchema = z.object({
 
 async function authenticateUserQueryRequest(
   request: NextRequest
-): Promise<{ uid: string; isService: boolean } | null> {
+): Promise<{ uid: string; isService: boolean; openRouterApiKey?: string } | null> {
   const token = parseBearerToken(request);
   const serviceSecret = configuredServiceSecret(process.env.SERVICE_API_SECRET);
 
@@ -68,7 +69,7 @@ async function authenticateUserQueryRequest(
     }
     const serviceUserId = serviceUserIdResult.data;
 
-    const profile = await getAppUserProfileByFirebaseUid(serviceUserId);
+    const profile = await getAppUserProfileByUserId(serviceUserId);
     if (!profile) {
       return null;
     }
@@ -76,6 +77,7 @@ async function authenticateUserQueryRequest(
     return {
       uid: serviceUserId,
       isService: true,
+      openRouterApiKey: process.env.OPENROUTER_API_KEY?.trim() || undefined,
     };
   }
 
@@ -87,6 +89,7 @@ async function authenticateUserQueryRequest(
   return {
     uid: authResult.uid,
     isService: false,
+    openRouterApiKey: getOpenRouterApiKey(request) || undefined,
   };
 }
 
@@ -112,8 +115,8 @@ async function handlePost(request: NextRequest) {
     return NextResponse.json(
       {
         success: false,
-        error: 'Authentication required. Please provide a valid authorization token.',
-        code: 'AUTHENTICATION_REQUIRED',
+        error: 'OpenRouter API key required.',
+        code: 'OPENROUTER_KEY_REQUIRED',
       },
       { status: 401 }
     );
@@ -167,6 +170,7 @@ async function handlePost(request: NextRequest) {
 
   const result = await executeUserQueryServer({
     userId: authResult.uid,
+    openRouterApiKey: authResult.openRouterApiKey,
     ...parsedInput.data,
     skipBilling,
   });
@@ -193,10 +197,10 @@ export async function POST(request: NextRequest) {
 export async function GET() {
   return NextResponse.json({
     message: 'User Query API - provider execution, billing, idempotency, and persistence are handled by the server workflow service.',
-    authentication: {
-      required: true,
-      method: 'Bearer token in Authorization header',
-      description: 'Firebase ID token required for browser requests. Trusted service requests may use SERVICE_API_SECRET with X-Service-User-Id.',
+    localMode: {
+      authenticationRequired: false,
+      providerKeyHeader: 'X-OpenRouter-Api-Key',
+      description: 'Browser requests use the fixed local workspace identity and provide the OpenRouter key per request.',
     },
     creditCost: {
       perQuery: USER_QUERY_CREDIT_COST,
@@ -206,7 +210,7 @@ export async function GET() {
       POST: {
         description: 'Submit a query to configured user-query providers.',
         headers: {
-          Authorization: 'Bearer <firebase-id-token>',
+          'X-OpenRouter-Api-Key': '<openrouter-api-key>',
           'Content-Type': 'application/json',
         },
         body: {
@@ -220,7 +224,8 @@ export async function GET() {
       },
     },
     errorCodes: {
-      AUTHENTICATION_REQUIRED: 'Missing or invalid bearer token',
+      OPENROUTER_KEY_REQUIRED: 'No OpenRouter API key was provided',
+      LOCAL_PROFILE_REQUIRED: 'The local workspace profile is unavailable',
       INVALID_REQUEST: 'Request body failed validation',
       RATE_LIMITED: 'Per-user endpoint rate limit exceeded',
       REQUEST_IN_PROGRESS: 'The same idempotency key is currently processing',

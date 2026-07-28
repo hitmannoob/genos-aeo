@@ -12,7 +12,7 @@ export async function GET(
   try {
     const authResult = await authenticateApiRequest(request);
     if (!authResult) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+      return NextResponse.json({ error: 'Local profile unavailable' }, { status: 503 });
     }
 
     const { brandId } = await context.params;

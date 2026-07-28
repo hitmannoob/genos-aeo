@@ -6,18 +6,10 @@ dotenv.config({
   quiet: true,
 });
 
-const required = [
-  'DATABASE_URL',
-  'NEXT_PUBLIC_FIREBASE_API_KEY',
-  'NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN',
-  'NEXT_PUBLIC_FIREBASE_PROJECT_ID',
-  'NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID',
-  'NEXT_PUBLIC_FIREBASE_APP_ID',
-];
+const missing = [];
 
 function isPlaceholder(value) {
-  return /(^|[-_])your([-_]|$)|replace[_-]?with|YOUR_PRIVATE_KEY|example\.com|test-api-key|test-project/i
-    .test(value);
+  return /(^|[-_])your([-_]|$)|replace[_-]?with|example\.com|test-api-key/i.test(value);
 }
 
 function isConfigured(name) {
@@ -25,27 +17,8 @@ function isConfigured(name) {
   return Boolean(value && !isPlaceholder(value));
 }
 
-if (!process.env.FIREBASE_AUTH_EMULATOR_HOST) {
-  required.push('FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY');
-}
-
-const missing = required.filter((name) => !isConfigured(name));
-const hasOpenAi = Boolean(
-  isConfigured('OPENAI_API_KEY') || isConfigured('CHATGPT_SEARCH_API_KEY')
-);
-const hasGemini = Boolean(
-  isConfigured('GOOGLE_AI_API_KEY') || isConfigured('GEMINI_API_KEY')
-);
-const hasPerplexity = isConfigured('PERPLEXITY_API_KEY');
-const hasDataForSeo = Boolean(
-  isConfigured('DATAFORSEO_USERNAME') && isConfigured('DATAFORSEO_PASSWORD')
-);
-const clientUsesAuthEmulator = process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === 'true';
-const serverAuthEmulatorHost = process.env.FIREBASE_AUTH_EMULATOR_HOST?.trim();
-const geminiModel = process.env.GEMINI_MODEL?.trim();
-
-if (geminiModel === 'gemini-3.1-flash-lite-preview') {
-  missing.push('GEMINI_MODEL uses the retired gemini-3.1-flash-lite-preview model; use gemini-3.1-flash-lite');
+if (!isConfigured('DATABASE_URL')) {
+  missing.push('DATABASE_URL');
 }
 
 for (const secretName of ['SERVICE_API_SECRET', 'ADMIN_API_SECRET']) {
@@ -59,15 +32,6 @@ if (
   && process.env.SERVICE_API_SECRET.trim() === process.env.ADMIN_API_SECRET?.trim()
 ) {
   missing.push('SERVICE_API_SECRET and ADMIN_API_SECRET must be different');
-}
-if (clientUsesAuthEmulator && !serverAuthEmulatorHost) {
-  missing.push('FIREBASE_AUTH_EMULATOR_HOST (required when the client emulator is enabled)');
-}
-if (
-  serverAuthEmulatorHost
-  && !/^(127\.0\.0\.1|localhost|\[::1\]):\d+$/.test(serverAuthEmulatorHost)
-) {
-  missing.push('FIREBASE_AUTH_EMULATOR_HOST must use a loopback host and explicit port');
 }
 
 try {
@@ -88,23 +52,17 @@ try {
   }
 }
 
-console.log('Genos configuration check');
-for (const name of required) {
-  console.log(`${missing.includes(name) ? 'MISSING' : 'OK'}  ${name}`);
-}
-
-console.log(`\nProviders: OpenAI=${hasOpenAi ? 'yes' : 'no'}, Gemini=${hasGemini ? 'yes' : 'no'}, Perplexity=${hasPerplexity ? 'yes' : 'no'}, DataForSEO=${hasDataForSeo ? 'yes' : 'no'}`);
-
-if (!hasOpenAi && !hasGemini) {
-  missing.push('OPENAI_API_KEY or GOOGLE_AI_API_KEY');
-}
-if (!hasOpenAi && !hasPerplexity && !hasDataForSeo) {
-  missing.push('at least one monitoring provider');
-}
+console.log('Genos local configuration check');
+console.log(`${isConfigured('DATABASE_URL') ? 'OK' : 'MISSING'}  DATABASE_URL`);
+console.log(
+  `OpenRouter: browser key requested at runtime${
+    isConfigured('OPENROUTER_API_KEY') ? '; server fallback configured' : ''
+  }`
+);
 
 if (missing.length > 0) {
   console.error(`\nConfiguration incomplete: ${missing.join(', ')}`);
   process.exitCode = 1;
 } else {
-  console.log('\nConfiguration is ready.');
+  console.log('\nLocal configuration is ready.');
 }

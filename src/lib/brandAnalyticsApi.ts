@@ -1,6 +1,4 @@
 'use client'
-
-import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
 import type {
   BrandAnalyticsData,
   LifetimeBrandAnalytics,
@@ -28,18 +26,10 @@ export async function fetchBrandAnalyticsBundle(
   brandId: string,
   includeCompetitors: boolean = false
 ): Promise<BrandAnalyticsBundleResponse> {
-  const idToken = await getFirebaseIdTokenWithRetry(3, 1000);
-  if (!idToken) {
-    throw new Error('Failed to get authentication token');
-  }
-
   const response = await fetch(
     `/api/brands/${encodeURIComponent(brandId)}/analytics?includeCompetitors=${includeCompetitors ? 'true' : 'false'}`,
     {
       method: 'GET',
-      headers: {
-        Authorization: `Bearer ${idToken}`,
-      },
     }
   );
 

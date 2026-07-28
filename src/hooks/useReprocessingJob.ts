@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
+import { getOpenRouterKeyWithRetry, OPENROUTER_KEY_HEADER } from '@/lib/openRouterKey';
 
 export interface ReprocessingJob {
   id: string;
@@ -83,19 +83,19 @@ export function reprocessingJobQueryKey(brandId: string | undefined) {
   return ['reprocessing-job', brandId] as const;
 }
 
-async function getIdToken(): Promise<string> {
-  const idToken = await getFirebaseIdTokenWithRetry(3, 1000);
-  if (!idToken) {
-    throw new Error('Failed to get authentication token. Please sign in again.');
+async function getOpenRouterKey(): Promise<string> {
+  const openRouterKey = await getOpenRouterKeyWithRetry(3, 1000);
+  if (!openRouterKey) {
+    throw new Error('Add an OpenRouter API key to continue.');
   }
-  return idToken;
+  return openRouterKey;
 }
 
 async function fetchActiveJobForBrand(brandId: string): Promise<ReprocessingJob | null> {
-  const idToken = await getIdToken();
+  const openRouterKey = await getOpenRouterKey();
   const response = await fetch(
     `/api/reprocessing-jobs?brandId=${encodeURIComponent(brandId)}`,
-    { headers: { Authorization: `Bearer ${idToken}` } },
+    { headers: { [OPENROUTER_KEY_HEADER]: openRouterKey } },
   );
   if (!response.ok) {
     throw new Error(`Failed to load reprocessing job (${response.status})`);
@@ -105,9 +105,9 @@ async function fetchActiveJobForBrand(brandId: string): Promise<ReprocessingJob 
 }
 
 async function fetchJobById(jobId: string): Promise<ReprocessingJob> {
-  const idToken = await getIdToken();
+  const openRouterKey = await getOpenRouterKey();
   const response = await fetch(`/api/reprocessing-jobs/${jobId}`, {
-    headers: { Authorization: `Bearer ${idToken}` },
+    headers: { [OPENROUTER_KEY_HEADER]: openRouterKey },
   });
   if (!response.ok) {
     throw new Error(`Failed to poll job (${response.status})`);
@@ -215,12 +215,12 @@ export function useReprocessingJob(
       if (!brandId) {
         throw new Error('Cannot start reprocessing job — no brandId');
       }
-      const idToken = await getIdToken();
+      const openRouterKey = await getOpenRouterKey();
       const response = await fetch('/api/reprocessing-jobs', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${idToken}`,
+          [OPENROUTER_KEY_HEADER]: openRouterKey,
         },
         body: JSON.stringify({
           brandId,
@@ -261,12 +261,12 @@ export function useReprocessingJob(
         | null
         | undefined;
       if (!current) return null;
-      const idToken = await getIdToken();
+      const openRouterKey = await getOpenRouterKey();
       const response = await fetch(`/api/reprocessing-jobs/${current.id}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${idToken}`,
+          [OPENROUTER_KEY_HEADER]: openRouterKey,
         },
         body: JSON.stringify({ action: 'cancel' }),
       });

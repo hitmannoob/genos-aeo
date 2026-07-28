@@ -11,7 +11,6 @@ import { useUserCredits } from '@/hooks/useUserCredits';
 import { useAuthContext } from '@/context/AuthContext';
 import { useBrandContext } from '@/context/BrandContext';
 import { useToast } from '@/context/ToastContext';
-import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
 import {
   QUERY_CATEGORIES,
   getCategoryPillClasses,
@@ -141,7 +140,7 @@ export default function AddBrandStep3(): React.ReactElement {
       showError(
         'Setup is incomplete',
         !user?.uid
-          ? 'Please sign in again before completing setup.'
+          ? 'Add your OpenRouter key again before completing setup.'
           : 'Select at least four queries before completing setup.'
       );
       return;
@@ -198,21 +197,10 @@ export default function AddBrandStep3(): React.ReactElement {
         } : null,
       };
 
-      const idToken = await getFirebaseIdTokenWithRetry(3, 500);
-      if (!idToken) {
-        showError(
-          'Authentication Failed',
-          'Please sign in again and retry brand creation.'
-        );
-        setIsCompleting(false);
-        return;
-      }
-
       const response = await fetch('/api/brands', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`,
         },
         body: JSON.stringify({
           brandData: completeBrandData,

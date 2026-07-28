@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuthContext } from '@/context/AuthContext';
 import type { UserBrand } from '@/types/userBrand';
 import { toIsoString } from '@/lib/timestamps';
-import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
 
 interface UseUserBrandsReturn {
   brands: UserBrand[];
@@ -17,19 +16,17 @@ export function useUserBrands(): UseUserBrandsReturn {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Tracks the uid an in-flight fetch was started for. If the user changes
-  // (signout-then-signin, account switch) before a slow fetch resolves, we
-  // discard the late response so it can't overwrite the new user's data.
+  // Tracks the uid an in-flight fetch was started for. If the local workspace
+  // is reset before a slow fetch resolves, discard the stale response.
   const fetchSequenceRef = useRef(0);
-  // Tracks whether brands have ever loaded for the current user. Refetches
+  // Tracks whether brands have ever loaded for the local workspace. Refetches
   // run silently (loading stays false) so consumers that gate rendering on
   // `loading` don't unmount their subtree mid-refresh — that was causing
   // QueriesOverview to unmount/remount on every refetchBrands call, which
   // re-fired its child fetches.
   const hasLoadedRef = useRef(false);
 
-  // Reset the "has loaded" flag when the user changes so a new sign-in shows
-  // the loading state instead of reusing the previous account's flag.
+  // Reset the "has loaded" flag when the local workspace is reconfigured.
   useEffect(() => {
     fetchSequenceRef.current += 1;
     hasLoadedRef.current = false;
@@ -52,16 +49,7 @@ export function useUserBrands(): UseUserBrandsReturn {
     setError(null);
 
     try {
-      const idToken = await getFirebaseIdTokenWithRetry(3, 500);
-      if (!idToken) {
-        throw new Error('Failed to get authentication token');
-      }
-
-      const response = await fetch('/api/brands', {
-        headers: {
-          Authorization: `Bearer ${idToken}`,
-        },
-      });
+      const response = await fetch('/api/brands');
 
       const payload = await response.json();
       const result = Array.isArray(payload?.brands) ? payload.brands : [];

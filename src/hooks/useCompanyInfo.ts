@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { CompanyInfo } from '@/lib/get-company-info';
-import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
+import { getOpenRouterKeyWithRetry, OPENROUTER_KEY_HEADER } from '@/lib/openRouterKey';
 import { useAuthContext } from '@/context/AuthContext';
 
 interface CompanyInfoState {
@@ -37,9 +37,9 @@ export function useCompanyInfo(): UseCompanyInfoReturn {
     });
 
     try {
-      const idToken = await getFirebaseIdTokenWithRetry(3, 1000);
-      if (!idToken) {
-        throw new Error('Authentication required');
+      const openRouterKey = await getOpenRouterKeyWithRetry(3, 1000);
+      if (!openRouterKey) {
+        throw new Error('Add an OpenRouter API key to continue');
       }
       
       const clientRequestId = crypto.randomUUID();
@@ -48,7 +48,7 @@ export function useCompanyInfo(): UseCompanyInfoReturn {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`,
+          [OPENROUTER_KEY_HEADER]: openRouterKey,
         },
         body: JSON.stringify({ domain, clientRequestId }),
       });

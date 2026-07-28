@@ -2,8 +2,7 @@
 import React from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { usePathname, useRouter } from 'next/navigation';
-import signOut from '@/firebase/auth/signOut';
+import { usePathname } from 'next/navigation';
 import { 
   BarChart3, 
   CreditCard, 
@@ -12,7 +11,7 @@ import {
   Quote, 
   Plus,
   Menu,
-  LogOut,
+  KeyRound,
   User,
   ChevronDown,
   ChevronUp
@@ -20,6 +19,7 @@ import {
 import { useBrandContext } from '@/context/BrandContext';
 import { useAuthContext } from '@/context/AuthContext';
 import WebLogo from '@/components/shared/WebLogo';
+import OpenRouterKeyDialog from '@/components/settings/OpenRouterKeyDialog';
 
 const navigationItems = [
   { name: 'Overview', href: '/dashboard', icon: BarChart3 },
@@ -36,7 +36,6 @@ interface SidebarProps {
 
 export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.ReactElement {
   const pathname = usePathname();
-  const router = useRouter();
   const { user, userProfile } = useAuthContext();
   const { 
     brands, 
@@ -46,7 +45,7 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
     setSelectedBrandId 
   } = useBrandContext();
   const [isBrandsDropdownOpen, setIsBrandsDropdownOpen] = React.useState(false);
-  const [signOutError, setSignOutError] = React.useState(false);
+  const [isKeyDialogOpen, setIsKeyDialogOpen] = React.useState(false);
   const dropdownRef = React.useRef<HTMLDivElement>(null);
 
   // Ensure single brand is selected when only one brand exists
@@ -78,21 +77,12 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
   // Note: We intentionally don't add periodic refresh here as it can interfere with query processing
   // Credits are updated manually after API calls in ProcessQueriesButton
 
-  const handleSignOut = async () => {
-    setSignOutError(false);
-    const { error } = await signOut();
-    
-    if (error) {
-      setSignOutError(true);
-      return;
-    }
-    
-    // Redirect to sign in page after successful sign out
-    router.replace('/signin');
-  };
-
   return (
     <>
+      <OpenRouterKeyDialog
+        open={isKeyDialogOpen}
+        onClose={() => setIsKeyDialogOpen(false)}
+      />
       {/* Mobile menu button */}
       <button
         type="button"
@@ -348,7 +338,12 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
               </div>
             )}
             
-            <div className="flex items-center space-x-3 px-4 py-3 rounded-xl bg-muted border border-border">
+            <button
+              type="button"
+              onClick={() => setIsKeyDialogOpen(true)}
+              className="flex w-full items-center space-x-3 rounded-xl border border-border bg-muted px-4 py-3 text-left transition-colors hover:bg-accent"
+              title="Edit OpenRouter API key"
+            >
               {userProfile?.photoURL ? (
                 <img
                   src={userProfile.photoURL}
@@ -362,27 +357,14 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
               )}
               <div className="flex-1 min-w-0">
                 <p className="text-foreground text-sm font-medium truncate">
-                  {userProfile?.displayName || user?.displayName || user?.email?.split('@')[0] || 'User'}
+                  {userProfile?.displayName || user?.displayName || 'Local user'}
                 </p>
                 <p className="text-muted-foreground text-xs truncate">
-                  {userProfile?.email || user?.email || 'No email'}
+                  OpenRouter configured
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={handleSignOut}
-                aria-label="Sign out"
-                className="text-muted-foreground hover:text-foreground transition-colors p-1"
-                title="Sign out"
-              >
-                <LogOut className="h-4 w-4" />
-              </button>
-            </div>
-            {signOutError && (
-              <p role="alert" className="mt-2 text-xs text-destructive">
-                Sign out failed. Please try again.
-              </p>
-            )}
+              <KeyRound className="h-4 w-4 shrink-0 text-muted-foreground" />
+            </button>
           </div>
         </div>
       </div>

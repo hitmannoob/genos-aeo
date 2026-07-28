@@ -16,7 +16,7 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: NextRequest) {
   const authResult = await authenticateApiRequest(request);
   if (!authResult) {
-    return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    return NextResponse.json({ error: 'Local profile unavailable' }, { status: 503 });
   }
 
   const includeQueryResults = request.nextUrl.searchParams.get('includeQueryResults') === 'true';
@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
   try {
     const authResult = await authenticateApiRequest(request, { requireProfile: true });
     if (!authResult?.profile) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+      return NextResponse.json({ error: 'Local profile unavailable' }, { status: 503 });
     }
 
     const body = await request.json().catch(() => null);

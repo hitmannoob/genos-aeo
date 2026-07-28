@@ -18,7 +18,7 @@ export async function GET(
 ) {
   const authResult = await authenticateApiRequest(request);
   if (!authResult) {
-    return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    return NextResponse.json({ error: 'Local profile unavailable' }, { status: 503 });
   }
 
   try {
@@ -35,7 +35,7 @@ export async function GET(
     if (shouldResumeReprocessingJob(job)) {
       after(async () => {
         try {
-          await runReprocessingJob(job.id);
+          await runReprocessingJob(job.id, authResult.openRouterApiKey || undefined);
         } catch (error) {
           logger.error('Failed to resume reprocessing job', error);
         }
@@ -58,7 +58,7 @@ export async function POST(
 ) {
   const authResult = await authenticateApiRequest(request);
   if (!authResult) {
-    return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    return NextResponse.json({ error: 'Local profile unavailable' }, { status: 503 });
   }
 
   const parsedJobId = jobIdSchema.safeParse((await context.params).jobId);

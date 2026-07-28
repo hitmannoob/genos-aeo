@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/firebase/firebase-admin';
 import {
   runDataSanityChecks,
   type DataSanityCheckOptions,
 } from '@/lib/dataSanityServer';
-import { isAdminEmail } from '@/lib/adminEmails';
 import {
   configuredServiceSecret,
   parseBearerToken,
@@ -13,9 +11,7 @@ import {
 import { logger } from '@/lib/logger';
 
 interface AuthenticatedActor {
-  uid?: string;
-  email?: string | null;
-  mode: 'admin' | 'service';
+  mode: 'service';
 }
 
 function parseBoolean(value: unknown, fallback: boolean): boolean {
@@ -74,39 +70,11 @@ async function authenticateAdminRequest(
     };
   }
 
-  try {
-    const decodedToken = await auth.verifyIdToken(token, true);
-    if (!decodedToken?.uid) {
-      return {
-        error: 'Invalid Firebase ID token.',
-        code: 'INVALID_TOKEN',
-        status: 401,
-      };
-    }
-
-    if (!isAdminEmail(decodedToken.email)) {
-      return {
-        error: 'User is not allowed to run data sanity checks.',
-        code: 'NOT_ADMIN',
-        status: 403,
-      };
-    }
-
-    return {
-      actor: {
-        uid: decodedToken.uid,
-        email: decodedToken.email,
-        mode: 'admin',
-      },
-    };
-  } catch (error) {
-    logger.warn('Admin data-sanity authentication failed', error);
-    return {
-      error: 'Token verification failed.',
-      code: 'TOKEN_VERIFICATION_FAILED',
-      status: 401,
-    };
-  }
+  return {
+    error: 'Invalid admin or service secret.',
+    code: 'INVALID_TOKEN',
+    status: 401,
+  };
 }
 
 function buildOptionsFromSearchParams(searchParams: URLSearchParams): DataSanityCheckOptions {

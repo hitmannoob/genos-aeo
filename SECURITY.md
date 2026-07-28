@@ -14,4 +14,4 @@ Security fixes are made on the default branch. Deployments should track the late
 
 ## Deployment responsibility
 
-Operators are responsible for protecting Firebase service credentials, database credentials, provider keys, Sentry tokens, and service/admin secrets; enabling TLS; applying migrations; and restricting infrastructure access. Example values are placeholders only.
+Operators are responsible for protecting database credentials, OpenRouter keys, Sentry tokens, and service/admin secrets; enabling TLS; applying migrations; and restricting infrastructure access. Example values are placeholders only.

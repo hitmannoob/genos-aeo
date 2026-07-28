@@ -1,5 +1,5 @@
 import { ProviderManager } from '@/lib/api-providers/provider-manager';
-import { getAppUserProfileByFirebaseUid } from '@/lib/db/appUsers';
+import { getAppUserProfileByUserId } from '@/lib/db/appUsers';
 import { persistOneQueryResultSql } from '@/lib/db/queryResults';
 import {
   acquireQueryExecution,
@@ -23,6 +23,7 @@ const PREFERRED_PROVIDERS = ['chatgptsearch', 'google-ai-overview', 'perplexity'
 
 export interface ExecuteUserQueryServerArgs {
   userId: string;
+  openRouterApiKey?: string;
   query: string;
   persistResult?: boolean;
   brandId?: string;
@@ -115,6 +116,7 @@ export type UserQueryWorkflowResult = ModalQueryResult | UserQueryWorkflowError;
 
 export interface ExecutePersistedUserQueryServerArgs {
   userId: string;
+  openRouterApiKey?: string;
   query: string;
   brandId: string;
   keyword?: string;
@@ -209,6 +211,7 @@ export async function executeUserQueryServer(
   const startTime = Date.now();
   const {
     userId,
+    openRouterApiKey,
     query,
     persistResult = false,
     brandId,
@@ -271,12 +274,12 @@ export async function executeUserQueryServer(
   };
 
   try {
-    const profile = await getAppUserProfileByFirebaseUid(userId);
+    const profile = await getAppUserProfileByUserId(userId);
     if (!profile) {
       return nowError({
-        code: 'AUTHENTICATION_REQUIRED',
-        error: 'User profile not found',
-        httpStatus: 401,
+        code: 'LOCAL_PROFILE_REQUIRED',
+        error: 'Local profile not found',
+        httpStatus: 503,
         totalTime: Date.now() - startTime,
       });
     }
@@ -345,7 +348,7 @@ export async function executeUserQueryServer(
       });
     }
 
-    const providerManager = new ProviderManager();
+    const providerManager = new ProviderManager(openRouterApiKey);
     const availableProviders = new Set(providerManager.getAvailableProviders());
     const selectedProviders = PREFERRED_PROVIDERS.filter((provider) => availableProviders.has(provider));
 
@@ -353,7 +356,7 @@ export async function executeUserQueryServer(
       await failExecution('NO_PROVIDERS_CONFIGURED', 'No AI providers are configured.', 503);
       return nowError({
         code: 'NO_PROVIDERS_CONFIGURED',
-        error: 'No AI providers are configured. Set at least one of OPENAI_API_KEY, PERPLEXITY_API_KEY, or DATAFORSEO_USERNAME+DATAFORSEO_PASSWORD.',
+        error: 'No OpenRouter API key is configured.',
         httpStatus: 503,
         totalTime: Date.now() - startTime,
       });

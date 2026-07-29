@@ -3,10 +3,16 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import dotenv from 'dotenv';
 import pg from 'pg';
 
 const { Client } = pg;
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+dotenv.config({
+  path: [path.join(rootDir, '.env.local'), path.join(rootDir, '.env')],
+  quiet: true,
+});
 
 function requireSafeDatabaseUrl() {
   if (process.env.ALLOW_DATABASE_INTEGRATION_TESTS !== 'true') {

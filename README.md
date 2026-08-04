@@ -9,7 +9,8 @@ Genos is an open-source answer-engine visibility dashboard. It runs tracked buye
 - Runs individual queries or resumable batches across configured providers.
 - Tracks response-level brand and competitor presence, citations, domain citations, provider performance, and trends.
 - Exports citation data as spreadsheet-safe CSV.
-- Uses an idempotent credit ledger for billable actions and refunds reserved credits when an upstream operation fails.
+- Downloads a presentation-ready PDF snapshot of the selected brand dashboard.
+- Uses idempotent provider workflows so retries do not duplicate requests or stored results.
 - Keeps application data in PostgreSQL and runs as a single local workspace with no account system.
 
 ## Stack
@@ -77,23 +78,15 @@ Never commit `.env.local`, service-account JSON, private keys, or provider crede
 All three calls go through OpenRouter using the browser-provided key and the
 default model slugs `openai/gpt-5.4-mini`,
 `google/gemini-3.1-flash-lite`, and `perplexity/sonar-pro`. A tracked query
-succeeds when at least one selected provider succeeds. If all providers fail,
-reserved credits are refunded. Provider response caching is scoped to the
+succeeds when at least one selected provider succeeds. Provider response caching is scoped to the
 local workspace and successful complete provider sets only.
 
 The default model slugs live in `src/lib/api-providers/provider-manager.ts`.
 OpenRouter's reported request cost is stored for dashboard reporting.
 
-## Credits and idempotency
+## Idempotency
 
-Current product credit costs are defined once in `src/lib/billing/creditCosts.ts`:
-
-- Company lookup: 5 credits
-- Query generation: 10 credits
-- One tracked query execution: 10 credits
-- Brand creation: 100 credits
-
-Billable APIs reserve credits transactionally before calling providers. Client request IDs are persisted in `query_execution_requests`, so retries replay completed requests, reject conflicting payloads, and cannot charge twice. Query runs and credit-ledger entries link back to the execution request for auditability.
+Client request IDs are persisted in `query_execution_requests`, so retries replay completed requests, reject conflicting payloads, and do not duplicate provider work or stored results.
 
 ## Background processing
 
@@ -112,7 +105,7 @@ The included runner uses Next.js `after()` and is appropriate for small deployme
   `X-OpenRouter-Api-Key` request header, and never persisted server-side.
 - Trusted service calls to `/api/user-query` require both `SERVICE_API_SECRET` and `X-Service-User-Id`.
 - Admin data-sanity access requires the separate admin/service secret.
-- Every brand, query, run, citation, job, and ledger lookup is tenant-scoped; database constraints reinforce cross-tenant ownership.
+- Every brand, query, run, citation, and job lookup is tenant-scoped; database constraints reinforce cross-tenant ownership.
 - Domain metadata fetching allows public HTTP(S) hosts only, resolves and pins public addresses, limits redirects/body size/time, and blocks private or reserved networks.
 - Model outputs are strict-schema validated. Website metadata is treated as untrusted prompt content.
 - Markdown rendering does not allow raw HTML, and CSV exports neutralize spreadsheet formulas.
@@ -145,7 +138,6 @@ src/components/         Dashboard and shared UI
 src/context/            Local workspace, brand, theme, toast, and pending-query state
 src/lib/analytics/      Server-side corpus analytics
 src/lib/api-providers/  Provider clients, normalization, retry, cost, cache
-src/lib/billing/        Shared credit costs and server ledger operations
 src/lib/db/             PostgreSQL access and transactional workflows
 src/lib/prompts/        Prompt construction and strict response parsing
 tests/                  Vitest unit tests

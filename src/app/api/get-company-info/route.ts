@@ -8,11 +8,6 @@ import {
   DomainValidationError,
   normalizePublicDomain,
 } from '@/lib/domainValidation';
-import {
-  COMPANY_INFO_CREDIT_COST,
-  deductUserCreditsServer,
-  refundUserCreditsServer,
-} from '@/lib/billing/serverCredits';
 import { consumeRateLimit } from '@/lib/rateLimit/rateLimit';
 import {
   acquireQueryExecution,
@@ -24,31 +19,6 @@ import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   let executionIdentity: { userId: string; clientRequestId: string } | null = null;
-  let creditReservation: {
-    userId: string;
-    domain: string;
-    clientRequestId: string;
-    executionRequestId: string;
-  } | null = null;
-  let userCredits: Awaited<ReturnType<typeof deductUserCreditsServer>> | null = null;
-
-  const refundReservation = async (failureReason: string): Promise<boolean> => {
-    if (!creditReservation) return true;
-    const reservation = creditReservation;
-    try {
-      await refundUserCreditsServer(reservation.userId, COMPANY_INFO_CREDIT_COST, {
-        idempotencyKey: `companyinfo:${reservation.userId}:${reservation.domain}:${reservation.clientRequestId}:refund`,
-        reason: 'company info failure refund',
-        executionRequestId: reservation.executionRequestId,
-        metadata: { domain: reservation.domain, failureReason },
-      });
-      creditReservation = null;
-      return true;
-    } catch (refundError) {
-      logger.error('Failed to refund company-info credit reservation', refundError);
-      return false;
-    }
-  };
 
   try {
     const authResult = await authenticateApiRequest(request);
@@ -169,32 +139,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    try {
-      userCredits = await deductUserCreditsServer(authResult.uid, COMPANY_INFO_CREDIT_COST, {
-        idempotencyKey: `companyinfo:${authResult.uid}:${domain}:${clientRequestId}:debit`,
-        reason: 'company info credit reservation',
-        executionRequestId: execution.docId,
-        metadata: { domain },
-      });
-      creditReservation = {
-        userId: authResult.uid,
-        domain,
-        clientRequestId,
-        executionRequestId: execution.docId,
-      };
-    } catch (creditError) {
-      const insufficient = creditError instanceof Error && creditError.message === 'INSUFFICIENT_CREDITS';
-      const code = insufficient ? 'INSUFFICIENT_CREDITS' : 'CREDIT_DEDUCTION_FAILED';
-      const message = insufficient ? 'Insufficient credits' : 'Failed to reserve credits';
-      await failExecution(code, message, insufficient ? 402 : 500);
-      return NextResponse.json({
-        success: false,
-        error: message,
-        code,
-        ...(insufficient && { requiredCredits: COMPANY_INFO_CREDIT_COST }),
-      }, { status: insufficient ? 402 : 500 });
-    }
-
     const apiRequest: APIRequest = {
       id: clientRequestId,
       prompt: prompt,
@@ -218,19 +162,15 @@ export async function POST(request: NextRequest) {
     const successfulResults = result.results.filter(r => r.status === 'success');
     
     if (successfulResults.length === 0) {
-      const refundApplied = await refundReservation('all providers failed');
-      const code = refundApplied ? 'ALL_PROVIDERS_FAILED' : 'ALL_PROVIDERS_FAILED_REFUND_FAILED';
-      await failExecution(code, 'All AI providers failed to analyze the domain.', refundApplied ? 502 : 500);
+      const code = 'ALL_PROVIDERS_FAILED';
+      await failExecution(code, 'All AI providers failed to analyze the domain.', 502);
       return NextResponse.json(
         {
           success: false,
-          error: refundApplied
-            ? 'All AI providers failed to analyze the domain. Reserved credits were refunded.'
-            : 'All AI providers failed and the automatic credit refund also failed.',
+          error: 'All AI providers failed to analyze the domain.',
           code,
-          refundApplied,
         },
-        { status: refundApplied ? 502 : 500 }
+        { status: 502 }
       );
     }
 
@@ -246,19 +186,15 @@ export async function POST(request: NextRequest) {
     }
 
     if (!selected) {
-      const refundApplied = await refundReservation('invalid provider response');
-      const code = refundApplied ? 'INVALID_PROVIDER_RESPONSE' : 'INVALID_PROVIDER_RESPONSE_REFUND_FAILED';
-      await failExecution(code, 'AI providers returned invalid company information.', refundApplied ? 502 : 500);
+      const code = 'INVALID_PROVIDER_RESPONSE';
+      await failExecution(code, 'AI providers returned invalid company information.', 502);
       return NextResponse.json(
         {
           success: false,
-          error: refundApplied
-            ? 'AI providers returned invalid company information. Reserved credits were refunded.'
-            : 'AI providers returned invalid data and the automatic credit refund also failed.',
+          error: 'AI providers returned invalid company information.',
           code,
-          refundApplied,
         },
-        { status: refundApplied ? 502 : 500 }
+        { status: 502 }
       );
     }
 
@@ -274,7 +210,6 @@ export async function POST(request: NextRequest) {
         responseTime: primaryResult.responseTime,
         cost: primaryResult.cost,
         totalProviderCost: result.totalCost,
-        userCredits: userCredits!,
         websiteMetadata: websiteMetadata ? {
           title: websiteMetadata.title,
           description: websiteMetadata.description,
@@ -293,14 +228,10 @@ export async function POST(request: NextRequest) {
       clientRequestId,
       replayResponse: responsePayload,
     });
-    creditReservation = null;
     executionIdentity = null;
     return NextResponse.json(responsePayload);
 
   } catch (error) {
-    const refundApplied = creditReservation
-      ? await refundReservation('unhandled company-info error')
-      : false;
     if (executionIdentity) {
       await failQueryExecution({
         ...executionIdentity,
@@ -326,7 +257,6 @@ export async function POST(request: NextRequest) {
         success: false, 
         error: 'Internal server error',
         code: 'INTERNAL_ERROR',
-        refundApplied,
       },
       { status: 500 }
     );

@@ -7,7 +7,6 @@ import {
   parseBearerToken,
   secretsMatch,
 } from '@/lib/serverAuth';
-import { USER_QUERY_CREDIT_COST } from '@/lib/billing/serverCredits';
 import { consumeRateLimit } from '@/lib/rateLimit/rateLimit';
 import { getAppUserProfileByUserId } from '@/lib/db/appUsers';
 import {
@@ -56,7 +55,7 @@ const UserQueryRequestSchema = z.object({
 
 async function authenticateUserQueryRequest(
   request: NextRequest
-): Promise<{ uid: string; isService: boolean; openRouterApiKey?: string } | null> {
+): Promise<{ uid: string; openRouterApiKey?: string } | null> {
   const token = parseBearerToken(request);
   const serviceSecret = configuredServiceSecret(process.env.SERVICE_API_SECRET);
 
@@ -76,7 +75,6 @@ async function authenticateUserQueryRequest(
 
     return {
       uid: serviceUserId,
-      isService: true,
       openRouterApiKey: process.env.OPENROUTER_API_KEY?.trim() || undefined,
     };
   }
@@ -88,7 +86,6 @@ async function authenticateUserQueryRequest(
 
   return {
     uid: authResult.uid,
-    isService: false,
     openRouterApiKey: getOpenRouterApiKey(request) || undefined,
   };
 }
@@ -159,20 +156,10 @@ async function handlePost(request: NextRequest) {
     );
   }
 
-  const serviceBillingMode = request.headers.get('x-service-billing-mode') ?? 'charge';
-  if (authResult.isService && serviceBillingMode !== 'skip' && serviceBillingMode !== 'charge') {
-    return NextResponse.json(
-      { success: false, error: 'Invalid service billing mode', code: 'INVALID_REQUEST' },
-      { status: 400 }
-    );
-  }
-  const skipBilling = authResult.isService && serviceBillingMode === 'skip';
-
   const result = await executeUserQueryServer({
     userId: authResult.uid,
     openRouterApiKey: authResult.openRouterApiKey,
     ...parsedInput.data,
-    skipBilling,
   });
 
   return jsonWorkflowResult(result);
@@ -196,15 +183,11 @@ export async function POST(request: NextRequest) {
 
 export async function GET() {
   return NextResponse.json({
-    message: 'User Query API - provider execution, billing, idempotency, and persistence are handled by the server workflow service.',
+    message: 'User Query API - provider execution, idempotency, and persistence are handled by the server workflow service.',
     localMode: {
       authenticationRequired: false,
       providerKeyHeader: 'X-OpenRouter-Api-Key',
       description: 'Browser requests use the fixed local workspace identity and provide the OpenRouter key per request.',
-    },
-    creditCost: {
-      perQuery: USER_QUERY_CREDIT_COST,
-      description: 'Credits are reserved before execution and retained only when at least one provider succeeds.',
     },
     endpoints: {
       POST: {
@@ -231,12 +214,9 @@ export async function GET() {
       REQUEST_IN_PROGRESS: 'The same idempotency key is currently processing',
       REQUEST_PREVIOUSLY_FAILED: 'The same idempotency key previously failed; submit a new key for a new attempt',
       IDEMPOTENCY_KEY_REUSED: 'The idempotency key was reused for a different payload',
-      INSUFFICIENT_CREDITS: 'User does not have enough credits',
       NO_PROVIDERS_CONFIGURED: 'No preferred query providers are configured',
       ALL_PROVIDERS_FAILED: 'No provider returned a successful response',
-      CREDIT_DEDUCTION_FAILED: 'Provider succeeded but credit deduction failed',
-      PERSISTENCE_FAILED_REFUNDED: 'Persistence failed and credits were refunded',
-      PERSISTENCE_FAILED_REFUND_FAILED: 'Persistence failed and refund failed',
+      PERSISTENCE_FAILED: 'Provider response could not be persisted',
       UNHANDLED_USER_QUERY_ERROR: 'Unhandled server workflow error',
       USER_QUERY_SERVICE_UNAVAILABLE: 'Authentication, rate limiting, or workflow infrastructure is unavailable',
     },

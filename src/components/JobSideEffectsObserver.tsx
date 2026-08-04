@@ -71,12 +71,12 @@ export function JobSideEffectsObserver(): null {
         if (job.failedCount > 0) {
           deps.showWarning(
             'Processing completed with errors',
-            `${job.successfulCount} queries succeeded and ${job.failedCount} failed for ${brandName}. Credits were only used for successful queries.`,
+            `${job.successfulCount} queries succeeded and ${job.failedCount} failed for ${brandName}.`,
           );
         } else {
           deps.showSuccess(
             'All Queries Processed',
-            `Successfully processed ${job.successfulCount} queries for ${brandName}. Used ${job.creditsUsed} credits.`,
+            `Successfully processed ${job.successfulCount} queries for ${brandName}.`,
           );
         }
       } else if (job.status === 'cancelled') {

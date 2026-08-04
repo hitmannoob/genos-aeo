@@ -14,8 +14,6 @@ export interface ReprocessingJob {
   successfulCount: number;
   failedCount: number;
   attemptedCount: number;
-  creditsRequired: number;
-  creditsUsed: number;
   currentIndex: number;
   currentQueryId: string | null;
   cancellationRequested: boolean;
@@ -52,7 +50,6 @@ export interface ReprocessingJobCompletionResult {
     attemptedQueries: number;
     processedQueries: number;
     totalErrors: number;
-    creditsUsed: number;
   };
 }
 
@@ -158,19 +155,6 @@ function deriveMessage(job: ReprocessingJob | null): string {
   return `Successfully processed ${job.successfulCount} queries for ${brandName}.`;
 }
 
-// Error subclass that carries credit-shortfall context for UI to display.
-export class InsufficientCreditsError extends Error {
-  code = 'INSUFFICIENT_CREDITS' as const;
-  requiredCredits: number;
-  availableCredits: number;
-  constructor(message: string, requiredCredits: number, availableCredits: number) {
-    super(message);
-    this.name = 'InsufficientCreditsError';
-    this.requiredCredits = requiredCredits;
-    this.availableCredits = availableCredits;
-  }
-}
-
 export function useReprocessingJob(
   brandId: string | undefined,
   callbacks?: UseReprocessingJobCallbacks,
@@ -231,13 +215,6 @@ export function useReprocessingJob(
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
-        if (payload?.code === 'INSUFFICIENT_CREDITS') {
-          throw new InsufficientCreditsError(
-            payload?.error || 'Insufficient credits',
-            payload?.requiredCredits ?? 0,
-            payload?.availableCredits ?? 0,
-          );
-        }
         throw new Error(
           payload?.error || `Failed to create reprocessing job (${response.status})`,
         );
@@ -336,7 +313,6 @@ export function useReprocessingJob(
           attemptedQueries: job.attemptedCount,
           processedQueries: job.successfulCount,
           totalErrors: job.failedCount,
-          creditsUsed: job.creditsUsed,
         },
       });
     }

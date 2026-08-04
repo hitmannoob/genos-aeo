@@ -8,7 +8,6 @@ import {
 } from '@/lib/jobs/reprocessingJobs';
 import { buildTrackedQueryIdentity } from '@/lib/queryResultUtils';
 import { runReprocessingJob } from '@/lib/jobs/reprocessingJobRunner';
-import { USER_QUERY_CREDIT_COST } from '@/lib/billing/serverCredits';
 import { z } from 'zod';
 import { logger } from '@/lib/logger';
 
@@ -87,17 +86,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No queries to process' }, { status: 400 });
     }
 
-    const creditsRequired = queries.length * USER_QUERY_CREDIT_COST;
-    const availableCredits = Number(authResult.profile.credits ?? 0);
-    if (availableCredits < creditsRequired) {
-      return NextResponse.json({
-        error: 'Insufficient credits',
-        code: 'INSUFFICIENT_CREDITS',
-        requiredCredits: creditsRequired,
-        availableCredits,
-      }, { status: 402 });
-    }
-
     const existingActiveJob = await findActiveReprocessingJobForBrand(authResult.uid, brandId);
     if (existingActiveJob) {
       if (shouldResumeReprocessingJob(existingActiveJob)) {
@@ -126,7 +114,6 @@ export async function POST(request: NextRequest) {
       brandName: brand.companyName,
       brandDomain: brand.domain,
       queries,
-      creditsRequired,
     });
 
     after(async () => {

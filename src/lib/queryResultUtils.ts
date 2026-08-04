@@ -1,7 +1,6 @@
 // Canonical stored query-result shape shared by persistence, analytics, and
 // legacy adapters. Keep this file Firebase-free so both client and server code
 // can import it without dragging storage / auth dependencies along.
-import { USER_QUERY_CREDIT_COST } from '@/lib/billing/creditCosts';
 
 export interface BaseStoredProviderResult {
   response: string;
@@ -62,12 +61,6 @@ export interface StoredQueryResults {
   perplexity?: PerplexityStoredResult;
 }
 
-export interface QueryCreditInfo {
-  creditsDeducted: number;
-  creditsAfter?: number;
-  totalCost?: number;
-}
-
 export interface QueryProcessingResult {
   date: string;
   processingSessionId: string;
@@ -76,7 +69,6 @@ export interface QueryProcessingResult {
   query: string;
   keyword: string;
   category: string;
-  creditInfo?: QueryCreditInfo;
 }
 
 export interface QueryProcessingInput {
@@ -95,11 +87,6 @@ export interface UserQueryApiResponse {
     responseTime?: number;
     timestamp?: string;
   }>;
-  userCredits?: {
-    before?: number;
-    after?: number;
-    deducted?: number;
-  };
   totalCost?: number;
 }
 
@@ -315,14 +302,6 @@ export function buildQueryResult(args: BuildQueryResultArgs): QueryProcessingRes
         citationData: normalizeStoredCitations(r.data?.normalizedCitations),
       };
     }
-  }
-
-  if (userQueryResponse?.userCredits) {
-    queryResult.creditInfo = {
-      creditsDeducted: userQueryResponse.userCredits.deducted ?? USER_QUERY_CREDIT_COST,
-      creditsAfter: userQueryResponse.userCredits.after,
-      totalCost: userQueryResponse.totalCost,
-    };
   }
 
   return queryResult;

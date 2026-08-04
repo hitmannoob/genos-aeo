@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createHash } from 'node:crypto';
 import { authenticateApiRequest } from '@/lib/serverAuth';
-import { BRAND_CREATION_CREDIT_COST } from '@/lib/billing/serverCredits';
 import {
-  createBrandWithCreditsSql,
+  createBrandSql,
   getBrandPublicIdByDomainSql,
   getUserBrandsSql,
 } from '@/lib/db/brands';
@@ -82,32 +81,22 @@ export async function POST(request: NextRequest) {
       currentStep: 3,
       totalQueries: brandData.queries.length,
       queryDistribution,
-      creditsUsed: BRAND_CREATION_CREDIT_COST,
-      creditTransaction: {
-        amount: BRAND_CREATION_CREDIT_COST,
-        type: 'deduction',
-        reason: 'Brand setup completion',
-        timestamp: new Date().toISOString(),
-      },
     };
 
-    const result = await createBrandWithCreditsSql({
+    const result = await createBrandSql({
       brandId,
       firebaseUid: authResult.uid,
       brandData: serverBrandData,
-      creditCost: BRAND_CREATION_CREDIT_COST,
     });
 
     if (result.success) {
       return NextResponse.json({
         success: true,
         brandId: result.brandId,
-        creditsAfter: result.creditsAfter,
       });
     }
 
     const status =
-      result.code === 'INSUFFICIENT_CREDITS' ? 402 :
       result.code === 'BRAND_ALREADY_EXISTS' ? 409 :
       result.code === 'USER_NOT_FOUND' ? 404 :
       500;

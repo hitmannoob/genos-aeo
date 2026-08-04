@@ -101,8 +101,6 @@ interface QueryRunRow {
   keyword: string;
   category: string;
   raw_result: QueryProcessingResult | null;
-  credit_cost: number;
-  credits_after: number | null;
   created_at: Date | string;
   updated_at: Date | string;
   completed_at: Date | string | null;
@@ -155,10 +153,6 @@ function buildEmptySeverityCounts(): Record<DataSanitySeverity, number> {
 
 function isValidIsoString(value: unknown): value is string {
   return typeof value === 'string' && !Number.isNaN(Date.parse(value));
-}
-
-function toNumber(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function toIsoOrNull(value: Date | string | null | undefined): string | null {
@@ -250,8 +244,6 @@ async function loadBrandQueryRuns(brandUuid: string): Promise<QueryRunRow[]> {
         keyword,
         category,
         raw_result,
-        credit_cost,
-        credits_after,
         created_at,
         updated_at,
         completed_at,
@@ -772,39 +764,6 @@ export async function runDataSanityChecks(
             userId: brand.firebase_uid,
             processingSessionId: result.processingSessionId,
             details: { query: result.query },
-          });
-        }
-      }
-
-      if (result.creditInfo) {
-        const creditsDeducted = toNumber(result.creditInfo.creditsDeducted);
-        const creditsAfter = toNumber(result.creditInfo.creditsAfter);
-
-        if (creditsDeducted !== null && creditsDeducted < 0) {
-          pushIssue({
-            severity: 'warning',
-            code: 'QUERY_RESULT_NEGATIVE_CREDITS',
-            message: 'Query result has a negative creditsDeducted value.',
-            collection: 'query_runs',
-            docId: run.id,
-            brandId,
-            userId: brand.firebase_uid,
-            processingSessionId: result.processingSessionId,
-            details: { query: result.query, creditsDeducted },
-          });
-        }
-
-        if (creditsAfter !== null && creditsAfter < 0) {
-          pushIssue({
-            severity: 'error',
-            code: 'QUERY_RESULT_NEGATIVE_CREDITS_AFTER',
-            message: 'Query result has a negative creditsAfter value.',
-            collection: 'query_runs',
-            docId: run.id,
-            brandId,
-            userId: brand.firebase_uid,
-            processingSessionId: result.processingSessionId,
-            details: { query: result.query, creditsAfter },
           });
         }
       }

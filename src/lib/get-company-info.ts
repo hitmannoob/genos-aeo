@@ -4,7 +4,7 @@ export const CompanyInfoInputSchema = z.object({
   domain: z.string().trim().min(1).max(253)
     .describe('The company domain name (e.g., "example.com" or "https://example.com").'),
   clientRequestId: z.string().trim().min(1).max(120)
-    .describe('Stable per-request id from the client; used to dedupe credit deduction on retry.'),
+    .describe('Stable per-request id from the client; used to dedupe retries.'),
 });
 export type CompanyInfoInput = z.infer<typeof CompanyInfoInputSchema>;
 

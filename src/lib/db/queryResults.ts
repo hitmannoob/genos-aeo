@@ -243,19 +243,15 @@ export async function persistOneQueryResultSql<TReplayResponse = never>(
         `
           update query_runs
           set status = $2,
-              credit_cost = $3,
-              credits_after = $4,
-              total_provider_cost = $5,
-              raw_result = $6::jsonb,
-              completed_at = $7,
-              execution_request_id = $8
+              total_provider_cost = $3,
+              raw_result = $4::jsonb,
+              completed_at = $5,
+              execution_request_id = $6
           where id = $1
         `,
         [
           queryRunId,
           status,
-          Number(args.userQueryResponse.userCredits?.deducted ?? 0),
-          args.userQueryResponse.userCredits?.after ?? null,
           Number(args.userQueryResponse.totalCost ?? 0),
           JSON.stringify(queryResult),
           completedAt,
@@ -277,15 +273,13 @@ export async function persistOneQueryResultSql<TReplayResponse = never>(
             category,
             source,
             status,
-            credit_cost,
-            credits_after,
             total_provider_cost,
             raw_result,
             completed_at
           )
           values (
             $1, $2, $3, $4, $5, $6::timestamptz, $7, $8, $9, 'user-query', $10,
-            $11, $12, $13, $14::jsonb, $15
+            $11, $12::jsonb, $13
           )
           returning id
         `,
@@ -300,8 +294,6 @@ export async function persistOneQueryResultSql<TReplayResponse = never>(
           cleanString(args.query.keyword, 'unknown'),
           normalizeCategory(args.query.category),
           status,
-          Number(args.userQueryResponse.userCredits?.deducted ?? 0),
-          args.userQueryResponse.userCredits?.after ?? null,
           Number(args.userQueryResponse.totalCost ?? 0),
           JSON.stringify(queryResult),
           completedAt,

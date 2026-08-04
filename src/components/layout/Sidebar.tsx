@@ -5,7 +5,6 @@ import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { 
   BarChart3, 
-  CreditCard, 
   Search, 
   Users, 
   Quote, 
@@ -74,8 +73,7 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
     };
   }, []);
 
-  // Note: We intentionally don't add periodic refresh here as it can interfere with query processing
-  // Credits are updated manually after API calls in ProcessQueriesButton
+  // Note: We intentionally don't add periodic refresh here as it can interfere with query processing.
 
   return (
     <>
@@ -296,48 +294,6 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
 
           {/* User section */}
           <div className="p-4 border-t border-border">
-            {/* Credits Display */}
-            {userProfile && typeof userProfile.credits === 'number' && (
-              <div className={`mb-3 px-4 py-2 rounded-xl border ${
-                userProfile.credits < 50 
-                  ? 'bg-destructive/10 border-destructive/30'
-                  : userProfile.credits < 100
-                  ? 'bg-warning/10 border-warning/30'
-                  : 'bg-primary/10 border-primary/20'
-              }`}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <CreditCard className={`h-3 w-3 ${
-                      userProfile.credits < 50 
-                        ? 'text-destructive'
-                        : userProfile.credits < 100
-                        ? 'text-warning'
-                        : 'text-primary'
-                    }`} />
-                    <span className={`text-xs font-medium ${
-                      userProfile.credits < 50 
-                        ? 'text-destructive'
-                        : userProfile.credits < 100
-                        ? 'text-warning'
-                        : 'text-primary'
-                    }`}>Available Credits</span>
-                  </div>
-                  <span className={`text-sm font-bold ${
-                    userProfile.credits < 50 
-                      ? 'text-destructive'
-                      : userProfile.credits < 100
-                      ? 'text-warning'
-                      : 'text-primary'
-                  }`}>{userProfile.credits.toLocaleString()}</span>
-                </div>
-                {userProfile.credits < 50 && (
-                  <div className="mt-1 text-xs text-destructive">
-                    ⚠️ Low credits! Consider purchasing more.
-                  </div>
-                )}
-              </div>
-            )}
-            
             <button
               type="button"
               onClick={() => setIsKeyDialogOpen(true)}

@@ -6,13 +6,11 @@ import { useToast } from '@/context/ToastContext';
 import { RefreshCw, Zap, AlertCircle, CheckCircle, RotateCcw, StopCircle, Play } from 'lucide-react';
 import { buildTrackedQueryIdentity } from '@/lib/queryResultUtils';
 import {
-  InsufficientCreditsError,
   useReprocessingJob,
   type ReprocessingJob,
   type ReprocessingJobCompletionResult,
 } from '@/hooks/useReprocessingJob';
 import type { UserBrand } from '@/types/userBrand';
-import { USER_QUERY_CREDIT_COST } from '@/lib/billing/creditCosts';
 
 interface ProcessQueriesButtonProps {
   brandId?: string;
@@ -39,7 +37,7 @@ export default function ProcessQueriesButton({
   queriesFilter,
   iconOnly = false,
 }: ProcessQueriesButtonProps): React.ReactElement {
-  const { user, userProfile } = useAuthContext();
+  const { user } = useAuthContext();
   const { selectedBrand, brands } = useBrandContext();
   const { showError } = useToast();
 
@@ -73,7 +71,7 @@ export default function ProcessQueriesButton({
       onComplete,
     });
 
-  // Pre-flight errors (no user, no brand, no queries, insufficient credits)
+  // Pre-flight errors (no user, no brand, or no queries)
   // surface inline before we POST. Server-side errors are handled by the
   // hook's mutation and the global JobSideEffectsObserver.
   const [localError, setLocalError] = useState<string | null>(null);
@@ -99,30 +97,12 @@ export default function ProcessQueriesButton({
       return;
     }
 
-    const required = queries.length * USER_QUERY_CREDIT_COST;
-    const available = userProfile?.credits || 0;
-    if (available < required) {
-      setLocalError(`Insufficient credits. Need ${required}, have ${available}`);
-      showError(
-        'Insufficient Credits',
-        `You need ${required} credits to process ${queries.length} queries, but you only have ${available} credits available.`,
-      );
-      return;
-    }
-
     setLocalError(null);
     try {
       await startJob({ queriesFilter });
     } catch (err) {
-      if (err instanceof InsufficientCreditsError) {
-        showError(
-          'Insufficient Credits',
-          `You need ${err.requiredCredits} credits but only have ${err.availableCredits} available.`,
-        );
-      } else {
-        const msg = err instanceof Error ? err.message : 'Failed to process queries';
-        showError('Processing Failed', msg);
-      }
+      const msg = err instanceof Error ? err.message : 'Failed to process queries';
+      showError('Processing Failed', msg);
     }
   };
 
@@ -152,10 +132,6 @@ export default function ProcessQueriesButton({
   const hasProcessedQueries =
     getProcessedQueriesCount() > 0 || !!targetBrand?.lastProcessedAt;
 
-  const requiredCredits = scopedQueries.length * USER_QUERY_CREDIT_COST;
-  const availableCredits = userProfile?.credits || 0;
-  const hasEnoughCredits = availableCredits >= requiredCredits;
-
   // Display state combines hook status with local pre-flight errors.
   const displayStatus: 'idle' | 'processing' | 'success' | 'error' | 'cancelled' =
     localError ? 'error' : status;
@@ -163,11 +139,9 @@ export default function ProcessQueriesButton({
 
   // Compact circular icon button — used inline in table rows.
   if (iconOnly) {
-    const isDisabled = processing || isSubmitting || !user || !hasEnoughCredits;
+    const isDisabled = processing || isSubmitting || !user;
     const tooltip = !user
       ? 'Add an OpenRouter key to process'
-      : !hasEnoughCredits
-      ? `Needs ${requiredCredits} credits (you have ${availableCredits})`
       : displayStatus === 'error'
       ? displayMessage || 'Failed — click to retry'
       : 'Process this query';
@@ -179,8 +153,6 @@ export default function ProcessQueriesButton({
         className={`inline-flex items-center justify-center w-8 h-8 rounded-full transition-colors
           ${displayStatus === 'error'
             ? 'bg-destructive/10 text-destructive hover:bg-destructive/20'
-            : !hasEnoughCredits && requiredCredits > 0
-            ? 'bg-muted text-muted-foreground cursor-not-allowed'
             : 'bg-primary/10 text-primary hover:bg-primary/20'}
           ${processing || isSubmitting ? 'opacity-70 cursor-not-allowed' : ''}
           ${className}`}
@@ -201,13 +173,6 @@ export default function ProcessQueriesButton({
     'inline-flex items-center justify-center font-medium rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2';
 
   const getVariantStyles = () => {
-    if (!hasEnoughCredits && requiredCredits > 0) {
-      return {
-        primary: 'bg-destructive text-destructive-foreground cursor-not-allowed opacity-70',
-        secondary: 'bg-background text-destructive border border-destructive cursor-not-allowed opacity-70',
-        ghost: 'text-destructive cursor-not-allowed opacity-70',
-      };
-    }
     return {
       primary: 'bg-primary text-primary-foreground hover:bg-primary/90 focus:ring-primary',
       secondary: 'bg-background text-primary border border-primary hover:bg-primary/5 focus:ring-primary',
@@ -244,9 +209,6 @@ export default function ProcessQueriesButton({
       case 'cancelled':
         return <StopCircle className={iconSize} />;
       default:
-        if (!hasEnoughCredits && requiredCredits > 0) {
-          return <AlertCircle className={iconSize} />;
-        }
         if (hasProcessedQueries) {
           return <RotateCcw className={iconSize} />;
         }
@@ -264,13 +226,10 @@ export default function ProcessQueriesButton({
       }
       return 'Processing...';
     }
-    if (!hasEnoughCredits && requiredCredits > 0) {
-      return `Need ${requiredCredits} Credits (Have ${availableCredits})`;
-    }
     if (hasProcessedQueries) {
-      return `Reprocess Queries (${requiredCredits} Credits)`;
+      return 'Reprocess Queries';
     }
-    return `Process Queries (${requiredCredits} Credits)`;
+    return 'Process Queries';
   };
 
   return (
@@ -278,7 +237,7 @@ export default function ProcessQueriesButton({
       <div className="flex items-center space-x-2">
         <button
           onClick={handleProcessQueries}
-          disabled={processing || isSubmitting || !user || !hasEnoughCredits}
+          disabled={processing || isSubmitting || !user}
           className={`
             ${baseStyles}
             ${variantStyles[variant]}
@@ -289,8 +248,6 @@ export default function ProcessQueriesButton({
           title={
             !user
               ? 'Add an OpenRouter key to process queries'
-              : !hasEnoughCredits
-              ? `Need ${requiredCredits} credits, you have ${availableCredits}`
               : ''
           }
         >
@@ -321,13 +278,6 @@ export default function ProcessQueriesButton({
         </p>
       )}
 
-      {!processing && !isSubmitting && requiredCredits > 0 && (
-        <p className="text-xs text-muted-foreground mt-1 text-center">
-          {hasEnoughCredits
-            ? `Ready: ${availableCredits} credits available`
-            : `Need ${requiredCredits - availableCredits} more credits`}
-        </p>
-      )}
     </div>
   );
 }

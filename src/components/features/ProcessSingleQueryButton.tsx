@@ -9,7 +9,6 @@ import { usePendingSingleQueries } from '@/context/PendingSingleQueriesContext';
 import { getOpenRouterKeyWithRetry, OPENROUTER_KEY_HEADER } from '@/lib/openRouterKey';
 import { buildTrackedQueryIdentity } from '@/lib/queryResultUtils';
 import { brandQueriesQueryKey } from '@/hooks/useBrandQueries';
-import { USER_QUERY_CREDIT_COST } from '@/lib/billing/creditCosts';
 
 interface SingleQueryDescriptor {
   query: string;
@@ -37,7 +36,7 @@ export default function ProcessSingleQueryButton({
   isProcessing = false,
   className = '',
 }: ProcessSingleQueryButtonProps): React.ReactElement {
-  const { user, userProfile, refreshUserProfile } = useAuthContext();
+  const { user } = useAuthContext();
   const { brands, refetchBrands } = useBrandContext();
   const { showError, showWarning } = useToast();
   const { addPending, removePending, getPending } = usePendingSingleQueries();
@@ -46,22 +45,18 @@ export default function ProcessSingleQueryButton({
 
   const queryId = buildTrackedQueryIdentity(query);
   const targetBrand = brands.find((b) => b.id === brandId);
-  const available = userProfile?.credits ?? 0;
-  const hasEnoughCredits = available >= USER_QUERY_CREDIT_COST;
   // The shared pending set lives in context, so even if this exact button
   // unmounts mid-fetch (user navigated away and a sibling instance now
   // renders the row), the "is in flight" signal survives.
   const pendingForBrand = getPending(brandId);
   const inFlight = pendingForBrand.has(queryId);
   const busy = inFlight || isProcessing;
-  const disabled = busy || !user || !hasEnoughCredits || !targetBrand;
+  const disabled = busy || !user || !targetBrand;
 
   const tooltip = !user
     ? 'Add an OpenRouter key to process'
     : !targetBrand
     ? 'Brand not loaded'
-    : !hasEnoughCredits
-    ? `Needs ${USER_QUERY_CREDIT_COST} credits (you have ${available})`
     : busy
     ? 'Processing…'
     : errored
@@ -120,10 +115,7 @@ export default function ProcessSingleQueryButton({
       await queryClient.invalidateQueries({
         queryKey: brandQueriesQueryKey(user?.uid, brandId),
       });
-      const syncResults = await Promise.allSettled([
-        refreshUserProfile(),
-        refetchBrands(),
-      ]);
+      const syncResults = await Promise.allSettled([refetchBrands()]);
       if (syncResults.some((result) => result.status === 'rejected')) {
         showWarning(
           'Query processed',
@@ -149,8 +141,6 @@ export default function ProcessSingleQueryButton({
         ${
           errored
             ? 'bg-destructive/10 text-destructive hover:bg-destructive/20'
-            : !hasEnoughCredits
-            ? 'bg-muted text-muted-foreground cursor-not-allowed'
             : 'bg-primary/10 text-primary hover:bg-primary/20'
         }
         ${busy ? 'opacity-70 cursor-not-allowed' : ''}

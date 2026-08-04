@@ -11,7 +11,6 @@ interface AppUserRow {
   email: string;
   display_name: string;
   photo_url: string | null;
-  credit_balance: number;
   is_new_user: boolean;
   created_at: Date | string;
   updated_at: Date | string;
@@ -29,7 +28,6 @@ export function appUserRowToProfile(row: AppUserRow): UserProfile {
     email: row.email,
     displayName: row.display_name,
     ...(row.photo_url && { photoURL: row.photo_url }),
-    credits: Number(row.credit_balance ?? 0),
     createdAt: toIsoString(row.created_at),
     lastLoginAt: toIsoString(row.last_login_at),
     isNewUser: row.is_new_user,
@@ -47,7 +45,6 @@ export async function getAppUserProfileByUserId(
         email,
         display_name,
         photo_url,
-        credit_balance,
         is_new_user,
         created_at,
         updated_at,
@@ -82,7 +79,6 @@ export async function ensureLocalAppUserProfile(): Promise<UserProfile> {
         email,
         display_name,
         photo_url,
-        credit_balance,
         is_new_user,
         created_at,
         updated_at,

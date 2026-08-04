@@ -5,7 +5,6 @@ import type { QueryProcessingResult } from '@/lib/queryResultUtils';
 import type { UserBrand } from '@/types/userBrand';
 import { getQueryResultsByBrandPublicId } from './queryResults';
 import { matchCompetitorsInText } from '@/lib/competitor-matching';
-import { BRAND_CREATION_CREDIT_COST } from '@/lib/billing/serverCredits';
 import { logger } from '@/lib/logger';
 
 const VALID_QUERY_CATEGORIES = new Set([
@@ -18,7 +17,7 @@ const MAX_BRAND_KEYWORDS = 20;
 const MAX_BRAND_QUERIES = 100;
 
 export type CreateBrandServerResult =
-  | { success: true; creditsAfter: number; brandId: string }
+  | { success: true; brandId: string }
   | {
       success: false;
       code: CreateBrandServerErrorCode;
@@ -26,7 +25,6 @@ export type CreateBrandServerResult =
     };
 
 type CreateBrandServerErrorCode =
-  | 'INSUFFICIENT_CREDITS'
   | 'USER_NOT_FOUND'
   | 'BRAND_ALREADY_EXISTS'
   | 'TRANSACTION_FAILED';
@@ -95,7 +93,6 @@ function normalizeRawMetadata(brandData: Record<string, unknown>): Record<string
   const metadata = { ...brandData };
   delete metadata.createdAt;
   delete metadata.updatedAt;
-  delete metadata.creditTransaction;
   delete metadata.queries;
   return metadata;
 }
@@ -291,22 +288,16 @@ export async function getBrandPublicIdByDomainSql(
   return result.rows[0]?.public_brand_id ?? null;
 }
 
-export async function createBrandWithCreditsSql(params: {
+export async function createBrandSql(params: {
   brandId: string;
   firebaseUid: string;
   brandData: Record<string, unknown>;
-  creditCost?: number;
 }): Promise<CreateBrandServerResult> {
-  const creditCost = params.creditCost ?? BRAND_CREATION_CREDIT_COST;
-
   try {
     const result = await withTransaction(async (client) => {
-      const userResult = await client.query<{
-        id: string;
-        credit_balance: number;
-      }>(
+      const userResult = await client.query<{ id: string }>(
         `
-          select id, credit_balance
+          select id
           from app_users
           where firebase_uid = $1
           for update
@@ -319,7 +310,6 @@ export async function createBrandWithCreditsSql(params: {
         throw new Error('USER_NOT_FOUND');
       }
 
-      const currentCredits = Number(user.credit_balance ?? 0);
       const domain = cleanString(params.brandData.domain);
       const companyName = cleanString(params.brandData.companyName);
       if (!domain || !companyName) {
@@ -341,11 +331,6 @@ export async function createBrandWithCreditsSql(params: {
         throw new Error('BRAND_ALREADY_EXISTS');
       }
 
-      if (currentCredits < creditCost) {
-        throw new Error('INSUFFICIENT_CREDITS');
-      }
-
-      const balanceAfter = currentCredits - creditCost;
       const brandResult = await client.query<{ id: string }>(
         `
           insert into brands (
@@ -421,42 +406,7 @@ export async function createBrandWithCreditsSql(params: {
         );
       }
 
-      await client.query(
-        `
-          update app_users
-          set credit_balance = $2
-          where id = $1
-        `,
-        [user.id, balanceAfter]
-      );
-
-      await client.query(
-        `
-          insert into credit_ledger (
-            user_id,
-            brand_id,
-            idempotency_key,
-            entry_type,
-            amount,
-            balance_after,
-            reason,
-            metadata
-          )
-          values ($1, $2, $3, 'debit', $4, $5, $6, $7::jsonb)
-        `,
-        [
-          user.id,
-          brandUuid,
-          `brand-setup:${params.brandId}:debit`,
-          -creditCost,
-          balanceAfter,
-          'brand setup completion',
-          JSON.stringify({ brandId: params.brandId, brandUuid }),
-        ]
-      );
-
       return {
-        creditsAfter: balanceAfter,
         brandId: params.brandId,
       };
     });
@@ -478,7 +428,6 @@ export async function createBrandWithCreditsSql(params: {
       };
     }
     if (
-      message === 'INSUFFICIENT_CREDITS' ||
       message === 'USER_NOT_FOUND' ||
       message === 'BRAND_ALREADY_EXISTS'
     ) {

@@ -28,20 +28,12 @@ function appendError(
 
 function publicJobErrorMessage(code?: string): string {
   switch (code) {
-    case 'INSUFFICIENT_CREDITS':
-      return 'Insufficient credits to continue processing.';
     case 'NO_PROVIDERS_CONFIGURED':
       return 'No AI providers are configured.';
     case 'REQUEST_IN_PROGRESS':
       return 'This query is already being processed.';
     case 'ALL_PROVIDERS_FAILED':
-      return 'All AI providers failed. Reserved credits were refunded.';
-    case 'ALL_PROVIDERS_FAILED_REFUND_FAILED':
-      return 'AI providers failed and the automatic credit refund needs attention.';
-    case 'PERSISTENCE_FAILED_REFUNDED':
-      return 'The result could not be saved. Reserved credits were refunded.';
-    case 'PERSISTENCE_FAILED_REFUND_FAILED':
-      return 'The result could not be saved and the automatic credit refund needs attention.';
+      return 'All AI providers failed.';
     case 'PERSISTENCE_FAILED':
       return 'The result could not be saved.';
     default:
@@ -62,7 +54,6 @@ export async function runReprocessingJob(
   let successfulCount = job.successfulCount;
   let failedCount = job.failedCount;
   let attemptedCount = job.attemptedCount;
-  let creditsUsed = job.creditsUsed;
   let currentIndex = job.currentIndex;
   let completedQueryIds = [...job.completedQueryIds];
   let failedQueryIds = [...job.failedQueryIds];
@@ -94,7 +85,6 @@ export async function runReprocessingJob(
       successfulCount,
       failedCount,
       attemptedCount,
-      creditsUsed,
       currentIndex,
       currentQueryId: currentQuery.queryId,
       completedQueryIds,
@@ -134,7 +124,6 @@ export async function runReprocessingJob(
         successfulCount,
         failedCount,
         attemptedCount,
-        creditsUsed,
         currentIndex,
         currentQueryId: null,
         completedQueryIds,
@@ -149,7 +138,6 @@ export async function runReprocessingJob(
     if (payload?.success && payload?.persistedQueryResult) {
       successfulCount += 1;
       attemptedCount += 1;
-      creditsUsed += Number(payload?.userCredits?.deducted ?? 0);
       currentIndex += 1;
       completedQueryIds = Array.from(new Set([...completedQueryIds, currentQuery.queryId]));
 
@@ -158,7 +146,6 @@ export async function runReprocessingJob(
         successfulCount,
         failedCount,
         attemptedCount,
-        creditsUsed,
         currentIndex,
         currentQueryId: null,
         completedQueryIds,
@@ -184,7 +171,6 @@ export async function runReprocessingJob(
         successfulCount,
         failedCount,
         attemptedCount,
-        creditsUsed,
         currentIndex,
         currentQueryId: null,
         completedQueryIds,
@@ -194,12 +180,8 @@ export async function runReprocessingJob(
       });
 
       if (
-        payload?.code === 'INSUFFICIENT_CREDITS' ||
         payload?.code === 'LOCAL_PROFILE_REQUIRED' ||
-        payload?.code === 'CREDIT_DEDUCTION_FAILED' ||
         payload?.code === 'PERSISTENCE_FAILED' ||
-        payload?.code === 'PERSISTENCE_FAILED_REFUND_FAILED' ||
-        payload?.code === 'PERSISTENCE_FAILED_REFUNDED' ||
         payload?.code === 'UNHANDLED_USER_QUERY_ERROR'
       ) {
         terminalStatus = 'failed';
@@ -217,7 +199,6 @@ export async function runReprocessingJob(
       successfulCount,
       failedCount,
       attemptedCount,
-      creditsUsed,
       currentIndex,
       completedQueryIds,
       failedQueryIds,
@@ -233,7 +214,6 @@ export async function runReprocessingJob(
       successfulCount,
       failedCount,
       attemptedCount,
-      creditsUsed,
       currentIndex,
       completedQueryIds,
       failedQueryIds,
@@ -248,7 +228,6 @@ export async function runReprocessingJob(
     successfulCount,
     failedCount,
     attemptedCount,
-    creditsUsed,
     currentIndex,
     completedQueryIds,
     failedQueryIds,

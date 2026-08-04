@@ -8,6 +8,7 @@ export default [
       'out/**',
       'build/**',
       'coverage/**',
+      'public/vendor/**',
       'eslint.config.mjs',
     ],
   },

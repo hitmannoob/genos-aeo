@@ -13,6 +13,7 @@ import BrandAnalyticsDisplay from '@/components/features/BrandAnalyticsDisplay';
 import { useBrandAnalyticsCombined } from '@/hooks/useBrandAnalytics';
 import LifetimeAnalyticsCharts from '@/components/features/LifetimeAnalyticsCharts';
 import CompetitorMentionsCard from '@/components/features/CompetitorMentionsCard';
+import DashboardPdfButton from '@/components/dashboard/DashboardPdfButton';
 
 
 function Page(): React.ReactElement {
@@ -147,6 +148,26 @@ function Page(): React.ReactElement {
   return (
     <DashboardLayout>
       <div className="space-y-6">
+        <div className="flex flex-col gap-4 border-b border-border pb-5 sm:flex-row sm:items-end sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">
+              Answer visibility overview
+            </p>
+            <h1 className="mt-1 truncate text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
+              {selectedBrand.companyName}
+            </h1>
+            <p className="mt-1 truncate text-sm text-muted-foreground">{selectedBrand.domain}</p>
+          </div>
+          <DashboardPdfButton
+            brand={selectedBrand}
+            latestAnalytics={latestAnalytics}
+            lifetimeAnalytics={lifetimeAnalytics}
+            citationSummary={citationAnalytics}
+            recommendations={recommendations}
+            disabled={analyticsLoading}
+          />
+        </div>
+
         {/* --- Analytics Section (Full Tabbed Interface) --- */}
         {analyticsError ? (
           <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-6 text-center">

@@ -7,7 +7,6 @@ import WebLogo from '@/components/shared/WebLogo';
 import { CompanyInfoSchema, type CompanyInfo } from '@/lib/get-company-info';
 import { useQueryGeneration } from '@/hooks/useQueryGeneration';
 import type { GeneratedQuery } from '@/lib/queryGeneration';
-import { useUserCredits } from '@/hooks/useUserCredits';
 import { useAuthContext } from '@/context/AuthContext';
 import { useBrandContext } from '@/context/BrandContext';
 import { useToast } from '@/context/ToastContext';
@@ -18,19 +17,13 @@ import {
 } from '@/lib/queryCategories';
 import { normalizePublicDomain } from '@/lib/domainValidation';
 import { matchCompetitorsInText } from '@/lib/competitor-matching';
-import {
-  BRAND_CREATION_CREDIT_COST,
-  QUERY_GENERATION_CREDIT_COST,
-  USER_QUERY_CREDIT_COST,
-} from '@/lib/billing/creditCosts';
 
 const MAX_ONBOARDING_QUERIES = 40;
 
 export default function AddBrandStep3(): React.ReactElement {
   const router = useRouter();
-  const { user, refreshUserProfile } = useAuthContext();
+  const { user } = useAuthContext();
   const { refetchBrands, setSelectedBrandId } = useBrandContext();
-  const { credits, loading: creditsLoading } = useUserCredits();
   const { showSuccess, showError, showWarning, showInfo } = useToast();
   const [domain, setDomain] = useState<string>('');
   const [companyData, setCompanyData] = useState<CompanyInfo | null>(null);
@@ -90,18 +83,6 @@ export default function AddBrandStep3(): React.ReactElement {
 
   const generateQueries = async () => {
     if (!companyData) return;
-    if (creditsLoading) {
-      showInfo('Loading account', 'Just a moment while we load your credit balance.');
-      return;
-    }
-    if (credits < QUERY_GENERATION_CREDIT_COST) {
-      showError(
-        'Insufficient Credits',
-        `You need ${QUERY_GENERATION_CREDIT_COST} credits to generate queries, but you have ${credits}.`
-      );
-      return;
-    }
-
     setIsGenerating(true);
 
     const result = await requestGeneratedQueries(companyData);
@@ -142,23 +123,6 @@ export default function AddBrandStep3(): React.ReactElement {
         !user?.uid
           ? 'Add your OpenRouter key again before completing setup.'
           : 'Select at least four queries before completing setup.'
-      );
-      return;
-    }
-
-    // Wait for the credit balance to load before deciding — without this guard
-    // a freshly signed-up user can hit Complete while the profile is still
-    // being created and see a spurious "Insufficient Credits" error.
-    if (creditsLoading) {
-      showInfo('Loading account', 'Just a moment while we load your credit balance.');
-      return;
-    }
-
-    // Check if user has enough credits
-    if (credits < BRAND_CREATION_CREDIT_COST) {
-      showError(
-        'Insufficient Credits',
-        `You need ${BRAND_CREATION_CREDIT_COST} credits to complete brand setup, but you only have ${credits} credits available. Please purchase more credits to continue.`
       );
       return;
     }
@@ -210,15 +174,6 @@ export default function AddBrandStep3(): React.ReactElement {
       const txResult = await response.json();
 
       if (!response.ok || !txResult.success) {
-        if (txResult.code === 'INSUFFICIENT_CREDITS') {
-          showError(
-            'Insufficient Credits',
-            `You need ${BRAND_CREATION_CREDIT_COST} credits to complete brand setup. Please purchase more credits to continue.`
-          );
-          setIsCompleting(false);
-          return;
-        }
-
         if (txResult.code === 'BRAND_ALREADY_EXISTS') {
           if (typeof txResult.brandId === 'string' && txResult.brandId) {
             setExistingBrandId(txResult.brandId);
@@ -231,7 +186,7 @@ export default function AddBrandStep3(): React.ReactElement {
 
         showError(
           'Save Failed',
-          'Unable to save your brand. No credits were deducted. Please try again.'
+          'Unable to save your brand. Please try again.'
         );
         setIsCompleting(false);
         return;
@@ -251,12 +206,9 @@ export default function AddBrandStep3(): React.ReactElement {
       // The create transaction has committed. Refreshing client caches is
       // best-effort and must not turn that success into a retryable-looking
       // failure, which could encourage a duplicate submission.
-      const syncResults = await Promise.allSettled([
-        refreshUserProfile(),
-        refetchBrands(),
-      ]);
+      const syncResults = await Promise.allSettled([refetchBrands()]);
 
-      const brandsRefreshed = syncResults[1].status === 'fulfilled';
+      const brandsRefreshed = syncResults[0].status === 'fulfilled';
       if (brandsRefreshed) {
         setSelectedBrandId(brandId);
       }
@@ -278,7 +230,7 @@ export default function AddBrandStep3(): React.ReactElement {
       setTimeout(() => {
         showInfo(
           'Ready to Process Queries',
-          `You can now process your queries to see how AI platforms respond to questions about your brand. Each query costs ${USER_QUERY_CREDIT_COST} credits.`
+          'You can now process your queries to see how AI platforms respond to questions about your brand.'
         );
       }, 2000);
 
@@ -758,7 +710,7 @@ export default function AddBrandStep3(): React.ReactElement {
               <div className="text-center mb-8">
                 <button
                   onClick={generateQueries}
-                  disabled={isGenerating || !companyData || creditsLoading || credits < QUERY_GENERATION_CREDIT_COST}
+                  disabled={isGenerating || !companyData}
                   className="inline-flex items-center space-x-2 bg-primary text-primary-foreground px-8 py-4 rounded-xl hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {isGenerating ? (
@@ -769,12 +721,12 @@ export default function AddBrandStep3(): React.ReactElement {
                   ) : (
                     <>
                       <Sparkles className="h-5 w-5" />
-                      <span>Find Search Queries ({QUERY_GENERATION_CREDIT_COST} credits)</span>
+                      <span>Find Search Queries</span>
                     </>
                   )}
                 </button>
                 <p className="text-sm text-muted-foreground mt-2">
-                  Credits are charged only when valid queries are returned.
+                  Review and refine the generated queries before completing setup.
                 </p>
               </div>
             )}
@@ -1015,23 +967,13 @@ export default function AddBrandStep3(): React.ReactElement {
 
                           <button
                 onClick={handleComplete}
-                disabled={queryState.loading || selectedQueries.size < 4 || isCompleting || creditsLoading || credits < BRAND_CREATION_CREDIT_COST}
+                disabled={queryState.loading || selectedQueries.size < 4 || isCompleting}
                 className="flex items-center space-x-2 bg-primary text-primary-foreground px-6 py-3 rounded-xl hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {isCompleting ? (
                   <>
                     <RefreshCw className="h-5 w-5 animate-spin" />
                     <span>Completing Setup...</span>
-                  </>
-                ) : creditsLoading ? (
-                  <>
-                    <RefreshCw className="h-5 w-5 animate-spin" />
-                    <span>Loading account...</span>
-                  </>
-                ) : credits < BRAND_CREATION_CREDIT_COST ? (
-                  <>
-                    <span>Insufficient Credits (Need {BRAND_CREATION_CREDIT_COST})</span>
-                    <Check className="h-5 w-5" />
                   </>
                 ) : selectedQueries.size < 4 ? (
                   <>
@@ -1040,7 +982,7 @@ export default function AddBrandStep3(): React.ReactElement {
                   </>
                 ) : (
                   <>
-                    <span>Complete Setup ({selectedQueries.size} queries, {BRAND_CREATION_CREDIT_COST} credits)</span>
+                    <span>Complete Setup ({selectedQueries.size} queries)</span>
                     <Check className="h-5 w-5" />
                   </>
                 )}
@@ -1059,7 +1001,7 @@ export default function AddBrandStep3(): React.ReactElement {
             </div>
             <p className="text-muted-foreground text-sm mb-6">
               You've already added <span className="font-medium text-foreground">{domain}</span>.
-              Would you like to open the existing brand instead? No credits will be charged.
+              Would you like to open the existing brand instead?
             </p>
             <div className="flex justify-end gap-2">
               <button

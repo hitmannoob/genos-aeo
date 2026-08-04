@@ -200,7 +200,7 @@ export async function acquireQueryExecution<TResponse>(
 
     // A failed execution is terminal for its idempotency key. Reacquiring it
     // after a compensating refund would let the same debit key replay without
-    // deducting credits again, effectively making the retry free.
+    // running providers again and producing duplicate persisted results.
     if (existing.status === 'failed') {
       const lastError = existing.last_error;
       return {

@@ -5,7 +5,6 @@ import Image from 'next/image';
 import { Globe, ArrowRight, AlertCircle, CheckCircle } from 'lucide-react';
 import { useCompanyInfo } from '@/hooks/useCompanyInfo';
 import { normalizePublicDomain } from '@/lib/domainValidation';
-import { COMPANY_INFO_CREDIT_COST } from '@/lib/billing/creditCosts';
 
 export default function AddBrandStep1(): React.ReactElement {
   const [domain, setDomain] = useState('');
@@ -244,13 +243,13 @@ export default function AddBrandStep1(): React.ReactElement {
                 </>
               ) : (
                 <>
-                  <span>Get Company Information ({COMPANY_INFO_CREDIT_COST} credits)</span>
+                  <span>Get Company Information</span>
                   <ArrowRight className="h-5 w-5" />
                 </>
               )}
             </button>
             <p className="mt-3 text-center text-xs text-muted-foreground">
-              Credits are charged only when a valid company profile is returned.
+              Genos uses your OpenRouter key to research the domain and prepare the next step.
             </p>
 
           </div>

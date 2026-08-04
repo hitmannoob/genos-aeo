@@ -31,8 +31,6 @@ export interface ReprocessingJobClient {
   successfulCount: number;
   failedCount: number;
   attemptedCount: number;
-  creditsRequired: number;
-  creditsUsed: number;
   currentIndex: number;
   currentQueryId: string | null;
   processingSessionId: string;
@@ -68,8 +66,6 @@ interface JobRow {
   successful_count: number;
   failed_count: number;
   attempted_count: number;
-  credits_required: number;
-  credits_used: number;
   current_index: number;
   cancellation_requested: boolean;
   runner_lease_expires_at: Date | string | null;
@@ -160,8 +156,6 @@ async function serializeJob(row: JobRow): Promise<ReprocessingJobClient> {
     successfulCount: Number(row.successful_count),
     failedCount: Number(row.failed_count),
     attemptedCount: Number(row.attempted_count),
-    creditsRequired: Number(row.credits_required),
-    creditsUsed: Number(row.credits_used),
     currentIndex: Number(row.current_index),
     currentQueryId: currentItem ? rowToQuery(currentItem).queryId : null,
     processingSessionId: row.processing_session_id,
@@ -198,8 +192,6 @@ async function getJobRow(jobId: string): Promise<JobRow | null> {
         j.successful_count,
         j.failed_count,
         j.attempted_count,
-        j.credits_required,
-        j.credits_used,
         j.current_index,
         j.cancellation_requested,
         j.runner_lease_expires_at,
@@ -228,7 +220,6 @@ export async function createReprocessingJob(args: {
   brandName: string;
   brandDomain: string;
   queries: Array<{ query: string; keyword?: string; category?: string }>;
-  creditsRequired: number;
 }): Promise<{ job: ReprocessingJobClient; reusedExistingJob: boolean }> {
   const processingSessionTimestamp = new Date();
   const normalizedQueries = args.queries.map(normalizeJobQuery);
@@ -278,10 +269,9 @@ export async function createReprocessingJob(args: {
           status,
           processing_session_id,
           processing_session_timestamp,
-          total_queries,
-          credits_required
+          total_queries
         )
-        values ($1, $2, 'queued', $3, $4, $5, $6)
+        values ($1, $2, 'queued', $3, $4, $5)
         returning id
       `,
       [
@@ -290,7 +280,6 @@ export async function createReprocessingJob(args: {
         buildSessionId(),
         processingSessionTimestamp,
         normalizedQueries.length,
-        args.creditsRequired,
       ]
     );
 
@@ -368,8 +357,6 @@ export async function findActiveReprocessingJobForBrand(
         j.successful_count,
         j.failed_count,
         j.attempted_count,
-        j.credits_required,
-        j.credits_used,
         j.current_index,
         j.cancellation_requested,
         j.runner_lease_expires_at,
@@ -415,8 +402,6 @@ export async function acquireReprocessingJobRunner(jobId: string): Promise<{
           j.successful_count,
           j.failed_count,
           j.attempted_count,
-          j.credits_required,
-          j.credits_used,
           j.current_index,
           j.cancellation_requested,
           j.runner_lease_expires_at,
@@ -489,7 +474,6 @@ export async function updateReprocessingJobProgress(args: {
   successfulCount: number;
   failedCount: number;
   attemptedCount: number;
-  creditsUsed: number;
   currentIndex: number;
   currentQueryId: string | null;
   completedQueryIds: string[];
@@ -504,11 +488,10 @@ export async function updateReprocessingJobProgress(args: {
         set successful_count = $2,
             failed_count = $3,
             attempted_count = $4,
-            credits_used = $5,
-            current_index = $6,
-            status = coalesce($7::text, status),
+            current_index = $5,
+            status = coalesce($6::text, status),
             last_heartbeat_at = now(),
-            runner_lease_expires_at = now() + ($8::int * interval '1 millisecond')
+            runner_lease_expires_at = now() + ($7::int * interval '1 millisecond')
         where id = $1
       `,
       [
@@ -516,7 +499,6 @@ export async function updateReprocessingJobProgress(args: {
         args.successfulCount,
         args.failedCount,
         args.attemptedCount,
-        args.creditsUsed,
         args.currentIndex,
         args.status || null,
         REPROCESSING_JOB_LEASE_MS,
@@ -582,7 +564,6 @@ export async function completeReprocessingJob(args: {
   successfulCount: number;
   failedCount: number;
   attemptedCount: number;
-  creditsUsed: number;
   currentIndex: number;
   completedQueryIds: string[];
   failedQueryIds: string[];

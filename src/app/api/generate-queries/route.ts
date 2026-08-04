@@ -1,13 +1,7 @@
-import { createHash } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { ProviderManager } from '@/lib/api-providers/provider-manager';
 import type { APIRequest } from '@/lib/api-providers/types';
 import { authenticateApiRequest } from '@/lib/serverAuth';
-import {
-  deductUserCreditsServer,
-  QUERY_GENERATION_CREDIT_COST,
-  refundUserCreditsServer,
-} from '@/lib/billing/serverCredits';
 import { consumeRateLimit } from '@/lib/rateLimit/rateLimit';
 import {
   normalizeGeneratedQueries,
@@ -25,31 +19,6 @@ const PREFERRED_PROVIDERS = ['chatgptsearch', 'google-ai-overview'];
 
 export async function POST(request: NextRequest) {
   let executionIdentity: { userId: string; clientRequestId: string } | null = null;
-  let creditReservation: {
-    userId: string;
-    clientRequestId: string;
-    fingerprint: string;
-    executionRequestId: string;
-  } | null = null;
-  let userCredits: Awaited<ReturnType<typeof deductUserCreditsServer>> | null = null;
-
-  const refundReservation = async (failureReason: string): Promise<boolean> => {
-    if (!creditReservation) return true;
-    const reservation = creditReservation;
-    try {
-      await refundUserCreditsServer(reservation.userId, QUERY_GENERATION_CREDIT_COST, {
-        idempotencyKey: `query-generation:${reservation.userId}:${reservation.clientRequestId}:${reservation.fingerprint}:refund`,
-        reason: 'query generation failure refund',
-        executionRequestId: reservation.executionRequestId,
-        metadata: { failureReason },
-      });
-      creditReservation = null;
-      return true;
-    } catch (refundError) {
-      logger.error('Failed to refund query-generation credit reservation', refundError);
-      return false;
-    }
-  };
   try {
   const authResult = await authenticateApiRequest(request);
   if (!authResult) {
@@ -67,9 +36,6 @@ export async function POST(request: NextRequest) {
   }
 
   const { clientRequestId, company } = parsedInput.data;
-  const fingerprint = createHash('sha256')
-    .update(JSON.stringify(company))
-    .digest('hex');
   const execution = await acquireQueryExecution<Record<string, unknown>>({
     userId: authResult.uid,
     clientRequestId,
@@ -139,32 +105,6 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  try {
-    userCredits = await deductUserCreditsServer(authResult.uid, QUERY_GENERATION_CREDIT_COST, {
-      idempotencyKey: `query-generation:${authResult.uid}:${clientRequestId}:${fingerprint}:debit`,
-      reason: 'query generation credit reservation',
-      executionRequestId: execution.docId,
-      metadata: { companyName: company.companyName },
-    });
-    creditReservation = {
-      userId: authResult.uid,
-      clientRequestId,
-      fingerprint,
-      executionRequestId: execution.docId,
-    };
-  } catch (creditError) {
-    const insufficient = creditError instanceof Error && creditError.message === 'INSUFFICIENT_CREDITS';
-    const code = insufficient ? 'INSUFFICIENT_CREDITS' : 'CREDIT_DEDUCTION_FAILED';
-    const message = insufficient ? 'Insufficient credits' : 'Failed to reserve credits';
-    await failExecution(code, message, insufficient ? 402 : 500);
-    return NextResponse.json({
-      success: false,
-      error: message,
-      code,
-      ...(insufficient && { requiredCredits: QUERY_GENERATION_CREDIT_COST }),
-    }, { status: insufficient ? 402 : 500 });
-  }
-
   const prompt = buildQueryGenerationPrompt(company);
   const apiRequest: APIRequest = {
     id: clientRequestId,
@@ -201,22 +141,15 @@ export async function POST(request: NextRequest) {
 
   if (!generatedQueries) {
     const anyProviderSucceeded = result.results.some((providerResult) => providerResult.status === 'success');
-    const refundApplied = await refundReservation(
-      anyProviderSucceeded ? 'invalid provider response' : 'all providers failed'
-    );
     const baseCode = anyProviderSucceeded ? 'INVALID_PROVIDER_RESPONSE' : 'ALL_PROVIDERS_FAILED';
-    const code = refundApplied ? baseCode : `${baseCode}_REFUND_FAILED`;
-    await failExecution(code, 'AI providers did not return valid search queries.', refundApplied ? 502 : 500);
+    await failExecution(baseCode, 'AI providers did not return valid search queries.', 502);
     return NextResponse.json(
       {
         success: false,
-        error: refundApplied
-          ? 'AI providers did not return valid search queries. Reserved credits were refunded.'
-          : 'Query generation failed and the automatic credit refund also failed.',
-        code,
-        refundApplied,
+        error: 'AI providers did not return valid search queries.',
+        code: baseCode,
       },
-      { status: refundApplied ? 502 : 500 }
+      { status: 502 }
     );
   }
 
@@ -227,20 +160,15 @@ export async function POST(request: NextRequest) {
     sourceProvider,
     totalCost: result.totalCost,
     completedAt: result.completedAt,
-    userCredits: userCredits!,
   };
   await completeQueryExecution({
     userId: authResult.uid,
     clientRequestId,
     replayResponse: responsePayload,
   });
-  creditReservation = null;
   executionIdentity = null;
   return NextResponse.json(responsePayload);
   } catch (error) {
-    const refundApplied = creditReservation
-      ? await refundReservation('unhandled query-generation error')
-      : false;
     if (executionIdentity) {
       await failQueryExecution({
         ...executionIdentity,
@@ -251,7 +179,7 @@ export async function POST(request: NextRequest) {
     }
     logger.error('Query generation failed', error);
     return NextResponse.json(
-      { success: false, error: 'Internal server error', code: 'INTERNAL_ERROR', refundApplied },
+      { success: false, error: 'Internal server error', code: 'INTERNAL_ERROR' },
       { status: 500 }
     );
   }

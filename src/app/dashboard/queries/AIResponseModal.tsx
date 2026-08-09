@@ -203,7 +203,7 @@ export default function AIResponseModal({ selectedQuery, onClose }: AIResponseMo
         aria-modal="true"
         aria-labelledby="ai-response-title"
       >
-        <header className="flex items-start justify-between border-b border-border bg-gradient-to-r from-gray-50 to-white px-6 py-5">
+        <header className="flex shrink-0 items-start justify-between border-b border-border bg-card px-6 py-5">
           <div className="min-w-0 pr-4">
             <h2 id="ai-response-title" className="line-clamp-2 text-xl font-bold text-foreground">
               “{selectedQuery.query}”
@@ -220,17 +220,17 @@ export default function AIResponseModal({ selectedQuery, onClose }: AIResponseMo
           </button>
         </header>
 
-        <section className="border-b border-border bg-gradient-to-r from-purple-50 to-indigo-50 px-6 py-4">
+        <section className="shrink-0 border-b border-border bg-muted/40 px-6 py-4">
           <h3 className="mb-3 text-sm font-semibold text-foreground">Brand and citation analysis</h3>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
             {[
-              ['Brand mentions', analysis.totals.totalBrandMentions, 'text-blue-700'],
-              ['Brand citations', analysis.totals.totalDomainCitations, 'text-green-700'],
-              ['All citations', analysis.totals.totalCitations, 'text-purple-700'],
-              ['Competitor mentions', analysis.totals.totalCompetitorMentions, 'text-orange-700'],
-              ['Providers mentioning brand', `${analysis.totals.providersWithBrandMention}/${availableProviders.length}`, 'text-pink-700'],
+              ['Brand mentions', analysis.totals.totalBrandMentions, 'text-blue-700 dark:text-blue-300'],
+              ['Brand citations', analysis.totals.totalDomainCitations, 'text-green-700 dark:text-green-300'],
+              ['All citations', analysis.totals.totalCitations, 'text-purple-700 dark:text-purple-300'],
+              ['Competitor mentions', analysis.totals.totalCompetitorMentions, 'text-orange-700 dark:text-orange-300'],
+              ['Providers mentioning brand', `${analysis.totals.providersWithBrandMention}/${availableProviders.length}`, 'text-pink-700 dark:text-pink-300'],
             ].map(([label, value, color]) => (
-              <div key={label} className="rounded-lg border border-white/70 bg-card/75 p-3">
+              <div key={label} className="rounded-lg border border-border bg-card p-3 shadow-sm">
                 <div className={`text-xl font-bold ${color}`}>{value}</div>
                 <div className="text-xs font-medium text-muted-foreground">{label}</div>
               </div>
@@ -238,7 +238,7 @@ export default function AIResponseModal({ selectedQuery, onClose }: AIResponseMo
           </div>
         </section>
 
-        <div className="flex overflow-x-auto border-b border-border" role="tablist" aria-label="AI providers">
+        <div className="flex shrink-0 overflow-x-auto overflow-y-hidden border-b border-border" role="tablist" aria-label="AI providers">
           {availableProviders.map((provider) => {
             const result = provider === 'google' ? analysis.results.google : analysis.results[provider];
             return (
@@ -253,21 +253,21 @@ export default function AIResponseModal({ selectedQuery, onClose }: AIResponseMo
                 }}
                 className={`flex min-w-fit items-center gap-2 border-b-2 px-6 py-4 text-sm font-semibold transition-colors ${
                   activeProvider === provider
-                    ? 'border-blue-500 bg-blue-50/50 text-blue-700'
+                    ? 'border-primary bg-primary/10 text-primary'
                     : 'border-transparent text-muted-foreground hover:bg-muted/40 hover:text-foreground'
                 }`}
               >
                 <span className={`h-2.5 w-2.5 rounded-full ${PROVIDER_ACCENTS[provider]}`} />
                 {PROVIDER_LABELS[provider]}
                 {result?.brandMentioned && (
-                  <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">Brand found</span>
+                  <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700 dark:bg-green-950/60 dark:text-green-300">Brand found</span>
                 )}
               </button>
             );
           })}
         </div>
 
-        <main className="min-h-0 flex-1 overflow-y-auto bg-muted/40/30 p-6">
+        <main className="min-h-0 flex-1 overflow-y-auto bg-background p-6">
           {availableProviders.length === 0 ? (
             <div className="py-12 text-center">
               <h3 className="text-lg font-semibold text-foreground">No provider results available</h3>
@@ -286,7 +286,7 @@ export default function AIResponseModal({ selectedQuery, onClose }: AIResponseMo
                       onClick={() => setActiveDetail(detail)}
                       className={`border-b-2 px-5 py-3 text-sm font-medium capitalize ${
                         activeDetail === detail
-                          ? 'border-blue-500 text-blue-700'
+                          ? 'border-primary text-primary'
                           : 'border-transparent text-muted-foreground hover:text-foreground'
                       }`}
                     >

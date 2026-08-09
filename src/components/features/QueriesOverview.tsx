@@ -511,7 +511,7 @@ export default function QueriesOverview({
                     return (
                       <tr 
                         key={index} 
-                        className="hover:bg-blue-50 hover:shadow-sm transition-all duration-200 cursor-pointer group"
+                        className="hover:bg-primary/5 hover:shadow-sm transition-all duration-200 cursor-pointer group"
                         onClick={() => {
                           if (hasResults && onQueryClick) {
                             onQueryClick(query, queryResult);
@@ -724,7 +724,7 @@ export default function QueriesOverview({
                 return (
                   <div 
                     key={index} 
-                    className={`flex items-center justify-between p-3 rounded-lg border border-border hover:bg-blue-50 hover:shadow-sm transition-all duration-200 cursor-pointer group ${
+                    className={`flex items-center justify-between p-3 rounded-lg border border-border hover:bg-primary/5 hover:shadow-sm transition-all duration-200 cursor-pointer group ${
                       hasResults && onQueryClick ? 'cursor-pointer' : ''
                     }`}
                     onClick={() => {

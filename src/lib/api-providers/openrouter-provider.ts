@@ -5,6 +5,7 @@ import type {
   ProviderConfig,
 } from './types';
 import { parseDomain } from './types';
+import { resolveCitationDomain } from '@/lib/citations/domain';
 
 type GenosProviderId = 'chatgptsearch' | 'google-ai-overview' | 'perplexity';
 
@@ -108,7 +109,10 @@ export class OpenRouterProvider extends BaseAPIProvider {
             temperature: request.temperature ?? 0.7,
             max_tokens: request.max_tokens ?? 1_500,
             stream: false,
-            ...(request.webSearch !== false && {
+            // Sonar searches natively on every request. Sending the separate
+            // server-tool payload can leave OpenRouter with no compatible
+            // Perplexity endpoint even though the model itself is available.
+            ...(request.webSearch !== false && this.providerId !== 'perplexity' && {
               tools: [{
                 type: 'openrouter:web_search',
                 parameters: {
@@ -227,13 +231,13 @@ export class OpenRouterProvider extends BaseAPIProvider {
     return {
       ...common,
       aiOverview: content,
-      aiOverviewReferences: citations.map((citation) => ({
+      aiOverviewReferences: normalizedCitations.map((citation) => ({
         url: citation.url,
-        title: citation.title || citation.url,
-        domain: parseDomain(citation.url) || undefined,
+        title: citation.title || citation.domain,
+        domain: citation.domain,
       })),
-      totalItems: citations.length,
-      organicResultsCount: citations.length,
+      totalItems: normalizedCitations.length,
+      organicResultsCount: normalizedCitations.length,
       peopleAlsoAskCount: 0,
       location: 'OpenRouter web search',
       hasAIOverview: content.trim().length > 0,
@@ -268,7 +272,7 @@ export class OpenRouterProvider extends BaseAPIProvider {
         : 'perplexity';
 
     return citations.flatMap((citation) => {
-      const domain = parseDomain(citation.url);
+      const domain = resolveCitationDomain(citation);
       if (!domain) return [];
       return [{
         url: citation.url,

@@ -1,8 +1,10 @@
 import { matchCompetitorsInText, matchesWord, type Competitor } from '@/lib/competitor-matching';
+import { resolveCitationDomain } from '@/lib/citations/domain';
 
 interface Citation {
   url: string;
   text: string;
+  domain?: string;
   source?: string;
 }
 
@@ -71,6 +73,13 @@ function hostMatches(url: string, domain: string): boolean {
   return host === normalizedDomain || host.endsWith(`.${normalizedDomain}`);
 }
 
+function citationMatchesDomain(citation: Citation, domain: string): boolean {
+  const citationDomain = resolveCitationDomain(citation);
+  const normalizedDomain = normalizeDomainString(domain);
+  if (!citationDomain || !normalizedDomain) return false;
+  return citationDomain === normalizedDomain || citationDomain.endsWith(`.${normalizedDomain}`);
+}
+
 // Brand vs. competitor detection uses the same matcher so SOV is symmetric.
 function isBrandMentioned(text: string, brandName: string, brandDomain?: string): boolean {
   if (!text || !brandName) return false;
@@ -96,7 +105,7 @@ function countBrandMentions(text: string, brandName: string, brandDomain?: strin
 // Strict hostname equality so "apple.com" doesn't match "pineapple.com".
 function countDomainCitations(citations: Citation[], brandDomain: string): number {
   if (!brandDomain) return 0;
-  return citations.filter(citation => hostMatches(citation.url, brandDomain)).length;
+  return citations.filter(citation => citationMatchesDomain(citation, brandDomain)).length;
 }
 
 function areCompetitorsMentioned(text: string, competitors: string[]): boolean {
@@ -113,7 +122,7 @@ function areCompetitorsCited(citations: Citation[], competitors: string[]): bool
       if (!competitor) return false;
       const normalizedCompetitor = normalizeDomainString(competitor);
       const hostHit = normalizedCompetitor
-        ? hostMatches(citation.url, normalizedCompetitor)
+        ? citationMatchesDomain(citation, normalizedCompetitor)
         : false;
       const textHit = matchesWord(citation.text || '', competitor);
       return hostHit || textHit;
@@ -135,7 +144,7 @@ function countCompetitorCitations(citations: Citation[], competitors: string[]):
       if (!competitor) return false;
       const normalizedCompetitor = normalizeDomainString(competitor);
       const hostHit = normalizedCompetitor
-        ? hostMatches(citation.url, normalizedCompetitor)
+        ? citationMatchesDomain(citation, normalizedCompetitor)
         : false;
       const textHit = matchesWord(citation.text || '', competitor);
       return hostHit || textHit;

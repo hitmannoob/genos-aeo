@@ -2,6 +2,7 @@
 
 import WebLogo from '@/components/shared/WebLogo';
 import type { Citation } from '@/lib/citations/types';
+import { isGoogleGroundingRedirect, resolveCitationDomain } from '@/lib/citations/domain';
 
 type Accent = 'blue' | 'green' | 'purple';
 
@@ -34,7 +35,9 @@ function safeCitation(citation: Citation): Citation | null {
       || url.username
       || url.password
     ) return null;
-    return { ...citation, url: url.toString() };
+    const normalizedUrl = url.toString();
+    const domain = resolveCitationDomain({ ...citation, url: normalizedUrl });
+    return { ...citation, url: normalizedUrl, ...(domain && { domain }) };
   } catch {
     return null;
   }
@@ -68,7 +71,11 @@ export default function CitationList({
                 <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${classes.badge}`}>
                   {index + 1}
                 </div>
-                <WebLogo domain={citation.url} className="h-[18px] w-[18px] shrink-0" size={18} />
+                <WebLogo
+                  domain={citation.domain ? `https://${citation.domain}` : citation.url}
+                  className="h-[18px] w-[18px] shrink-0"
+                  size={18}
+                />
                 <div className="min-w-0 flex-1">
                   <a
                     href={citation.url}
@@ -79,7 +86,11 @@ export default function CitationList({
                   >
                     {citation.text}
                   </a>
-                  <p className="mt-1 truncate text-xs text-muted-foreground">{citation.url}</p>
+                  <p className="mt-1 truncate text-xs text-muted-foreground">
+                    {isGoogleGroundingRedirect(citation.url)
+                      ? citation.domain || 'Google grounded source'
+                      : citation.url}
+                  </p>
                   {(citation.source || citation.type) && (
                     <p className="mt-1 text-xs text-muted-foreground">
                       {[citation.source, citation.type?.replaceAll('-', ' ')].filter(Boolean).join(' · ')}

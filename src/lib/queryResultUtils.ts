@@ -2,6 +2,8 @@
 // legacy adapters. Keep this file Firebase-free so both client and server code
 // can import it without dragging storage / auth dependencies along.
 
+import { resolveCitationDomain } from '@/lib/citations/domain';
+
 export interface BaseStoredProviderResult {
   response: string;
   error?: string;
@@ -15,6 +17,7 @@ export interface BaseStoredProviderResult {
 export interface StoredCitation {
   url: string;
   text: string;
+  domain?: string;
   source?: string;
   type?: string;
 }
@@ -147,7 +150,9 @@ export function getGoogleResultText(
 export function getStoredCitations(
   result?: BaseStoredProviderResult
 ): StoredCitation[] | undefined {
-  return Array.isArray(result?.citationData) ? result.citationData : undefined;
+  return Array.isArray(result?.citationData)
+    ? normalizeStoredCitations(result.citationData)
+    : undefined;
 }
 
 function normalizeStoredCitations(value: unknown): StoredCitation[] {
@@ -176,16 +181,29 @@ function normalizeStoredCitations(value: unknown): StoredCitation[] {
     if (seen.has(canonicalUrl)) continue;
     seen.add(canonicalUrl);
 
-    const sourceProvider = typeof raw.sourceProvider === 'string'
-      ? raw.sourceProvider
-      : undefined;
-    const rawKind = typeof raw.rawKind === 'string' ? raw.rawKind : undefined;
+    const sourceProvider =
+      (typeof raw.sourceProvider === 'string' && raw.sourceProvider)
+      || (typeof raw.source === 'string' && raw.source)
+      || undefined;
+    const rawKind =
+      (typeof raw.rawKind === 'string' && raw.rawKind)
+      || (typeof raw.type === 'string' && raw.type)
+      || undefined;
+    const text =
+      (typeof raw.title === 'string' && raw.title.trim())
+      || (typeof raw.text === 'string' && raw.text.trim())
+      || (typeof raw.domain === 'string' && raw.domain.trim())
+      || url.hostname;
+    const domain = resolveCitationDomain({
+      url: canonicalUrl,
+      domain: typeof raw.domain === 'string' ? raw.domain : undefined,
+      title: typeof raw.title === 'string' ? raw.title : undefined,
+      text,
+    });
     citations.push({
       url: canonicalUrl,
-      text:
-        (typeof raw.title === 'string' && raw.title.trim())
-        || (typeof raw.domain === 'string' && raw.domain.trim())
-        || url.hostname,
+      text,
+      ...(domain && { domain }),
       source: sourceProvider,
       type: rawKind,
     });

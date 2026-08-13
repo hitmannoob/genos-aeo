@@ -4,10 +4,15 @@ import type { DecodedIdToken } from 'firebase-admin/auth';
 import { auth } from '@/firebase/firebase-admin';
 import { getAppUserProfileByFirebaseUid } from '@/lib/db/appUsers';
 import type { UserProfile } from '@/types/userProfile';
+import {
+  isPlausibleOpenRouterKey,
+  OPENROUTER_KEY_HEADER,
+} from '@/lib/openRouterKey';
 
 export interface AuthenticatedApiRequest {
   uid: string;
   token: string;
+  openRouterApiKey: string | null;
   profile?: UserProfile;
 }
 
@@ -34,6 +39,11 @@ export function configuredServiceSecret(value: string | undefined): string | nul
   return secret && secret.length >= 32 ? secret : null;
 }
 
+export function getOpenRouterApiKey(request: NextRequest): string | null {
+  const key = request.headers.get(OPENROUTER_KEY_HEADER)?.trim() || '';
+  return isPlausibleOpenRouterKey(key) ? key : null;
+}
+
 export async function verifyFirebaseRequestToken(
   request: NextRequest
 ): Promise<{ token: string; decodedToken: DecodedIdToken } | null> {
@@ -55,11 +65,13 @@ export async function authenticateApiRequest(
   const verified = await verifyFirebaseRequestToken(request);
   if (!verified) return null;
   const { token, decodedToken } = verified;
+  const openRouterApiKey = getOpenRouterApiKey(request);
 
   if (!options.requireProfile) {
     return {
       uid: decodedToken.uid,
       token,
+      openRouterApiKey,
     };
   }
 
@@ -69,6 +81,7 @@ export async function authenticateApiRequest(
   return {
     uid: decodedToken.uid,
     token,
+    openRouterApiKey,
     profile,
   };
 }

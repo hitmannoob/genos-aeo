@@ -33,9 +33,15 @@ export async function GET(
     }
 
     if (shouldResumeReprocessingJob(job)) {
+      if (!authResult.openRouterApiKey) {
+        return NextResponse.json(
+          { error: 'Add an OpenRouter API key to resume this job', code: 'OPENROUTER_KEY_REQUIRED' },
+          { status: 400 }
+        );
+      }
       after(async () => {
         try {
-          await runReprocessingJob(job.id);
+          await runReprocessingJob(job.id, authResult.openRouterApiKey || undefined);
         } catch (error) {
           logger.error('Failed to resume reprocessing job', error);
         }

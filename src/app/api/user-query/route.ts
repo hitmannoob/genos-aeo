@@ -55,7 +55,7 @@ const UserQueryRequestSchema = z.object({
 
 async function authenticateUserQueryRequest(
   request: NextRequest
-): Promise<{ uid: string; isService: boolean } | null> {
+): Promise<{ uid: string; isService: boolean; openRouterApiKey?: string } | null> {
   const token = parseBearerToken(request);
   const serviceSecret = configuredServiceSecret(process.env.SERVICE_API_SECRET);
 
@@ -76,6 +76,7 @@ async function authenticateUserQueryRequest(
     return {
       uid: serviceUserId,
       isService: true,
+      openRouterApiKey: process.env.OPENROUTER_API_KEY?.trim() || undefined,
     };
   }
 
@@ -87,6 +88,7 @@ async function authenticateUserQueryRequest(
   return {
     uid: authResult.uid,
     isService: false,
+    openRouterApiKey: authResult.openRouterApiKey || undefined,
   };
 }
 
@@ -116,6 +118,17 @@ async function handlePost(request: NextRequest) {
         code: 'AUTHENTICATION_REQUIRED',
       },
       { status: 401 }
+    );
+  }
+
+  if (!authResult.openRouterApiKey) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Add an OpenRouter API key to continue.',
+        code: 'OPENROUTER_KEY_REQUIRED',
+      },
+      { status: 400 }
     );
   }
 
@@ -167,6 +180,7 @@ async function handlePost(request: NextRequest) {
 
   const result = await executeUserQueryServer({
     userId: authResult.uid,
+    openRouterApiKey: authResult.openRouterApiKey,
     ...parsedInput.data,
     skipBilling,
   });

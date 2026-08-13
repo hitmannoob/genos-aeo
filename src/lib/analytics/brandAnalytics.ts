@@ -6,6 +6,7 @@ import {
 } from '@/lib/citations/stored';
 import { isSameOrSubdomain, matchesWord } from '@/lib/competitor-matching';
 import type { Citation } from '@/lib/citations/types';
+import { resolveCitationDomain } from '@/lib/citations/domain';
 import { logger } from '@/lib/logger';
 import { toIsoString } from '@/lib/timestamps';
 import {
@@ -375,31 +376,19 @@ export function calculateLifetimeBrandAnalyticsFromCorpus(
   const firstQueryProcessed = queryDates.length > 0 ? queryDates[0].toISOString() : undefined;
   const lastQueryProcessed = queryDates.length > 0 ? queryDates[queryDates.length - 1].toISOString() : undefined;
 
-  const extractDomainFromUrl = (url: string): string | undefined => {
-    if (!url || !/^https?:\/\//i.test(url)) return undefined;
-    try {
-      return new URL(url).hostname.replace(/^www\./, '');
-    } catch {
-      return undefined;
-    }
-  };
+  const extractCitationDomain = (citation: Citation): string | undefined =>
+    resolveCitationDomain(citation) || undefined;
 
   const checkBrandMention = (text: string, brandNameValue: string): boolean => {
     if (!brandNameValue || !text) return false;
     return matchesWord(text, brandNameValue);
   };
 
-  const checkDomainCitation = (url: string, brandDomainValue?: string): boolean => {
-    if (!brandDomainValue || !url) return false;
-    try {
-      const parsed = new URL(url);
-      const urlHost = parsed.hostname.toLowerCase().replace(/^www\./, '');
-      const brandHost = brandDomainValue.toLowerCase().replace(/^www\./, '').trim();
-      if (!urlHost || !brandHost) return false;
-      return isSameOrSubdomain(urlHost, brandHost);
-    } catch {
-      return false;
-    }
+  const checkDomainCitation = (citation: Citation, brandDomainValue?: string): boolean => {
+    if (!brandDomainValue) return false;
+    const citationDomain = resolveCitationDomain(citation);
+    const brandHost = brandDomainValue.toLowerCase().replace(/^www\./, '').trim();
+    return !!citationDomain && !!brandHost && isSameOrSubdomain(citationDomain, brandHost);
   };
 
   const allCitations: LifetimeCitation[] = [];
@@ -415,7 +404,7 @@ export function calculateLifetimeBrandAnalyticsFromCorpus(
         const chatgptCitations = citationsForChatGPT(query.results.chatgpt);
 
         chatgptCitations.forEach((citation: Citation) => {
-          const domain = extractDomainFromUrl(citation.url);
+          const domain = extractCitationDomain(citation);
           if (!domain) return;
 
           allCitations.push({
@@ -431,7 +420,7 @@ export function calculateLifetimeBrandAnalyticsFromCorpus(
             timestamp: queryTimestamp,
             type: 'text_extraction',
             isBrandMention: checkBrandMention(citation.text, brandName),
-            isDomainCitation: checkDomainCitation(citation.url, brandDomain),
+            isDomainCitation: checkDomainCitation(citation, brandDomain),
             processingSessionId: query.processingSessionId || 'unknown',
           });
         });
@@ -445,7 +434,7 @@ export function calculateLifetimeBrandAnalyticsFromCorpus(
         const googleCitations = citationsForGoogle(canonicalGoogleResult);
 
         googleCitations.forEach((citation: Citation) => {
-          const domain = extractDomainFromUrl(citation.url);
+          const domain = extractCitationDomain(citation);
           if (!domain) return;
 
           allCitations.push({
@@ -461,7 +450,7 @@ export function calculateLifetimeBrandAnalyticsFromCorpus(
             timestamp: queryTimestamp,
             type: 'ai_overview',
             isBrandMention: checkBrandMention(citation.text, brandName),
-            isDomainCitation: checkDomainCitation(citation.url, brandDomain),
+            isDomainCitation: checkDomainCitation(citation, brandDomain),
             processingSessionId: query.processingSessionId || 'unknown',
           });
         });
@@ -475,7 +464,7 @@ export function calculateLifetimeBrandAnalyticsFromCorpus(
         const perplexityCitations = citationsForPerplexity(query.results.perplexity);
 
         perplexityCitations.forEach((citation: Citation) => {
-          const domain = extractDomainFromUrl(citation.url);
+          const domain = extractCitationDomain(citation);
           if (!domain) return;
 
           allCitations.push({
@@ -491,7 +480,7 @@ export function calculateLifetimeBrandAnalyticsFromCorpus(
             timestamp: queryTimestamp,
             type: citation.type || 'structured',
             isBrandMention: checkBrandMention(citation.text, brandName),
-            isDomainCitation: checkDomainCitation(citation.url, brandDomain),
+            isDomainCitation: checkDomainCitation(citation, brandDomain),
             processingSessionId: query.processingSessionId || 'unknown',
           });
         });

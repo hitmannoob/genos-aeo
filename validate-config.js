@@ -30,23 +30,8 @@ if (!process.env.FIREBASE_AUTH_EMULATOR_HOST) {
 }
 
 const missing = required.filter((name) => !isConfigured(name));
-const hasOpenAi = Boolean(
-  isConfigured('OPENAI_API_KEY') || isConfigured('CHATGPT_SEARCH_API_KEY')
-);
-const hasGemini = Boolean(
-  isConfigured('GOOGLE_AI_API_KEY') || isConfigured('GEMINI_API_KEY')
-);
-const hasPerplexity = isConfigured('PERPLEXITY_API_KEY');
-const hasDataForSeo = Boolean(
-  isConfigured('DATAFORSEO_USERNAME') && isConfigured('DATAFORSEO_PASSWORD')
-);
 const clientUsesAuthEmulator = process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === 'true';
 const serverAuthEmulatorHost = process.env.FIREBASE_AUTH_EMULATOR_HOST?.trim();
-const geminiModel = process.env.GEMINI_MODEL?.trim();
-
-if (geminiModel === 'gemini-3.1-flash-lite-preview') {
-  missing.push('GEMINI_MODEL uses the retired gemini-3.1-flash-lite-preview model; use gemini-3.1-flash-lite');
-}
 
 for (const secretName of ['SERVICE_API_SECRET', 'ADMIN_API_SECRET']) {
   const value = process.env[secretName]?.trim();
@@ -93,14 +78,11 @@ for (const name of required) {
   console.log(`${missing.includes(name) ? 'MISSING' : 'OK'}  ${name}`);
 }
 
-console.log(`\nProviders: OpenAI=${hasOpenAi ? 'yes' : 'no'}, Gemini=${hasGemini ? 'yes' : 'no'}, Perplexity=${hasPerplexity ? 'yes' : 'no'}, DataForSEO=${hasDataForSeo ? 'yes' : 'no'}`);
-
-if (!hasOpenAi && !hasGemini) {
-  missing.push('OPENAI_API_KEY or GOOGLE_AI_API_KEY');
-}
-if (!hasOpenAi && !hasPerplexity && !hasDataForSeo) {
-  missing.push('at least one monitoring provider');
-}
+console.log(
+  `\nOpenRouter: browser key required at runtime${
+    isConfigured('OPENROUTER_API_KEY') ? '; trusted-service fallback configured' : ''
+  }`
+);
 
 if (missing.length > 0) {
   console.error(`\nConfiguration incomplete: ${missing.join(', ')}`);

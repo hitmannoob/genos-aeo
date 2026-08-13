@@ -24,6 +24,12 @@ export async function GET(request: NextRequest) {
   if (!authResult) {
     return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
   }
+  if (!authResult.openRouterApiKey) {
+    return NextResponse.json(
+      { error: 'Add an OpenRouter API key to continue', code: 'OPENROUTER_KEY_REQUIRED' },
+      { status: 400 }
+    );
+  }
 
   try {
     const brandIdResult = z.string().trim().min(1).max(200).safeParse(
@@ -42,7 +48,7 @@ export async function GET(request: NextRequest) {
     if (shouldResumeReprocessingJob(activeJob)) {
       after(async () => {
         try {
-          await runReprocessingJob(activeJob.id);
+          await runReprocessingJob(activeJob.id, authResult.openRouterApiKey || undefined);
         } catch (error) {
           logger.error('Failed to resume reprocessing job', error);
         }
@@ -64,6 +70,12 @@ export async function POST(request: NextRequest) {
     const authResult = await authenticateApiRequest(request, { requireProfile: true });
     if (!authResult?.profile) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+    if (!authResult.openRouterApiKey) {
+      return NextResponse.json(
+        { error: 'Add an OpenRouter API key to continue', code: 'OPENROUTER_KEY_REQUIRED' },
+        { status: 400 }
+      );
     }
 
     const body = await request.json().catch(() => null);
@@ -103,7 +115,10 @@ export async function POST(request: NextRequest) {
       if (shouldResumeReprocessingJob(existingActiveJob)) {
         after(async () => {
           try {
-            await runReprocessingJob(existingActiveJob.id);
+            await runReprocessingJob(
+              existingActiveJob.id,
+              authResult.openRouterApiKey || undefined,
+            );
           } catch (error) {
             logger.error('Failed to resume existing reprocessing job', error);
           }
@@ -128,7 +143,7 @@ export async function POST(request: NextRequest) {
 
     after(async () => {
       try {
-        await runReprocessingJob(creation.job.id);
+        await runReprocessingJob(creation.job.id, authResult.openRouterApiKey || undefined);
       } catch (error) {
         logger.error('Failed to run new reprocessing job', error);
       }

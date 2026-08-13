@@ -21,8 +21,7 @@ import {
 import { buildQueryGenerationPrompt, parseQueryGenerationResponse } from '@/lib/prompts/queryGeneration';
 import { logger } from '@/lib/logger';
 
-const providerManager = new ProviderManager();
-const PREFERRED_PROVIDERS = ['chatgptsearch', 'google-gemini'];
+const PREFERRED_PROVIDERS = ['chatgptsearch', 'google-ai-overview'];
 
 export async function POST(request: NextRequest) {
   let executionIdentity: { userId: string; clientRequestId: string } | null = null;
@@ -55,6 +54,12 @@ export async function POST(request: NextRequest) {
   const authResult = await authenticateApiRequest(request);
   if (!authResult) {
     return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 });
+  }
+  if (!authResult.openRouterApiKey) {
+    return NextResponse.json(
+      { success: false, error: 'Add an OpenRouter API key to continue', code: 'OPENROUTER_KEY_REQUIRED' },
+      { status: 400 }
+    );
   }
 
   const body = await request.json().catch(() => null);
@@ -129,6 +134,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const providerManager = new ProviderManager(authResult.openRouterApiKey);
   const availableProviders = new Set(providerManager.getAvailableProviders());
   const providers = PREFERRED_PROVIDERS.filter((provider) => availableProviders.has(provider));
   if (providers.length === 0) {

@@ -7,6 +7,7 @@ import { useBrandContext } from '@/context/BrandContext';
 import { useToast } from '@/context/ToastContext';
 import { usePendingSingleQueries } from '@/context/PendingSingleQueriesContext';
 import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
+import { getOpenRouterKeyWithRetry, OPENROUTER_KEY_HEADER } from '@/lib/openRouterKey';
 import { buildTrackedQueryIdentity } from '@/lib/queryResultUtils';
 import { brandQueriesQueryKey } from '@/hooks/useBrandQueries';
 import { USER_QUERY_CREDIT_COST } from '@/lib/billing/creditCosts';
@@ -78,8 +79,12 @@ export default function ProcessSingleQueryButton({
 
     let success = false;
     try {
-      const idToken = await getFirebaseIdTokenWithRetry(3, 1000);
+      const [idToken, openRouterKey] = await Promise.all([
+        getFirebaseIdTokenWithRetry(3, 1000),
+        getOpenRouterKeyWithRetry(3, 1000),
+      ]);
       if (!idToken) throw new Error('Failed to get authentication token');
+      if (!openRouterKey) throw new Error('Add an OpenRouter API key to continue');
 
       const sessionTimestamp = new Date().toISOString();
       const requestId = crypto.randomUUID();
@@ -91,6 +96,7 @@ export default function ProcessSingleQueryButton({
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${idToken}`,
+          [OPENROUTER_KEY_HEADER]: openRouterKey,
         },
         body: JSON.stringify({
           query: query.query,

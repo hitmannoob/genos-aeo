@@ -18,7 +18,7 @@ Genos is an open-source answer-engine visibility dashboard. It runs tracked buye
 - PostgreSQL through `pg`
 - Firebase Authentication and Firebase Admin token verification
 - TanStack Query for client-side server state
-- OpenAI Responses, Perplexity, DataForSEO, and Google Gemini integrations
+- OpenRouter routing for OpenAI, Google, and Perplexity models
 - Optional Sentry error and performance monitoring
 
 ## Requirements
@@ -26,7 +26,7 @@ Genos is an open-source answer-engine visibility dashboard. It runs tracked buye
 - Node.js 20.9 or newer and npm 10 or newer
 - PostgreSQL 14 or newer
 - A Firebase project with Email/Password and/or Google authentication enabled
-- At least one supported AI provider credential
+- An OpenRouter API key for each signed-in browser
 
 ## Local setup
 
@@ -47,7 +47,8 @@ npm run config:check
 npm run dev
 ```
 
-Open <http://localhost:3000>. The example Compose database URL already matches `.env.example`.
+Open <http://localhost:3000>, sign in with Firebase, and enter your OpenRouter
+API key when prompted. The example Compose database URL already matches `.env.example`.
 
 `npm run db:migrate` applies every SQL file in `db/migrations` in filename order. Applied filenames and SHA-256 checksums are recorded in `schema_migrations`; changing an already-applied migration intentionally fails. Add a new migration instead. `npm run db:verify` is restricted to localhost and requires `ALLOW_DATABASE_INTEGRATION_TESTS=true`; it rolls back all test rows.
 
@@ -60,10 +61,8 @@ Copy `.env.example` and replace its placeholders. The main groups are:
 | PostgreSQL | `DATABASE_URL`, `POSTGRES_SSL`, optional pool settings |
 | Firebase client | `NEXT_PUBLIC_FIREBASE_API_KEY`, `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`, `NEXT_PUBLIC_FIREBASE_PROJECT_ID`, `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`, `NEXT_PUBLIC_FIREBASE_APP_ID` |
 | Firebase Admin | `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` |
-| OpenAI | `OPENAI_API_KEY` or `CHATGPT_SEARCH_API_KEY` |
-| Gemini | `GOOGLE_AI_API_KEY` or `GEMINI_API_KEY` |
-| Perplexity | `PERPLEXITY_API_KEY` |
-| Google AI Overview | `DATAFORSEO_USERNAME` and `DATAFORSEO_PASSWORD` |
+| OpenRouter | Entered by each signed-in user in the browser; optional trusted-service fallback `OPENROUTER_API_KEY` |
+| OpenRouter models | Optional `OPENROUTER_OPENAI_MODEL`, `OPENROUTER_GOOGLE_MODEL`, `OPENROUTER_PERPLEXITY_MODEL` |
 | Trusted services | `SERVICE_API_SECRET`, optional `ADMIN_API_SECRET` |
 | Admin users | comma-separated `ADMIN_EMAILS` |
 | Sentry | optional `SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_DSN`, and source-map build credentials |
@@ -74,13 +73,13 @@ Never commit `.env.local`, service-account JSON, private keys, or provider crede
 
 | Flow | Providers used when configured |
 | --- | --- |
-| Company research | OpenAI Search, Perplexity, and Gemini when verified website metadata is available |
-| Query generation | OpenAI Search and Gemini |
-| Tracked query execution | OpenAI Search, DataForSEO Google AI Overview, and Perplexity |
+| Company research | OpenAI, Perplexity, and Google when verified website metadata is available |
+| Query generation | OpenAI and Google |
+| Tracked query execution | OpenAI, Google, and Perplexity |
 
-Missing providers are skipped. A tracked query succeeds when at least one selected provider succeeds. If all providers fail, reserved credits are refunded. Provider response caching is scoped to the authenticated user and successful complete provider sets only.
+All provider calls go through OpenRouter using the browser-provided key. A tracked query succeeds when at least one selected provider succeeds. If all providers fail, reserved credits are refunded. Provider response caching is scoped to the authenticated user and successful complete provider sets only.
 
-The default models and price assumptions live beside each provider implementation in `src/lib/api-providers`. Cost figures are estimates for reporting; override the price environment variables in `.env.example` when provider pricing changes.
+The default OpenRouter model slugs live in `src/lib/api-providers/provider-manager.ts`. OpenRouter-reported request cost is stored for dashboard reporting.
 
 ## Credits and idempotency
 
@@ -95,13 +94,14 @@ Billable APIs reserve credits transactionally before calling providers. Client r
 
 ## Background processing
 
-Batch reprocessing creates durable PostgreSQL job and item rows, leases one runner, and checkpoints after every query. The browser polls the job endpoint; an expired lease can be resumed safely with the same per-query idempotency key.
+Batch reprocessing creates durable PostgreSQL job and item rows, leases one runner, and checkpoints after every query. The browser polls the job endpoint; an expired lease can be resumed safely with the same per-query idempotency key. The browser passes the OpenRouter key to the active runner; the job does not persist it.
 
 The included runner uses Next.js `after()` and is appropriate for small deployments whose function duration covers a query. Automatic scheduled processing is intentionally disabled. Larger deployments should invoke the same durable job runner from a queue/worker with a suitable execution timeout.
 
 ## Security model
 
 - Browser API requests use revoked-token-aware Firebase Admin verification.
+- Provider-backed requests also require `X-OpenRouter-Api-Key`. The key is stored in browser local storage and is not persisted in PostgreSQL or the Firebase user profile.
 - Trusted service calls to `/api/user-query` require both `SERVICE_API_SECRET` and `X-Service-User-Id`.
 - Admin data-sanity access requires an admin Firebase identity or the separate admin/service secret.
 - Every brand, query, run, citation, job, and ledger lookup is tenant-scoped; database constraints reinforce cross-tenant ownership.

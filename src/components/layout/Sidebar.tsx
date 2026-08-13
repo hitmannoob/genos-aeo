@@ -13,6 +13,7 @@ import {
   Plus,
   Menu,
   LogOut,
+  KeyRound,
   User,
   ChevronDown,
   ChevronUp
@@ -20,6 +21,7 @@ import {
 import { useBrandContext } from '@/context/BrandContext';
 import { useAuthContext } from '@/context/AuthContext';
 import WebLogo from '@/components/shared/WebLogo';
+import OpenRouterKeyDialog from '@/components/settings/OpenRouterKeyDialog';
 
 const navigationItems = [
   { name: 'Overview', href: '/dashboard', icon: BarChart3 },
@@ -47,6 +49,7 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
   } = useBrandContext();
   const [isBrandsDropdownOpen, setIsBrandsDropdownOpen] = React.useState(false);
   const [signOutError, setSignOutError] = React.useState(false);
+  const [isKeyDialogOpen, setIsKeyDialogOpen] = React.useState(false);
   const dropdownRef = React.useRef<HTMLDivElement>(null);
 
   // Ensure single brand is selected when only one brand exists
@@ -93,6 +96,10 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
 
   return (
     <>
+      <OpenRouterKeyDialog
+        open={isKeyDialogOpen}
+        onClose={() => setIsKeyDialogOpen(false)}
+      />
       {/* Mobile menu button */}
       <button
         type="button"
@@ -368,6 +375,15 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps): React.React
                   {userProfile?.email || user?.email || 'No email'}
                 </p>
               </div>
+              <button
+                type="button"
+                onClick={() => setIsKeyDialogOpen(true)}
+                aria-label="Edit OpenRouter API key"
+                className="text-muted-foreground hover:text-foreground transition-colors p-1"
+                title="Edit OpenRouter API key"
+              >
+                <KeyRound className="h-4 w-4" />
+              </button>
               <button
                 type="button"
                 onClick={handleSignOut}

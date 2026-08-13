@@ -5,12 +5,20 @@ import { getAuth, onAuthStateChanged, type User } from 'firebase/auth';
 import firebaseApp from '@/firebase/config';
 import type { UserProfile } from '@/types/userProfile';
 import signOut from '@/firebase/auth/signOut';
+import {
+  getStoredOpenRouterKey,
+  removeStoredOpenRouterKey,
+  storeOpenRouterKey,
+} from '@/lib/openRouterKey';
 
 interface AuthContextType {
   user: User | null;
   userProfile: UserProfile | null;
+  openRouterKey: string | null;
   loading: boolean;
   profileError: Error | null;
+  saveOpenRouterKey: (key: string) => Promise<void>;
+  clearOpenRouterKey: () => void;
   refreshUserProfile: () => Promise<void>;
   retryProfileLoad: () => Promise<void>;
 }
@@ -60,10 +68,20 @@ async function loadOrCreateProfile(user: User): Promise<UserProfile> {
 export function AuthContextProvider({ children }: { children: React.ReactNode }): React.ReactElement {
   const [user, setUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [openRouterKey, setOpenRouterKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [profileError, setProfileError] = useState<Error | null>(null);
   const authSequenceRef = useRef(0);
   const userRef = useRef<User | null>(null);
+
+  const saveOpenRouterKey = useCallback(async (key: string) => {
+    setOpenRouterKey(storeOpenRouterKey(key));
+  }, []);
+
+  const clearOpenRouterKey = useCallback(() => {
+    removeStoredOpenRouterKey();
+    setOpenRouterKey(null);
+  }, []);
 
   const refreshUserProfile = useCallback(async () => {
     const activeUser = userRef.current;
@@ -101,10 +119,13 @@ export function AuthContextProvider({ children }: { children: React.ReactNode })
       setProfileError(null);
 
       if (!nextUser) {
+        removeStoredOpenRouterKey();
+        setOpenRouterKey(null);
         setLoading(false);
         return;
       }
 
+      setOpenRouterKey(getStoredOpenRouterKey());
       setLoading(true);
       try {
         const profile = await loadOrCreateProfile(nextUser);
@@ -129,11 +150,24 @@ export function AuthContextProvider({ children }: { children: React.ReactNode })
   const value = useMemo<AuthContextType>(() => ({
     user,
     userProfile,
+    openRouterKey,
     loading,
     profileError,
+    saveOpenRouterKey,
+    clearOpenRouterKey,
     refreshUserProfile,
     retryProfileLoad,
-  }), [user, userProfile, loading, profileError, refreshUserProfile, retryProfileLoad]);
+  }), [
+    user,
+    userProfile,
+    openRouterKey,
+    loading,
+    profileError,
+    saveOpenRouterKey,
+    clearOpenRouterKey,
+    refreshUserProfile,
+    retryProfileLoad,
+  ]);
 
   return (
     <AuthContext.Provider value={value}>

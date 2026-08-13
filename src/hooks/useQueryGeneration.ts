@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { CompanyInfo } from '@/lib/get-company-info';
 import type { GeneratedQuery } from '@/lib/queryGeneration';
 import { getFirebaseIdTokenWithRetry } from '@/utils/getFirebaseToken';
+import { getOpenRouterKeyWithRetry, OPENROUTER_KEY_HEADER } from '@/lib/openRouterKey';
 import { useAuthContext } from '@/context/AuthContext';
 
 interface QueryGenerationResult {
@@ -30,8 +31,12 @@ export function useQueryGeneration() {
     setQueryState({ loading: true, result: null, error: null });
 
     try {
-      const idToken = await getFirebaseIdTokenWithRetry(3, 1_000);
+      const [idToken, openRouterKey] = await Promise.all([
+        getFirebaseIdTokenWithRetry(3, 1_000),
+        getOpenRouterKeyWithRetry(3, 1_000),
+      ]);
       if (!idToken) throw new Error('Authentication required');
+      if (!openRouterKey) throw new Error('Add an OpenRouter API key to continue');
 
       const clientRequestId = crypto.randomUUID();
       const response = await fetch('/api/generate-queries', {
@@ -39,6 +44,7 @@ export function useQueryGeneration() {
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${idToken}`,
+          [OPENROUTER_KEY_HEADER]: openRouterKey,
         },
         body: JSON.stringify({ company, clientRequestId }),
       });

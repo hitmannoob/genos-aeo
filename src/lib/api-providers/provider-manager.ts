@@ -1,10 +1,12 @@
 import { BaseAPIProvider } from './base-provider';
 import { createHash } from 'node:crypto';
-import { GeminiProvider } from './gemini-provider';
-import { ChatGPTSearchProvider } from './chatgptsearch-provider';
-import { GoogleAIOverviewProvider } from './google-ai-overview-provider';
-import { PerplexityProvider } from './perplexity-provider';
-import { APIRequest, APIResponse, JobResult } from './types';
+import { OpenRouterProvider } from './openrouter-provider';
+import {
+  APIRequest,
+  APIResponse,
+  JobResult,
+  type ProviderConfig,
+} from './types';
 import {
   buildProviderResponseCacheKey,
   getCachedProviderResponse,
@@ -12,11 +14,18 @@ import {
 } from '@/lib/cache/providerResponseCache';
 import { logger } from '@/lib/logger';
 
+type OpenRouterProviderName = 'chatgptsearch' | 'google-ai-overview' | 'perplexity';
+
+interface OpenRouterProviderConfig extends ProviderConfig {
+  name: OpenRouterProviderName;
+  model: string;
+}
+
 export class ProviderManager {
   private providers: Map<string, BaseAPIProvider> = new Map();
   private activeJobs: Map<string, Promise<JobResult>> = new Map();
 
-  constructor() {
+  constructor(private readonly openRouterApiKey = process.env.OPENROUTER_API_KEY?.trim() || '') {
     this.initializeProviders();
   }
 
@@ -25,97 +34,38 @@ export class ProviderManager {
     const providers = this.getProviderConfigs();
     
     providers.forEach(config => {
-      let provider: BaseAPIProvider;
-      
-      switch (config.type) {
-        case 'google-gemini':
-          provider = new GeminiProvider(config);
-          break;
-        case 'chatgptsearch':
-          provider = new ChatGPTSearchProvider(config);
-          break;
-        case 'google-ai-overview':
-          provider = new GoogleAIOverviewProvider(config);
-          break;
-        case 'perplexity':
-          provider = new PerplexityProvider(config);
-          break;
-        default:
-          logger.warn(`Unknown provider type: ${config.type}`);
-          return;
-      }
+      const provider = new OpenRouterProvider(config.name, config.model, config);
       
       this.providers.set(config.name, provider);
     });
   }
 
-  private getProviderConfigs(): Array<any> {
-    // In production, this would come from environment variables or database
-    const configs = [];
-    
-    // ChatGPT Search Configuration
-    const chatgptSearchApiKey = process.env.OPENAI_API_KEY || process.env.CHATGPT_SEARCH_API_KEY;
-    if (chatgptSearchApiKey && chatgptSearchApiKey.trim() !== '') {
-      const chatgptSearchConfig = {
+  private getProviderConfigs(): OpenRouterProviderConfig[] {
+    if (!this.openRouterApiKey) return [];
+
+    return [
+      {
         name: 'chatgptsearch',
-        type: 'chatgptsearch' as const,
-        apiKey: chatgptSearchApiKey,
-        timeout: 45000, // Longer timeout for web search
+        model: process.env.OPENROUTER_OPENAI_MODEL || 'openai/gpt-5.4-mini',
+        apiKey: this.openRouterApiKey,
+        timeout: 45_000,
         retryAttempts: 3,
-      };
-      configs.push(chatgptSearchConfig);
-    }
-    
-    // Perplexity Configuration
-    const perplexityApiKey = process.env.PERPLEXITY_API_KEY;
-    if (perplexityApiKey && perplexityApiKey.trim() !== '') {
-      const perplexityConfig = {
+      },
+      {
+        name: 'google-ai-overview',
+        model: process.env.OPENROUTER_GOOGLE_MODEL || 'google/gemini-3.1-flash-lite',
+        apiKey: this.openRouterApiKey,
+        timeout: 45_000,
+        retryAttempts: 3,
+      },
+      {
         name: 'perplexity',
-        type: 'perplexity' as const,
-        apiKey: perplexityApiKey,
-        timeout: 30000,
+        model: process.env.OPENROUTER_PERPLEXITY_MODEL || 'perplexity/sonar-pro',
+        apiKey: this.openRouterApiKey,
+        timeout: 45_000,
         retryAttempts: 3,
-      };
-      configs.push(perplexityConfig);
-    }
-    
-    // Google Gemini Configuration
-    const geminiApiKey = process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY;
-    if (geminiApiKey && geminiApiKey.trim() !== '') {
-      const geminiConfig = {
-        name: 'google-gemini',
-        type: 'google-gemini' as const,
-        apiKey: geminiApiKey,
-        timeout: 30000,
-        retryAttempts: 3,
-      };
-      configs.push(geminiConfig);
-    }
-    
-    // Google AI Overview Configuration (DataForSEO) - Only enable with proper credentials
-    const dataForSeoUsername = process.env.DATAFORSEO_USERNAME;
-    const dataForSeoPassword = process.env.DATAFORSEO_PASSWORD;
-    
-    // Only configure if both username and password are provided
-    if (dataForSeoUsername && dataForSeoPassword && 
-        dataForSeoUsername.trim() !== '' && dataForSeoPassword.trim() !== '') {
-      const credentials = Buffer.from(`${dataForSeoUsername}:${dataForSeoPassword}`).toString('base64');
-      const authHeader = `Basic ${credentials}`;
-    
-    const googleAIOverviewConfig = {
-      name: 'google-ai-overview',
-      type: 'google-ai-overview' as const,
-      apiKey: '', // Not used for DataForSEO
-      authHeader: authHeader,
-      username: dataForSeoUsername,
-      password: dataForSeoPassword,
-      timeout: 30000,
-      retryAttempts: 3,
-    };
-    configs.push(googleAIOverviewConfig);
-    }
-    
-    return configs;
+      },
+    ];
   }
 
   // Execute request across multiple providers
@@ -191,9 +141,9 @@ export class ProviderManager {
           temperature: request.metadata?.temperature,
           maxTokens: request.metadata?.maxTokens,
           cacheScope: request.userId,
-          chatgptModel: 'gpt-5.4-mini',
-          perplexityModel: 'sonar-pro',
-          geminiModel: process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite',
+          chatgptModel: process.env.OPENROUTER_OPENAI_MODEL || 'openai/gpt-5.4-mini',
+          perplexityModel: process.env.OPENROUTER_PERPLEXITY_MODEL || 'perplexity/sonar-pro',
+          geminiModel: process.env.OPENROUTER_GOOGLE_MODEL || 'google/gemini-3.1-flash-lite',
         },
       });
       let cached: JobResult | null = null;
@@ -298,8 +248,7 @@ export class ProviderManager {
     switch (providerName) {
       case 'chatgptsearch':
         return {
-          input: request.prompt,
-          model: 'gpt-5.4-mini',
+          prompt: request.prompt,
           temperature: typeof md.temperature === 'number' ? md.temperature : 0.7,
           max_tokens: typeof md.maxTokens === 'number' ? md.maxTokens : 1_500,
           webSearch: md.webSearch !== false,
@@ -309,36 +258,18 @@ export class ProviderManager {
       case 'perplexity':
         return {
           prompt: request.prompt,
-          model: 'sonar-pro',
           temperature: typeof md.temperature === 'number' ? md.temperature : 0.7,
           max_tokens: typeof md.maxTokens === 'number' ? md.maxTokens : 1_500,
+          webSearch: md.webSearch !== false,
           _userId: userId,
         };
 
       case 'google-ai-overview':
-        // Only forward override fields when explicitly supplied on
-        // metadata — the provider applies documented defaults itself.
         return {
-          keyword: request.prompt,
-          ...(md.locationCode !== undefined && { location_code: md.locationCode }),
-          ...(md.languageCode !== undefined && { language_code: md.languageCode }),
-          ...(md.device !== undefined && { device: md.device }),
-          ...(md.os !== undefined && { os: md.os }),
-          depth: 10,
-          group_organic_results: true,
-          load_async_ai_overview: true,
-          _userId: userId,
-        };
-
-      case 'google-gemini':
-        return {
-          contents: [{
-            parts: [{ text: request.prompt }]
-          }],
-          generationConfig: {
-            temperature: typeof md.temperature === 'number' ? md.temperature : 0.7,
-            maxOutputTokens: typeof md.maxTokens === 'number' ? md.maxTokens : 1_500,
-          },
+          prompt: request.prompt,
+          temperature: typeof md.temperature === 'number' ? md.temperature : 0.7,
+          max_tokens: typeof md.maxTokens === 'number' ? md.maxTokens : 1_500,
+          webSearch: md.webSearch !== false,
           _userId: userId,
         };
 

@@ -3,13 +3,14 @@ import React, { useEffect } from 'react';
 import { useAuthContext } from '@/context/AuthContext';
 import { useBrandContext } from '@/context/BrandContext';
 import { useRouter, usePathname } from 'next/navigation';
+import OpenRouterKeyDialog from '@/components/settings/OpenRouterKeyDialog';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
 }
 
 export default function DashboardLayout({ children }: DashboardLayoutProps): React.ReactElement {
-  const { user, userProfile, loading } = useAuthContext();
+  const { user, userProfile, openRouterKey, loading } = useAuthContext();
   const {
     brands,
     loading: brandsLoading,
@@ -59,6 +60,14 @@ export default function DashboardLayout({ children }: DashboardLayoutProps): Rea
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-foreground text-lg">Redirecting to sign in...</div>
+      </div>
+    );
+  }
+
+  if (!openRouterKey) {
+    return (
+      <div className="min-h-screen bg-background">
+        <OpenRouterKeyDialog open required />
       </div>
     );
   }

@@ -58,6 +58,12 @@ export async function POST(request: NextRequest) {
         { status: 401 }
       );
     }
+    if (!authResult.openRouterApiKey) {
+      return NextResponse.json(
+        { success: false, error: 'Add an OpenRouter API key to continue', code: 'OPENROUTER_KEY_REQUIRED' },
+        { status: 400 }
+      );
+    }
 
     const body = await request.json().catch(() => null);
     const parsedInput = CompanyInfoInputSchema.safeParse(body);
@@ -152,12 +158,12 @@ export async function POST(request: NextRequest) {
     const prompt = buildCompanyInfoPrompt(domain, websiteMetadata || undefined);
     
     // Initialize provider manager
-    const providerManager = new ProviderManager();
+    const providerManager = new ProviderManager(authResult.openRouterApiKey);
     
     const preferredProviders = [
       'chatgptsearch',
       'perplexity',
-      ...(websiteMetadata ? ['google-gemini'] : []),
+      ...(websiteMetadata ? ['google-ai-overview'] : []),
     ];
     const availableProviders = new Set(providerManager.getAvailableProviders());
     const providers = preferredProviders.filter((provider) => availableProviders.has(provider));

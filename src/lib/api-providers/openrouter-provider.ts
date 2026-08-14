@@ -113,7 +113,9 @@ export class OpenRouterProvider extends BaseAPIProvider {
                 type: 'openrouter:web_search',
                 parameters: {
                   engine: 'auto',
-                  max_results: 8,
+                  max_results: 5,
+                  max_total_results: 8,
+                  max_uses: 2,
                 },
               }],
             }),

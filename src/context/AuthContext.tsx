@@ -7,6 +7,7 @@ import type { UserProfile } from '@/types/userProfile';
 import signOut from '@/firebase/auth/signOut';
 import {
   getStoredOpenRouterKey,
+  OPENROUTER_KEY_HEADER,
   removeStoredOpenRouterKey,
   storeOpenRouterKey,
 } from '@/lib/openRouterKey';
@@ -75,6 +76,27 @@ export function AuthContextProvider({ children }: { children: React.ReactNode })
   const userRef = useRef<User | null>(null);
 
   const saveOpenRouterKey = useCallback(async (key: string) => {
+    const activeUser = userRef.current;
+    if (!activeUser) {
+      throw new Error('Sign in again before adding an OpenRouter API key.');
+    }
+
+    const idToken = await activeUser.getIdToken();
+    const response = await fetch('/api/openrouter/key', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${idToken}`,
+        [OPENROUTER_KEY_HEADER]: key.trim(),
+      },
+      cache: 'no-store',
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || payload?.valid !== true) {
+      throw new Error(payload?.error || 'OpenRouter could not verify this API key.');
+    }
+    if (userRef.current?.uid !== activeUser.uid) {
+      throw new Error('Your sign-in changed while the key was being verified. Please try again.');
+    }
     setOpenRouterKey(storeOpenRouterKey(key));
   }, []);
 
@@ -113,10 +135,19 @@ export function AuthContextProvider({ children }: { children: React.ReactNode })
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (nextUser) => {
       const sequence = ++authSequenceRef.current;
+      const previousUid = userRef.current?.uid;
+      const switchedAccounts = Boolean(
+        previousUid && nextUser?.uid && previousUid !== nextUser.uid
+      );
       userRef.current = nextUser;
       setUser(nextUser);
       setUserProfile(null);
       setProfileError(null);
+
+      if (switchedAccounts) {
+        removeStoredOpenRouterKey();
+        setOpenRouterKey(null);
+      }
 
       if (!nextUser) {
         removeStoredOpenRouterKey();

@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 300;
 
 const createJobSchema = z.object({
   brandId: z.string().trim().min(1).max(200),

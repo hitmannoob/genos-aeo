@@ -18,5 +18,6 @@ describe('OpenRouter key handling', () => {
     expect(isPlausibleOpenRouterKey('')).toBe(false);
     expect(isPlausibleOpenRouterKey('too-short')).toBe(false);
     expect(isPlausibleOpenRouterKey('sk-or-v1-key with spaces')).toBe(false);
+    expect(isPlausibleOpenRouterKey('not-openrouter-but-long-enough-to-pass')).toBe(false);
   });
 });

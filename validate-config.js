@@ -25,13 +25,22 @@ function isConfigured(name) {
   return Boolean(value && !isPlaceholder(value));
 }
 
-if (!process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+const clientUsesAuthEmulator = process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === 'true';
+const serverAuthEmulatorHost = process.env.FIREBASE_AUTH_EMULATOR_HOST?.trim();
+const optionalOpenRouterKey = process.env.OPENROUTER_API_KEY?.trim();
+const isProduction = process.env.NODE_ENV === 'production';
+
+if (isProduction || !serverAuthEmulatorHost) {
   required.push('FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY');
 }
 
 const missing = required.filter((name) => !isConfigured(name));
-const clientUsesAuthEmulator = process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === 'true';
-const serverAuthEmulatorHost = process.env.FIREBASE_AUTH_EMULATOR_HOST?.trim();
+
+if (isProduction) {
+  if (clientUsesAuthEmulator || serverAuthEmulatorHost) {
+    missing.push('Firebase Auth emulator variables must be disabled in production');
+  }
+}
 
 for (const secretName of ['SERVICE_API_SECRET', 'ADMIN_API_SECRET']) {
   const value = process.env[secretName]?.trim();
@@ -53,6 +62,12 @@ if (
   && !/^(127\.0\.0\.1|localhost|\[::1\]):\d+$/.test(serverAuthEmulatorHost)
 ) {
   missing.push('FIREBASE_AUTH_EMULATOR_HOST must use a loopback host and explicit port');
+}
+if (
+  optionalOpenRouterKey
+  && !/^sk-or-v1-[A-Za-z0-9_-]{16,}$/.test(optionalOpenRouterKey)
+) {
+  missing.push('OPENROUTER_API_KEY must be a current OpenRouter API key when configured');
 }
 
 try {

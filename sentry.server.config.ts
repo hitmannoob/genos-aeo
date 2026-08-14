@@ -3,6 +3,7 @@
 // Docs: https://docs.sentry.io/platforms/javascript/guides/nextjs/
 
 import * as Sentry from '@sentry/nextjs';
+import { redactSensitiveRequestHeaders } from '@/lib/sentryPrivacy';
 
 const dsn = process.env.SENTRY_DSN;
 
@@ -15,6 +16,10 @@ Sentry.init( {
 
   // Adjust this value in production, or use tracesSampler for greater control
   tracesSampleRate: 0.1,
+
+  sendDefaultPii: false,
+
+  beforeSend: redactSensitiveRequestHeaders,
 
   // Setting this option to true will print useful information to the console while you're setting up Sentry.
   debug: false,

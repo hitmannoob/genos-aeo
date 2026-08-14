@@ -14,6 +14,9 @@ import {
   type UserQueryWorkflowResult,
 } from '@/lib/userQueryExecutionServer';
 import { logger } from '@/lib/logger';
+import { getConfiguredOpenRouterCredential } from '@/lib/openRouterCredential';
+
+export const maxDuration = 300;
 
 const UserQueryRequestSchema = z.object({
   query: z.string().trim().min(4).max(500),
@@ -76,7 +79,7 @@ async function authenticateUserQueryRequest(
     return {
       uid: serviceUserId,
       isService: true,
-      openRouterApiKey: process.env.OPENROUTER_API_KEY?.trim() || undefined,
+      openRouterApiKey: getConfiguredOpenRouterCredential(),
     };
   }
 
@@ -221,6 +224,7 @@ export async function GET() {
         description: 'Submit a query to configured user-query providers.',
         headers: {
           Authorization: 'Bearer <firebase-id-token>',
+          'X-OpenRouter-Api-Key': '<browser-openrouter-key>',
           'Content-Type': 'application/json',
         },
         body: {

@@ -22,6 +22,8 @@ import {
 import { buildCompanyInfoPrompt, parseCompanyInfoResponse } from '@/lib/prompts/companyInfo';
 import { logger } from '@/lib/logger';
 
+export const maxDuration = 300;
+
 export async function POST(request: NextRequest) {
   let executionIdentity: { userId: string; clientRequestId: string } | null = null;
   let creditReservation: {

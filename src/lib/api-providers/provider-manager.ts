@@ -13,6 +13,7 @@ import {
   setCachedProviderResponse,
 } from '@/lib/cache/providerResponseCache';
 import { logger } from '@/lib/logger';
+import { getConfiguredOpenRouterCredential } from '@/lib/openRouterCredential';
 
 type OpenRouterProviderName = 'chatgptsearch' | 'google-ai-overview' | 'perplexity';
 
@@ -25,7 +26,7 @@ export class ProviderManager {
   private providers: Map<string, BaseAPIProvider> = new Map();
   private activeJobs: Map<string, Promise<JobResult>> = new Map();
 
-  constructor(private readonly openRouterApiKey = process.env.OPENROUTER_API_KEY?.trim() || '') {
+  constructor(private readonly openRouterApiKey = getConfiguredOpenRouterCredential() || '') {
     this.initializeProviders();
   }
 

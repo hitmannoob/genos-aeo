@@ -7,7 +7,7 @@ export function normalizeOpenRouterKey(value: string): string {
 
 export function isPlausibleOpenRouterKey(value: string): boolean {
   const key = normalizeOpenRouterKey(value);
-  return key.length >= 20 && key.length <= 512 && !/\s/.test(key);
+  return key.length <= 512 && /^sk-or-v1-[A-Za-z0-9_-]{16,}$/.test(key);
 }
 
 export function getStoredOpenRouterKey(): string | null {
@@ -15,7 +15,9 @@ export function getStoredOpenRouterKey(): string | null {
   const key = normalizeOpenRouterKey(
     window.localStorage.getItem(OPENROUTER_KEY_STORAGE_KEY) || ''
   );
-  return key || null;
+  if (isPlausibleOpenRouterKey(key)) return key;
+  if (key) window.localStorage.removeItem(OPENROUTER_KEY_STORAGE_KEY);
+  return null;
 }
 
 export function storeOpenRouterKey(value: string): string {

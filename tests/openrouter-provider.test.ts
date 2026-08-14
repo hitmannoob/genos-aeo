@@ -82,7 +82,14 @@ describe('OpenRouter provider routing', () => {
     const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
 
     expect(request.tools).toEqual([
-      expect.objectContaining({ type: 'openrouter:web_search' }),
+      expect.objectContaining({
+        type: 'openrouter:web_search',
+        parameters: expect.objectContaining({
+          max_results: 5,
+          max_total_results: 8,
+          max_uses: 2,
+        }),
+      }),
     ]);
   });
 });

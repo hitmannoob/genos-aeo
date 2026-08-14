@@ -21,6 +21,8 @@ import {
 import { buildQueryGenerationPrompt, parseQueryGenerationResponse } from '@/lib/prompts/queryGeneration';
 import { logger } from '@/lib/logger';
 
+export const maxDuration = 300;
+
 const PREFERRED_PROVIDERS = ['chatgptsearch', 'google-ai-overview'];
 
 export async function POST(request: NextRequest) {

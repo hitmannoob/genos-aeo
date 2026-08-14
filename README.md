@@ -77,7 +77,7 @@ Never commit `.env.local`, service-account JSON, private keys, or provider crede
 | Query generation | OpenAI and Google |
 | Tracked query execution | OpenAI, Google, and Perplexity |
 
-All provider calls go through OpenRouter using the browser-provided key. A tracked query succeeds when at least one selected provider succeeds. If all providers fail, reserved credits are refunded. Provider response caching is scoped to the authenticated user and successful complete provider sets only.
+All provider calls go through OpenRouter using the browser-provided key. Genos verifies the key with OpenRouter before storing it locally, then sends it only with provider-backed requests. A tracked query succeeds when at least one selected provider succeeds. If all providers fail, reserved credits are refunded. Provider response caching is scoped to the authenticated user and successful complete provider sets only.
 
 The default OpenRouter model slugs live in `src/lib/api-providers/provider-manager.ts`. OpenRouter-reported request cost is stored for dashboard reporting.
 
@@ -102,6 +102,7 @@ The included runner uses Next.js `after()` and is appropriate for small deployme
 
 - Browser API requests use revoked-token-aware Firebase Admin verification.
 - Provider-backed requests also require `X-OpenRouter-Api-Key`. The key is stored in browser local storage and is not persisted in PostgreSQL or the Firebase user profile.
+- Key-entry fields are explicitly masked from session replay, and sensitive request headers are scrubbed before Sentry events are sent.
 - Trusted service calls to `/api/user-query` require both `SERVICE_API_SECRET` and `X-Service-User-Id`.
 - Admin data-sanity access requires an admin Firebase identity or the separate admin/service secret.
 - Every brand, query, run, citation, job, and ledger lookup is tenant-scoped; database constraints reinforce cross-tenant ownership.
@@ -119,6 +120,7 @@ npm run dev:clean    # remove only .next, then start development
 npm run dev:port     # development server on port 3001
 npm run health       # check http://127.0.0.1:3000/
 npm run config:check # validate required environment groups without printing secrets
+# Deployment environments should run the same check with NODE_ENV=production.
 npm run db:migrate   # apply PostgreSQL migrations
 npm run db:verify    # verify a local schema; requires explicit opt-in
 npm run lint

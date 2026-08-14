@@ -103,8 +103,9 @@ export default function OpenRouterKeyDialog({
           {keySuffix ? 'OpenRouter key' : 'Connect OpenRouter'}
         </h2>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          One key powers the ChatGPT, Google, and Perplexity requests. It stays
-          in this browser and is not saved to your Genos account.
+          One key powers the ChatGPT, Google, and Perplexity requests. It is
+          stored only in this browser, sent securely with provider-backed
+          requests, and never saved to your Genos account.
         </p>
 
         <div className="mt-5 flex items-center justify-between rounded-xl border border-border bg-muted/60 px-4 py-3">
@@ -131,6 +132,7 @@ export default function OpenRouterKeyDialog({
               autoComplete="off"
               autoCapitalize="none"
               spellCheck={false}
+              data-sentry-mask
               placeholder="sk-or-v1-…"
               className="w-full rounded-xl border border-input bg-background px-4 py-3 pr-12 font-mono text-sm outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10"
               aria-describedby={error ? 'replacement-key-error' : undefined}

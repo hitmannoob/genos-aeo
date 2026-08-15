@@ -21,7 +21,7 @@ type Citation = LifetimeCitation;
 export default function AllSearchesPage(): React.ReactElement {
   const { selectedBrand } = useBrandContext();
   // Same shared pipeline as overview / competitors / main citations — one
-  // Postgres fetch + one matcher across the whole dashboard.
+  // Database fetch + one matcher across the whole dashboard.
   const {
     citations: allCitations,
     loading: queriesLoading,

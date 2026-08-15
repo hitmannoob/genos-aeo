@@ -5,7 +5,7 @@
   "description": "Open-source AI answer engine visibility analytics for brands.",
   "license": "MIT",
   "engines": {
-    "node": ">=20.9.0",
+    "node": ">=24.15.0",
     "npm": ">=10.0.0"
   },
   "scripts": {
@@ -14,8 +14,10 @@
     "dev:port": "next dev -p 3001",
     "health": "node scripts/health-check.mjs",
     "config:check": "node validate-config.js",
-    "db:migrate": "node scripts/run-postgres-migrations.mjs",
-    "db:verify": "node scripts/verify-postgres-schema.mjs",
+    "db:migrate": "node scripts/run-sqlite-migrations.mjs",
+    "db:verify": "node scripts/verify-sqlite-schema.mjs",
+    "db:verify-runtime": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/verify-sqlite-runtime.mjs",
+    "db:backup": "node scripts/backup-sqlite.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
@@ -34,7 +36,6 @@
     "lucide-react": "^1.22.0",
     "next": "^16.2.11",
     "openai": "^6.35.0",
-    "pg": "^8.22.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "recharts": "^3.9.1",
@@ -42,7 +43,6 @@
   },
   "devDependencies": {
     "@types/node": "25.9.1",
-    "@types/pg": "^8.20.0",
     "@types/react": "19.2.15",
     "@types/react-dom": "19.2.3",
     "autoprefixer": "10.5.2",

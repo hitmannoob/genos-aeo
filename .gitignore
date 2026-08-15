@@ -39,3 +39,7 @@ firestore-debug.*.log
 *.tsbuildinfo
 next-env.d.ts
 .env
+
+# SQLite runtime data and local backups
+/data/*.sqlite*
+/backups/*.sqlite*

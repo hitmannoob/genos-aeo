@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { withTransaction, sql } from './postgres';
+import { withTransaction, sql } from './sqlite';
 import type { QueryProcessingResult } from '@/lib/queryResultUtils';
 import type { UserBrand } from '@/types/userBrand';
 import { getQueryResultsByBrandPublicId } from './queryResults';
@@ -153,14 +153,15 @@ async function loadBrandQueries(brandIds: string[]): Promise<Map<string, BrandQu
     return new Map();
   }
 
+  const placeholders = brandIds.map((_, index) => `$${index + 1}`).join(', ');
   const result = await sql<BrandQueryRow>(
     `
       select id, brand_id, query, keyword, category, contains_brand, selected, position
       from brand_queries
-      where brand_id = any($1::uuid[])
+      where brand_id in (${placeholders})
       order by brand_id, position nulls last, created_at
     `,
-    [brandIds]
+    brandIds
   );
 
   const byBrandId = new Map<string, BrandQueryRow[]>();
@@ -538,10 +539,10 @@ export async function addKeywordToBrandSql(
       await client.query(
         `
           update brands
-          set keywords = array_append(keywords, $2)
+          set keywords = $2
           where id = $1
         `,
-        [brand.id, topic]
+        [brand.id, JSON.stringify([...existingKeywords, topic])]
       );
     }
   });
@@ -672,10 +673,10 @@ export async function addQueryToBrandSql(args: {
       await client.query(
         `
           update brands
-          set keywords = array_append(keywords, $2)
+          set keywords = $2
           where id = $1
         `,
-        [brand.id, topic]
+        [brand.id, JSON.stringify([...(brand.keywords || []), topic])]
       );
     }
   });

@@ -12,23 +12,9 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: genos
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d genos"
-          --health-interval 3s
-          --health-timeout 3s
-          --health-retries 20
     env:
-      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/genos
-      POSTGRES_SSL: "false"
+      SQLITE_PATH: /tmp/genos-ci.sqlite3
+      SQLITE_BUSY_TIMEOUT_MS: "5000"
       NEXT_PUBLIC_FIREBASE_API_KEY: ci-firebase-key
       NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ci-genos.firebaseapp.com
       NEXT_PUBLIC_FIREBASE_PROJECT_ID: ci-genos
@@ -46,6 +32,9 @@ jobs:
       - run: npm run config:check
       - run: npm run db:migrate
       - run: npm run db:verify
+        env:
+          ALLOW_DATABASE_INTEGRATION_TESTS: "true"
+      - run: npm run db:verify-runtime
         env:
           ALLOW_DATABASE_INTEGRATION_TESTS: "true"
       - run: npm run lint -- --max-warnings=0

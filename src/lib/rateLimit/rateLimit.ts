@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { withTransaction } from '@/lib/db/postgres';
+import { withTransaction } from '@/lib/db/sqlite';
 
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 let nextCleanupAt = 0;
@@ -41,12 +41,15 @@ export async function consumeRateLimit(
         where bucket_id in (
           select bucket_id
           from rate_limit_buckets
-          where expires_at < now() - interval '1 day'
+          where expires_at < $1
           order by expires_at
           limit 500
         )
-      `);
+      `, [new Date(now - 24 * 60 * 60 * 1_000)]);
     }
+
+    const windowStartAt = new Date(now);
+    const expiresAt = new Date(now + args.windowMs);
 
     const result = await client.query<{
       count: number;
@@ -61,29 +64,28 @@ export async function consumeRateLimit(
           window_start_at,
           expires_at
         )
-        values ($1, 1, $2, $3, now(), now() + ($3::int * interval '1 millisecond'))
+        values ($1, 1, $2, $3, $4, $5)
         on conflict (bucket_id) do update set
           count = case
-            when rate_limit_buckets.expires_at <= now() then 1
+            when rate_limit_buckets.expires_at <= $4 then 1
             else rate_limit_buckets.count + 1
           end,
           limit_count = excluded.limit_count,
           window_ms = excluded.window_ms,
           window_start_at = case
-            when rate_limit_buckets.expires_at <= now() then now()
+            when rate_limit_buckets.expires_at <= $4 then $4
             else rate_limit_buckets.window_start_at
           end,
           expires_at = case
-            when rate_limit_buckets.expires_at <= now()
-              then now() + (excluded.window_ms::int * interval '1 millisecond')
+            when rate_limit_buckets.expires_at <= $4 then $5
             else rate_limit_buckets.expires_at
           end,
           updated_at = now()
-        where rate_limit_buckets.expires_at <= now()
+        where rate_limit_buckets.expires_at <= $4
            or rate_limit_buckets.count < excluded.limit_count
         returning count, expires_at
       `,
-      [bucketId, args.limit, args.windowMs]
+      [bucketId, args.limit, args.windowMs, windowStartAt, expiresAt]
     );
 
     const consumed = result.rows[0];

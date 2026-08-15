@@ -1,7 +1,7 @@
 import 'server-only';
 
 import type { DecodedIdToken } from 'firebase-admin/auth';
-import { sql } from './postgres';
+import { sql } from './sqlite';
 import type { UserProfile } from '@/types/userProfile';
 
 interface AppUserRow {

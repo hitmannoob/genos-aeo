@@ -106,7 +106,7 @@ export abstract class BaseAPIProvider {
     throw lastError!;
   }
 
-  // Per-user provider rate limiter. Backed by the rate_limit_buckets Postgres
+  // Per-user provider rate limiter. Backed by the rate_limit_buckets SQLite
   // table so serverless instance count does not multiply effective limits.
   protected async checkRateLimit(userId?: string): Promise<boolean> {
     const key = userId && userId.trim() !== '' ? userId : GLOBAL_BUCKET_KEY;

@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { sql } from '@/lib/db/postgres';
+import { sql } from '@/lib/db/sqlite';
 import {
   getCanonicalGoogleResult,
   hasProviderContent,

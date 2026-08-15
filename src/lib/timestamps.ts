@@ -1,6 +1,6 @@
 // Canonical helper for normalizing timestamp-ish values from heterogeneous sources.
 //
-// Postgres returns Date instances or ISO strings. Legacy data may also surface
+// Database adapters return Date instances or ISO strings. Legacy data may also surface
 // Firestore Timestamp objects (with a toDate() method) or plain ISO strings on
 // reads. Normalize all of them to an ISO-8601 string (or null when absent). Use
 // this helper anywhere a reader needs a stable string representation of a

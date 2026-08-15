@@ -14,4 +14,4 @@ Security fixes are made on the default branch. Deployments should track the late
 
 ## Deployment responsibility
 
-Operators are responsible for protecting Firebase service credentials, database credentials, OpenRouter keys, Sentry tokens, and service/admin secrets; enabling TLS; applying migrations; and restricting infrastructure access. Browser-provided OpenRouter keys are kept in local storage and must never be persisted or logged by the application. Example values are placeholders only.
+Operators are responsible for protecting Firebase service credentials, the SQLite database and backups, OpenRouter keys, Sentry tokens, and service/admin secrets; applying migrations; and restricting infrastructure access. Browser-provided OpenRouter keys are kept in local storage and must never be persisted or logged by the application. Example values are placeholders only.

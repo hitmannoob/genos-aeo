@@ -10,12 +10,12 @@ Genos is an open-source answer-engine visibility dashboard. It runs tracked buye
 - Tracks response-level brand and competitor presence, citations, domain citations, provider performance, and trends.
 - Exports citation data as spreadsheet-safe CSV.
 - Uses an idempotent credit ledger for billable actions and refunds reserved credits when an upstream operation fails.
-- Keeps application data in PostgreSQL and uses Firebase only for user authentication.
+- Keeps application data in a local SQLite file and uses Firebase only for user authentication.
 
 ## Stack
 
 - Next.js 16, React 19, TypeScript, and Tailwind CSS 3
-- PostgreSQL through `pg`
+- File-backed SQLite through Node.js `node:sqlite`
 - Firebase Authentication and Firebase Admin token verification
 - TanStack Query for client-side server state
 - OpenRouter routing for OpenAI, Google, and Perplexity models
@@ -23,8 +23,7 @@ Genos is an open-source answer-engine visibility dashboard. It runs tracked buye
 
 ## Requirements
 
-- Node.js 20.9 or newer and npm 10 or newer
-- PostgreSQL 14 or newer
+- Node.js 24.15 or newer and npm 10 or newer
 - A Firebase project with Email/Password and/or Google authentication enabled
 - An OpenRouter API key for each signed-in browser
 
@@ -37,10 +36,7 @@ npm ci
 cp .env.example .env.local
 ```
 
-Start PostgreSQL yourself, or use the included Compose service:
-
 ```bash
-docker compose up -d postgres
 npm run db:migrate
 ALLOW_DATABASE_INTEGRATION_TESTS=true npm run db:verify
 npm run config:check
@@ -48,9 +44,9 @@ npm run dev
 ```
 
 Open <http://localhost:3000>, sign in with Firebase, and enter your OpenRouter
-API key when prompted. The example Compose database URL already matches `.env.example`.
+API key when prompted. The default SQLite file is `data/genos.sqlite3`.
 
-`npm run db:migrate` applies every SQL file in `db/migrations` in filename order. Applied filenames and SHA-256 checksums are recorded in `schema_migrations`; changing an already-applied migration intentionally fails. Add a new migration instead. `npm run db:verify` is restricted to localhost and requires `ALLOW_DATABASE_INTEGRATION_TESTS=true`; it rolls back all test rows.
+`npm run db:migrate` applies every SQL file in `db/migrations` in filename order. Applied filenames and SHA-256 checksums are recorded in `schema_migrations`; changing an already-applied migration intentionally fails. Add a new migration instead. `npm run db:verify` requires `ALLOW_DATABASE_INTEGRATION_TESTS=true`, checks integrity and foreign keys, exercises tenant and job constraints, and rolls back all test rows.
 
 ## Configuration
 
@@ -58,7 +54,7 @@ Copy `.env.example` and replace its placeholders. The main groups are:
 
 | Area | Variables |
 | --- | --- |
-| PostgreSQL | `DATABASE_URL`, `POSTGRES_SSL`, optional pool settings |
+| SQLite | `SQLITE_PATH`, optional `SQLITE_BUSY_TIMEOUT_MS` |
 | Firebase client | `NEXT_PUBLIC_FIREBASE_API_KEY`, `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`, `NEXT_PUBLIC_FIREBASE_PROJECT_ID`, `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`, `NEXT_PUBLIC_FIREBASE_APP_ID` |
 | Firebase Admin | `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` |
 | OpenRouter | Entered by each signed-in user in the browser; optional trusted-service fallback `OPENROUTER_API_KEY` |
@@ -94,14 +90,14 @@ Billable APIs reserve credits transactionally before calling providers. Client r
 
 ## Background processing
 
-Batch reprocessing creates durable PostgreSQL job and item rows, leases one runner, and checkpoints after every query. The browser polls the job endpoint; an expired lease can be resumed safely with the same per-query idempotency key. The browser passes the OpenRouter key to the active runner; the job does not persist it.
+Batch reprocessing creates durable SQLite job and item rows, leases one runner, and checkpoints after every query. The browser polls the job endpoint; an expired lease can be resumed safely with the same per-query idempotency key. The browser passes the OpenRouter key to the active runner; the job does not persist it.
 
 The included runner uses Next.js `after()` and is appropriate for small deployments whose function duration covers a query. Automatic scheduled processing is intentionally disabled. Larger deployments should invoke the same durable job runner from a queue/worker with a suitable execution timeout.
 
 ## Security model
 
 - Browser API requests use revoked-token-aware Firebase Admin verification.
-- Provider-backed requests also require `X-OpenRouter-Api-Key`. The key is stored in browser local storage and is not persisted in PostgreSQL or the Firebase user profile.
+- Provider-backed requests also require `X-OpenRouter-Api-Key`. The key is stored in browser local storage and is not persisted in SQLite or the Firebase user profile.
 - Key-entry fields are explicitly masked from session replay, and sensitive request headers are scrubbed before Sentry events are sent.
 - Trusted service calls to `/api/user-query` require both `SERVICE_API_SECRET` and `X-Service-User-Id`.
 - Admin data-sanity access requires an admin Firebase identity or the separate admin/service secret.
@@ -121,8 +117,9 @@ npm run dev:port     # development server on port 3001
 npm run health       # check http://127.0.0.1:3000/
 npm run config:check # validate required environment groups without printing secrets
 # Deployment environments should run the same check with NODE_ENV=production.
-npm run db:migrate   # apply PostgreSQL migrations
-npm run db:verify    # verify a local schema; requires explicit opt-in
+npm run db:migrate   # apply SQLite migrations
+npm run db:verify    # integrity/constraint checks; requires explicit opt-in
+npm run db:backup    # create a consistent online backup
 npm run lint
 npm run typecheck
 npm test
@@ -132,7 +129,7 @@ npm run build
 ## Repository map
 
 ```text
-db/migrations/          PostgreSQL schema and forward-only migrations
+db/migrations/          SQLite schema and forward-only migrations
 scripts/                Portable maintenance and migration commands
 src/app/                App Router pages and authenticated API routes
 src/components/         Dashboard and shared UI
@@ -140,20 +137,21 @@ src/context/            Auth, brand, theme, toast, and pending-query state
 src/lib/analytics/      Server-side corpus analytics
 src/lib/api-providers/  Provider clients, normalization, retry, cost, cache
 src/lib/billing/        Shared credit costs and server ledger operations
-src/lib/db/             PostgreSQL access and transactional workflows
+src/lib/db/             SQLite access and transactional workflows
 src/lib/prompts/        Prompt construction and strict response parsing
 tests/                  Vitest unit tests
 ```
 
 ## Deployment checklist
 
-1. Provision PostgreSQL and run `npm run db:migrate` once per release.
+1. Put `SQLITE_PATH` on a persistent local EBS volume and run `npm run db:migrate` once per release.
 2. Configure Firebase authorized domains and all required environment variables.
-3. Use TLS verification for hosted PostgreSQL (`POSTGRES_SSL=true`, `POSTGRES_SSL_REJECT_UNAUTHORIZED=true`).
-4. Set long, independent service/admin secrets; do not reuse provider or Firebase keys.
-5. Set the platform function duration high enough for the enabled provider timeouts, or move batch execution to a worker.
-6. Optionally configure Sentry. Source maps upload only when `SENTRY_AUTH_TOKEN` is present.
-7. Run migrations, `npm run db:verify`, lint, typecheck, tests, and the production build in CI.
+3. Run exactly one application instance against the local SQLite file; do not place it on EFS/NFS.
+4. Schedule `npm run db:backup -- /path/to/backup.sqlite3`, then copy completed backups off-instance.
+5. Set long, independent service/admin secrets; do not reuse provider or Firebase keys.
+6. Set the reverse-proxy timeout high enough for the enabled provider timeouts.
+7. Optionally configure Sentry. Source maps upload only when `SENTRY_AUTH_TOKEN` is present.
+8. Run migrations, `npm run db:verify`, lint, typecheck, tests, and the production build in CI.
 
 ## Contributing
 

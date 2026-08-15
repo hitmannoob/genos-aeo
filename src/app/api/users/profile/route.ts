@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
       profile,
     });
   } catch (error) {
-    logger.error('Failed to load Postgres user profile', error);
+    logger.error('Failed to load SQLite user profile', error);
     return NextResponse.json({ error: 'Failed to load user profile' }, { status: 500 });
   }
 }
@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
       profile,
     });
   } catch (error) {
-    logger.error('Failed to upsert Postgres user profile', error);
+    logger.error('Failed to upsert SQLite user profile', error);
     return NextResponse.json({ error: 'Failed to upsert user profile' }, { status: 500 });
   }
 }

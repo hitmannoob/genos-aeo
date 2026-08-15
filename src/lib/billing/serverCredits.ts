@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { randomUUID } from 'crypto';
-import { withTransaction } from '@/lib/db/postgres';
+import { withTransaction } from '@/lib/db/sqlite';
 export {
   USER_QUERY_CREDIT_COST,
   BRAND_CREATION_CREDIT_COST,

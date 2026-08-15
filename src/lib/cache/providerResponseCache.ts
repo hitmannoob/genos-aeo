@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { sql } from '@/lib/db/postgres';
+import { sql } from '@/lib/db/sqlite';
 import type { JobResult } from '@/lib/api-providers/types';
 
 const DEFAULT_TTL_MS = 5 * 60 * 1000;
@@ -87,7 +87,7 @@ export async function setCachedProviderResponse(
         result,
         expires_at
       )
-      values ($1, $2, $1, $3, $4::jsonb, now() + ($5::int * interval '1 millisecond'))
+      values ($1, $2, $1, $3, $4::jsonb, $5)
       on conflict (cache_key) do update set
         purpose = excluded.purpose,
         providers = excluded.providers,
@@ -100,7 +100,7 @@ export async function setCachedProviderResponse(
       purpose,
       result.results.map((providerResult) => providerResult.providerId),
       JSON.stringify(serializeJobResult(result)),
-      boundedTtlMs,
+      new Date(Date.now() + boundedTtlMs),
     ]
   );
 }

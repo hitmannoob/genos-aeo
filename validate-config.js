@@ -7,7 +7,7 @@ dotenv.config({
 });
 
 const required = [
-  'DATABASE_URL',
+  'SQLITE_PATH',
   'NEXT_PUBLIC_FIREBASE_API_KEY',
   'NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN',
   'NEXT_PUBLIC_FIREBASE_PROJECT_ID',
@@ -70,22 +70,28 @@ if (
   missing.push('OPENROUTER_API_KEY must be a current OpenRouter API key when configured');
 }
 
-try {
-  const databaseUrl = new URL(process.env.DATABASE_URL || '');
-  if (!['postgres:', 'postgresql:'].includes(databaseUrl.protocol)) {
-    missing.push('DATABASE_URL must use the postgres or postgresql scheme');
+const sqlitePath = process.env.SQLITE_PATH?.trim();
+if (isProduction && sqlitePath && !path.isAbsolute(sqlitePath)) {
+  missing.push('SQLITE_PATH must be absolute in production');
+}
+if (isProduction && sqlitePath === ':memory:') {
+  missing.push('SQLITE_PATH must be file-backed in production');
+}
+
+const busyTimeout = process.env.SQLITE_BUSY_TIMEOUT_MS;
+if (busyTimeout !== undefined) {
+  const parsed = Number(busyTimeout);
+  if (!Number.isInteger(parsed) || parsed < 100 || parsed > 120_000) {
+    missing.push('SQLITE_BUSY_TIMEOUT_MS must be an integer between 100 and 120000');
   }
-  const localDatabase = ['localhost', '127.0.0.1', '::1'].includes(databaseUrl.hostname);
-  if (!localDatabase && process.env.POSTGRES_SSL !== 'true') {
-    missing.push('POSTGRES_SSL=true is required for a non-local database');
-  }
-  if (!localDatabase && process.env.POSTGRES_SSL_REJECT_UNAUTHORIZED === 'false') {
-    missing.push('POSTGRES_SSL_REJECT_UNAUTHORIZED must not be false for a non-local database');
-  }
-} catch {
-  if (process.env.DATABASE_URL?.trim()) {
-    missing.push('DATABASE_URL is not a valid URL');
-  }
+}
+
+if (
+  isProduction
+  && ['DATABASE_URL', 'POSTGRES_SSL', 'POSTGRES_SSL_REJECT_UNAUTHORIZED']
+    .some((name) => process.env[name]?.trim())
+) {
+  missing.push('Legacy PostgreSQL variables must be removed in production');
 }
 
 console.log('Genos configuration check');

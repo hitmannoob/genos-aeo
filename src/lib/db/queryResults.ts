@@ -1,7 +1,6 @@
 import 'server-only';
 
-import type { PoolClient } from 'pg';
-import { sql, withTransaction } from './postgres';
+import { sql, withTransaction, type DatabaseClient } from './sqlite';
 import {
   buildQueryResult,
   type QueryProcessingInput,
@@ -79,7 +78,7 @@ function citationRowsFromProviderResult(result: APIResponse): NormalizedCitation
 }
 
 async function resolveBrand(
-  client: PoolClient,
+  client: DatabaseClient,
   firebaseUid: string,
   brandIdOrLegacyId: string
 ): Promise<BrandIdentity> {
@@ -108,7 +107,7 @@ async function resolveBrand(
 }
 
 async function resolveBrandQueryId(
-  client: PoolClient,
+  client: DatabaseClient,
   brandUuid: string,
   query: QueryProcessingInput
 ): Promise<string | null> {
@@ -117,7 +116,7 @@ async function resolveBrandQueryId(
       select id
       from brand_queries
       where brand_id = $1
-        and tracked_identity = md5(
+        and tracked_identity = (
           length($2::text)::text || ':' || $2::text ||
           length($3::text)::text || ':' || $3::text ||
           length($4::text)::text || ':' || $4::text
@@ -136,7 +135,7 @@ async function resolveBrandQueryId(
 }
 
 async function insertCitations(args: {
-  client: PoolClient;
+  client: DatabaseClient;
   providerResultId: string;
   queryRunId: string;
   brandUuid: string;
@@ -221,7 +220,7 @@ export async function persistOneQueryResultSql<TReplayResponse = never>(
         from query_runs
         where brand_id = $1
           and processing_session_id = $2
-          and tracked_identity = md5(
+          and tracked_identity = (
             length($3::text)::text || ':' || $3::text ||
             length($4::text)::text || ':' || $4::text ||
             length($5::text)::text || ':' || $5::text
@@ -406,7 +405,7 @@ export async function persistOneQueryResultSql<TReplayResponse = never>(
 
 export async function getQueryResultsByBrandUuid(
   brandUuid: string,
-  client?: PoolClient
+  client?: DatabaseClient
 ): Promise<QueryProcessingResult[]> {
   const query = `
     select raw_result

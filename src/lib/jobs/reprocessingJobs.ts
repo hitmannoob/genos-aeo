@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { randomUUID } from 'crypto';
-import { sql, withTransaction } from '@/lib/db/postgres';
+import { sql, withTransaction } from '@/lib/db/sqlite';
 import { buildTrackedQueryIdentity } from '@/lib/queryResultUtils';
 
 export const REPROCESSING_JOB_LEASE_MS = 10 * 60 * 1000;
@@ -455,10 +455,10 @@ export async function acquireReprocessingJobRunner(jobId: string): Promise<{
         set status = 'processing',
             started_at = coalesce(started_at, now()),
             last_heartbeat_at = now(),
-            runner_lease_expires_at = now() + ($2::int * interval '1 millisecond')
+            runner_lease_expires_at = $2
         where id = $1
       `,
-      [jobId, REPROCESSING_JOB_LEASE_MS]
+      [jobId, new Date(Date.now() + REPROCESSING_JOB_LEASE_MS)]
     );
 
     return {
@@ -508,7 +508,7 @@ export async function updateReprocessingJobProgress(args: {
             current_index = $6,
             status = coalesce($7::text, status),
             last_heartbeat_at = now(),
-            runner_lease_expires_at = now() + ($8::int * interval '1 millisecond')
+            runner_lease_expires_at = $8
         where id = $1
       `,
       [
@@ -519,7 +519,7 @@ export async function updateReprocessingJobProgress(args: {
         args.creditsUsed,
         args.currentIndex,
         args.status || null,
-        REPROCESSING_JOB_LEASE_MS,
+        new Date(Date.now() + REPROCESSING_JOB_LEASE_MS),
       ]
     );
 

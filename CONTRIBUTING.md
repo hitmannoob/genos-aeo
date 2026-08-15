@@ -13,13 +13,12 @@ Thanks for helping improve Genos.
 ```bash
 npm ci
 cp .env.example .env.local
-docker compose up -d postgres
 npm run db:migrate
 ALLOW_DATABASE_INTEGRATION_TESTS=true npm run db:verify
 npm run dev
 ```
 
-Keep changes focused. Add a forward-only migration for schema changes; never edit a migration that may already be applied. Preserve tenant scoping and idempotency for every data or billing change.
+Keep changes focused. Add a forward-only SQLite migration for schema changes; never edit a migration that may already be applied. Preserve tenant scoping and idempotency for every data or billing change.
 
 Before submitting:
 

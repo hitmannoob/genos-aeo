@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { createHash } from 'crypto';
-import { withTransaction } from './postgres';
+import { withTransaction } from './sqlite';
 
 const PROCESSING_LEASE_MS = 10 * 60 * 1000;
 
@@ -112,14 +112,8 @@ export async function acquireQueryExecution<TResponse>(
   return withTransaction(async (client) => {
     const { appUserId, brandUuid } = await resolveIdentity(client, args);
 
-    // A row lock cannot serialize two first-time requests because no row
-    // exists yet. Lock the logical idempotency key before checking/inserting.
-    // PostgreSQL text values cannot contain NUL bytes, so use an unambiguous
-    // JSON encoding instead of a NUL-delimited string.
-    await client.query(
-      'select pg_advisory_xact_lock(hashtextextended($1, 0))',
-      [JSON.stringify([appUserId, brandUuid, args.clientRequestId])]
-    );
+    // BEGIN IMMEDIATE in the SQLite transaction adapter serializes the
+    // first-time check/insert path, including when no idempotency row exists.
 
     const existingResult = await client.query<{
       id: string;
